@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sys, json, time, base64, shutil, sqlite3, threading, subprocess
+import os, sys, json, time, base64, shutil, sqlite3, threading, subprocess, requests
 from huggingface_hub import HfApi, hf_hub_download
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
@@ -12,14 +12,13 @@ decoded_json = base64.b64decode(raw_b64.encode("utf-8")).decode("utf-8")[::-1]
 for k, v in json.loads(decoded_json).items():
     os.environ[k] = str(v)
 
-print("📦 [2/3] Installing requirements...")
+print("📦 [2/3] Installing Python packages...")
 reqs = hf_hub_download(repo_id=REPO, filename="requirements.txt", repo_type="dataset", token=HF_TOKEN)
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "-r", reqs])
 
-# مؤقت التناوب الذكي: بعد 5 ساعات و20 دقيقة يحفظ قاعدة البيانات ويغلق بانتظام لتبدأ الدورة التالية فوراً
 def graceful_cycle_handover():
     time.sleep(19200)  # 5 hours 20 minutes
-    print("🔄 Cycle handover reached! Performing final database backup to Private Vault...")
+    print("🔄 Performing end-of-cycle database backup to Private Vault...")
     try:
         db_file = "/content/musa_nyc_lounge_v8.db"
         if os.path.exists(db_file):
@@ -36,7 +35,6 @@ def graceful_cycle_handover():
                 repo_type="dataset",
                 commit_message="End-of-cycle automatic DB sync",
             )
-            print("✅ Final database backup completed!")
     except Exception as e:
         print(f"⚠️ Final backup notice: {e}")
     os._exit(0)
@@ -44,6 +42,5 @@ def graceful_cycle_handover():
 threading.Thread(target=graceful_cycle_handover, daemon=True).start()
 
 print("🏛️ [3/3] Launching Musa's NYC Lounge 24/7...")
-os.makedirs("/content", exist_ok=True)
 app_file = hf_hub_download(repo_id=REPO, filename="app.py", repo_type="dataset", token=HF_TOKEN)
 exec(open(app_file, encoding="utf-8").read(), globals())
