@@ -1,0 +1,45 @@
+name: Musa NYC Lounge 24/7 Infinite Relay
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 */5 * * *'
+
+concurrency:
+  group: musa-nyc-lounge-single-instance
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  lounge-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install System Libraries (WeasyPrint PDF & Arabic Fonts)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential python3-cffi python3-brotli libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info fonts-hosny-amiri fonts-dejavu-core
+          pip install -q huggingface_hub
+
+      - name: Run Musa's NYC Lounge (5.3-Hour Relay Cycle)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python runner.py
+
+      - name: Auto-Trigger Next 24/7 Relay Cycle Immediately
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run lounge_24_7.yml --repo ${{ github.repository }} || true
