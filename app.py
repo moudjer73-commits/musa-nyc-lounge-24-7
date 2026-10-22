@@ -512,18 +512,18 @@ def generate_pdf_sheet(pdf_data: Dict[str, Any]) -> Optional[str]:
 # القوالب التحريرية المرنة
 # ------------------------------------------------------------------------------
 class ChatSchema(BaseModel):
-    primary_speaker: str = Field(default="Jake", description="'Jake', 'Chloe', or 'Marcus'")
-    dialogue_en: str = Field(default="Jake: That makes total sense—let's talk it over. How do you see it playing out?", description="Natural 2-3 sentence spoken reply in the active register, adding a fresh perspective before asking a follow-up question.")
-    has_actual_errors: bool = Field(default=False, description="True ONLY if user made real grammar, preposition, collocation, or literal translation errors")
-    error_corrections_list: str = Field(default="", description="If has_actual_errors=True: 'wrong phrase -> right phrase' (one per line). Empty if no real errors.")
-    better_alternatives_list: str = Field(default="", description="1 or 2 stronger native upgrades: 'simple phrase -> stronger phrase'")
-    tone_and_why_en: str = Field(default="Tone: Clear and natural.", description="1 line on tone impression + plain-English reason for adjustments")
-    recast_casual_en: str = Field(default="", description="User's point in Casual everyday spoken English (slang, phrasal verbs, contractions)")
-    recast_professional_en: str = Field(default="", description="User's point in Professional workplace English")
-    recast_formal_en: str = Field(default="", description="User's point in concise Formal academic/executive writing")
-    spoken_flow_en: str = Field(default="", description="Short connected-speech and stress tip")
-    key_expressions_en: str = Field(default="", description="2 key expressions from reply with definition and example + 'Try next: [phrase]'")
-    arabic_translation_and_notes: str = Field(default="", description="Literal (حرفياً) vs Optimal (الأمثل) Arabic translation of reply and key expressions")
+    primary_speaker: str = Field(default="Jake", description="Speaker name ('Jake', 'Chloe', or 'Marcus'). MUST match whoever asked the previous question or whoever the user addressed by name!")
+    dialogue_en: str = Field(default="Jake: That makes total sense—let's talk it over. How do you see it playing out?", description="Natural 2-3 sentence spoken reply directly reacting to the user's exact situation/feeling first, then adding a fresh angle. Do NOT repeat old topics like 'client presentation'.")
+    has_actual_errors: bool = Field(default=False, description="True ONLY if the USER's message has real grammar, wrong verb/preposition, broken collocation, or indirect-question word-order errors. Ignore trivial texting commas!")
+    error_corrections_list: str = Field(default="", description="Analyze ONLY the user's message. Format each real fix on a new line: 'user wrong phrase -> natural fix'. Leave empty if user's sentence is already natural.")
+    better_alternatives_list: str = Field(default="", description="Analyze ONLY the user's words (NEVER the bot's reply!). If the user used basic/crutch phrasing, give 1-2 genuinely better native upgrades ('user phrase -> stronger native idiom/verb'). Leave empty if user's short greeting is already natural.")
+    tone_and_why_en: str = Field(default="Tone: Clear and direct.", description="Evaluate ONLY the USER's message tone and explain why the user's phrasing was adjusted (e.g. indirect question order, preposition choice).")
+    recast_casual_en: str = Field(default="", description="How a native speaker naturally says the USER's message in Casual talk")
+    recast_professional_en: str = Field(default="", description="How a native speaker naturally expresses the USER's intent in a real workplace (NO stiff robot-speak!)")
+    recast_formal_en: str = Field(default="", description="How a native writer expresses the USER's point in authentic executive/academic prose (use natural words like 'cumbersome/counterproductive', NEVER robotic parodies!)")
+    spoken_flow_en: str = Field(default="", description="Phonetic & connected-speech tip for pronouncing the USER's corrected sentence naturally")
+    key_expressions_en: str = Field(default="", description="Pick 2 expressions from dialogue_en. Put each on a NEW line: • expression 1 — short meaning. 'Example.' | • expression 2 — short meaning. 'Example.' | • Try next: target phrase")
+    arabic_translation_and_notes: str = Field(default="", description="1) حرفياً (أصل الصورة الذهنية الحرفية): ... | 2) الأمثل (الترجمة العربية الفصيحة الطبيعية): ... | 3) تفكيك أصل الصورة المجازية للتعبيرين.")
 
 class StudyMinerSchema(BaseModel):
     dossier_title_en: str = Field(default="Linguistic Analysis & Expression Dossier", description="Title")
@@ -623,14 +623,23 @@ def _fmt_fixes(raw: str, strike: bool = True) -> str:
     return "\n".join(out)
 
 SYS_PROMPT = """
-You are the linguistic engine of 'Musa's NYC Lounge'.
-1. Write all primary explanations, definitions, and style notes in clear, direct English.
-2. In Arabic fields (`arabic_*`), provide BOTH the Literal Mental Image (`حرفياً: ...`) and Optimal Arabic Translation (`الأمثل: ...`).
-3. Put ONLY actual errors in `error_corrections_list` (`wrong -> right`). Put stylistic upgrades for simple words in `better_alternatives_list` (`simple -> stronger`).
-4. Isolate registers strictly:
-   - Casual: everyday spoken American English, modern slang, phrasal verbs, contractions (gonna/wanna), ellipsis.
-   - Professional: workplace, meetings, diplomatic turn-taking, clear idioms.
-   - Formal: concise academic, policy, and executive prose.
+You are the linguistic engine of 'Musa's NYC Lounge'. Obey these 6 laws strictly:
+1. ANALYZE ONLY THE USER'S WORDS:
+   - `error_corrections_list`, `better_alternatives_list`, `tone_and_why_en`, `recast_*`, and `spoken_flow_en` must evaluate ONLY what the USER wrote—NEVER analyze or quote the bot's own `dialogue_en`!
+2. NO PEDANTIC PUNCTUATION OR FAKE SWAPS:
+   - Never flag missing commas in casual texting (e.g. 'Hey is that you Marcus?' is NOT an error).
+   - Do catch real syntactic/idiomatic issues (e.g. 'thinking of why X is...' -> 'wondering why X is...' or 'trying to figure out why...').
+   - If the user's short phrase (like 'Hey guys, what's new?') is already 100% natural, leave `better_alternatives_list` empty instead of suggesting pointless lateral swaps.
+3. BAN ROBOTIC CARICATURES IN PROFESSIONAL/FORMAL RECASTS:
+   - Never write stiff, inhuman sentences like 'I am analyzing the factors contributing to the bot's perceived annoyance' or 'May I verify whether you are Marcus?'.
+   - Always write how real, articulate humans actually speak and write in workplace and executive contexts.
+4. CONVERSATIONAL CONTINUITY & MEMORY:
+   - If the user addresses a specific speaker (e.g. Chloe or Marcus) or answers a speaker's question, that SAME speaker must reply.
+   - Always acknowledge the user's real-life context first (e.g. if they say they are at work, or annoyed, react to that directly) and never repeat stale topics like 'client presentation/demo'.
+5. CLEAN MULTI-LINE KEY EXPRESSIONS:
+   - In `key_expressions_en`, put each expression on its own separate line starting with '• '. Never cram multiple expressions into one paragraph with semicolons.
+6. TRUE METAPHORICAL LITERAL TRANSLATION:
+   - In Arabic notes, 'حرفياً' must explain the literal physical/metaphorical image of the idiom (e.g. 'a real pain' = 'حرفياً: ألم/وجع رأس حقيقي' NOT 'عبء'; 'wrapped up' = 'حرفياً: لفّ الحزمة وطواها').
 """
 
 def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool = False):
@@ -661,6 +670,7 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
     if data.better_alternatives_list.strip():
         blocks.append(f"<b>Better Alternatives</b>\n{_fmt_fixes(data.better_alternatives_list, strike=False)}")
 
+    clean_ke = "\n".join([f"• {_h(ln.strip().lstrip('•-* '))}" for ln in data.key_expressions_en.replace("; ", "\n").replace(" | ", "\n").splitlines() if ln.strip()])
     drawer_en = (
         f"<b>Notes, Register Phrasing &amp; Expressions ▼</b>\n\n"
         f"<b>1. Tone &amp; Adjustments</b>\n{_h(data.tone_and_why_en)}\n\n───\n"
@@ -669,7 +679,7 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
         f"• <b>Professional:</b> <i>\"{_h(data.recast_professional_en)}\"</i>\n"
         f"• <b>Formal:</b> <b>\"{_h(data.recast_formal_en)}\"</b>\n"
         f"• <b>Spoken Flow:</b> {_h(data.spoken_flow_en)}\n\n───\n"
-        f"<b>3. Key Expressions</b>\n{_h(data.key_expressions_en)}"
+        f"<b>3. Key Expressions</b>\n{clean_ke}"
     )
     drawer_ar = f"<b>Translation &amp; Arabic Notes ▼</b>\n\n{_h(data.arabic_translation_and_notes)}"
 
@@ -808,11 +818,25 @@ def handle_incoming_message(message: types.Message):
             return
         if low in ("/start", "/help", "/new", "new topic") or low in ("/chat", "/lounge") or txt.startswith(("Chat", "💬")):
             _update_session(uid, mode="CHAT", sub_state="", clear_hist=(low in ("/start", "/new")))
-            send_html_safe(
-                chat_id,
-                "<b>Chloe</b>\nHi Musa—good to see you. We were just discussing how teams handle sudden changes in plans without losing momentum. What’s on your mind today?",
-                reply_markup=build_reply_kb(uid),
-            )
+            import random
+            reg_now = _get_session(uid)["register"]
+            openers_pool = {
+                "Casual": [
+                    "<b>Jake</b>\nHey Musa—how's your day going so far? Anything interesting happening at work, or just trying to get through the shift?",
+                    "<b>Chloe</b>\nHey Musa! We were just talking about how hard it is to focus when you've got ten things pulling at your attention. How's your energy today?",
+                    "<b>Marcus</b>\nWhat's up, Musa? Jump in—we can talk about whatever's on your mind today.",
+                ],
+                "Professional": [
+                    "<b>Chloe</b>\nHi Musa. Good to catch you between tasks—how is your workday going so far, or what topic would you like to dive into?",
+                    "<b>Marcus</b>\nHello Musa. Whether you want to talk through a workplace scenario or just unwind with a good discussion, the floor is yours.",
+                ],
+                "Formal": [
+                    "<b>Marcus</b>\nWelcome, Musa. What question, policy dilemma, or idea shall we examine today?",
+                    "<b>Chloe</b>\nGood day, Musa. Feel free to share any topic or argument you would like to explore in depth.",
+                ],
+            }
+            chosen_opener = random.choice(openers_pool.get(reg_now, openers_pool["Professional"]))
+            send_html_safe(chat_id, chosen_opener, reply_markup=build_reply_kb(uid))
             return
         if low == "/podcast" or txt.startswith(("Podcast", "🎙️")):
             _update_session(uid, mode="PODCAST")
