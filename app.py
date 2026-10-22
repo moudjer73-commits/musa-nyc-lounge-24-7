@@ -184,7 +184,7 @@ def _init_tables():
             CREATE TABLE IF NOT EXISTS session_v15 (
                 user_id INTEGER PRIMARY KEY,
                 mode TEXT DEFAULT 'CHAT',
-                register_level TEXT DEFAULT 'Professional',
+                register_level TEXT DEFAULT 'Semi-formal',
                 podcast_hosts INTEGER DEFAULT 3,
                 sub_state TEXT DEFAULT '',
                 history_json TEXT DEFAULT '[]'
@@ -395,7 +395,7 @@ def _get_session(user_id: int) -> Dict[str, Any]:
                 return {"mode": row[0] or "CHAT", "register": row[1] or "Professional", "podcast_hosts": int(row[2] or 3), "sub_state": row[3] or "", "history": clean_h}
     except Exception:
         pass
-    return {"mode": "CHAT", "register": "Professional", "podcast_hosts": 3, "sub_state": "", "history": []}
+    return {"mode": "CHAT", "register": "Semi-formal", "podcast_hosts": 3, "sub_state": "", "history": []}
 
 def _update_session(user_id: int, mode: Optional[str] = None, register: Optional[str] = None, podcast_hosts: Optional[int] = None, sub_state: Optional[str] = None, new_turn: Optional[Dict[str, str]] = None, clear_hist: bool = False):
     try:
@@ -1053,8 +1053,8 @@ def build_reply_kb(user_id: int) -> types.ReplyKeyboardMarkup:
     m, r = s["mode"], s["register"]
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
     kb.row(
-        types.KeyboardButton("Casual •" if r == "Casual" else "Casual"),
-        types.KeyboardButton("Professional •" if r == "Professional" else "Professional"),
+        types.KeyboardButton("Informal •" if r == "Informal" else "Informal"),
+        types.KeyboardButton("Semi-formal •" if r == "Semi-formal" else "Semi-formal"),
         types.KeyboardButton("Formal •" if r == "Formal" else "Formal"),
         types.KeyboardButton("💎 Vault"),
         types.KeyboardButton("📡 Radar"),
@@ -1528,23 +1528,23 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
 
     # المسار الأساسي للمسودات والجمل (Precision Editor — يتكيف بصرامة مع Casual أو Professional أو Formal!)
     reg_rules = {
-        "Casual": (
-            "ACTIVE REGISTER: CASUAL (Spoken NYC).\n"
-            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be authentic everyday spoken American idioms/phrasal verbs (e.g. for 'I feel so tired': 'wiped out', 'running on fumes', 'dead on my feet', 'beat')."
+        "Informal": (
+            "ACTIVE REGISTER: INFORMAL (Natural Everyday Spoken & Idiomatic English).\n"
+            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be authentic everyday idioms, phrasal verbs, and relaxed conversational phrasing (e.g. for 'I feel so tired': 'wiped out', 'running on fumes', 'dead on my feet')."
         ),
-        "Professional": (
-            "ACTIVE REGISTER: PROFESSIONAL (Diplomatic Workplace / Executive).\n"
-            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be workplace-appropriate, tactful executive expressions (e.g. for 'I feel so tired': 'stretched thin', 'running low on bandwidth', 'at capacity', 'completely drained from back-to-back sessions').\n"
-            "- NEVER suggest casual slang like 'wiped out' or 'dead on my feet' in Professional mode!"
+        "Semi-formal": (
+            "ACTIVE REGISTER: SEMI-FORMAL (Polished, Articulate Standard English — Cambridge C1/C2 Neutral-Polite Register).\n"
+            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be clear, well-spoken, polite standard English suitable for educated conversation, serious discussions, or general correspondence across ANY life topic (e.g. for 'I feel so tired': 'completely drained', 'running low on energy', 'feeling the strain of a long week').\n"
+            "- CRITICAL: Do NOT force corporate/office buzzwords (like 'bandwidth' or 'Slack') unless the user's text is actually about office work! And do NOT use street slang!"
         ),
         "Formal": (
-            "ACTIVE REGISTER: FORMAL (Elevated C1/C2 Formal & Analytical Prose).\n"
-            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be elevated, formal C1/C2 vocabulary and collocations (e.g. for 'I feel so tired': 'thoroughly fatigued', 'considerably depleted', 'experiencing pronounced fatigue').\n"
-            "- CRITICAL: Keep the user's exact 1st-person perspective and meaning! NEVER turn 'I feel so tired' into an impersonal textbook statement like 'Extreme cognitive fatigue impairs...' or robotic purple prose like 'reached its absolute threshold'! NEVER suggest casual phrasal slang like 'wiped out'!"
+            "ACTIVE REGISTER: FORMAL (Elevated C2 Academic, Analytical & Diplomatic Prose).\n"
+            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be high-level C1/C2 formal vocabulary and collocations (e.g. for 'I feel so tired': 'thoroughly fatigued', 'considerably depleted', 'experiencing pronounced exhaustion').\n"
+            "- CRITICAL: Keep the user's exact 1st-person perspective and meaning! Never turn a personal statement into an impersonal medical textbook claim!"
         ),
     }
     task = (
-        f"PRECISION DRAFT & SPEECH EDITOR — {reg_rules.get(reg, reg_rules['Professional'])}\n"
+        f"PRECISION DRAFT & SPEECH EDITOR — {reg_rules.get(reg, reg_rules['Semi-formal'])}\n"
         "1. `surgical_diffs_en_ar`: ONLY flag genuine grammar, preposition, or collocation mistakes. If the sentence is grammatically valid (like 'I feel so tired'), write strictly: '• ✓ Grammatically solid—see register-specific upgrades below.'\n"
         "2. `lexical_upgrades_en_ar`: 3 upgrades strictly matching the ACTIVE REGISTER formatted as '• [user word] ➔ **[Register-matched expression]** ([Pure Modern Standard Arabic meaning—الفصحى السياقية الرصينة, zero slang!]) — \"[Natural example sentence]\"'.\n"
         "3. `your_turn_prompt_en`: 1-sentence prompt to practice one of the 3 upgrades."
@@ -1917,7 +1917,7 @@ def show_radar(chat_id: int, user_id: int):
 def send_guide(chat_id: int, user_id: int):
     g = (
         "<b>Musa’s NYC Lounge — V24 Studio Guide</b>\n\n"
-        "• <b>Top Bar:</b> Switch register (<b>Casual / Professional / Formal</b>) or open your <b>💎 Vault</b> and <b>📡 Radar</b> in 1 tap.\n"
+        "• <b>Top Bar:</b> Switch register (<b>Informal / Semi-formal / Formal</b>) or open your <b>💎 Vault</b> and <b>📡 Radar</b> in 1 tap.\n"
         "• <b>Bottom Bar (5 Core Modes):</b>\n"
         "1. <b>Chat:</b> Spontaneous NYC conversation with 1, 2, or all 3 hosts (toggle 🟢/⚪ anytime).\n"
         "2. <b>Lexicon:</b> 10-pillar dictionary &amp; activator (EN ⇄ AR) with IPA, Oxford Collocations, Hoey Priming &amp; Learner Traps.\n"
@@ -2031,19 +2031,31 @@ def handle_incoming_message(message: types.Message):
     if low in ("/radar", "radar") or txt.startswith(("Radar", "📡")):
         show_radar(chat_id, uid)
         return
-    if low in ("/casual", "/professional", "/formal") or txt.startswith(("Casual", "Professional", "Formal")):
-        r_target = "Casual" if "casual" in low else ("Formal" if "formal" in low else "Professional")
-        _update_session(uid, register=r_target)
-        send_html_safe(chat_id, f"<b>Register set to: {r_target}</b>", reply_markup=build_reply_kb(uid))
+    if low in ("/informal", "/casual", "/semiformal", "/semi-formal", "/professional", "/formal") or txt.startswith(("Informal", "Casual", "Semi-formal", "Professional", "Formal")):
+        if "informal" in low or "casual" in low:
+            r_target = "Informal"
+        elif "semi" in low or "professional" in low:
+            r_target = "Semi-formal"
+        else:
+            r_target = "Formal"
+        cur_s = _get_session(uid)
+        new_sub = "" if cur_s["mode"] == "PODCAST" else None
+        _update_session(uid, register=r_target, sub_state=new_sub)
+        reg_desc = {
+            "Informal": "Spoken idioms, phrasal verbs & relaxed everyday English",
+            "Semi-formal": "Polished, articulate standard English for general & educated contexts",
+            "Formal": "Elevated C2 academic, analytical & diplomatic prose",
+        }[r_target]
+        send_html_safe(chat_id, f"<b>Register set to: {r_target}</b>\n<i>({reg_desc})</i>", reply_markup=build_reply_kb(uid))
         return
     if low in ("/start", "/help", "/new", "/chat", "/lounge") or txt.startswith(("Chat", "💬")):
         reg_now = _get_session(uid)["register"]
         openers = {
-            "Casual": [
+            "Informal": [
                 ("Jake", f"Hey {en_name}—grab a seat. How's your day going so far, or what's on your mind?"),
                 ("Chloe", f"Hey {en_name}! Good to see you in the lounge. What are we getting into today?"),
             ],
-            "Professional": [
+            "Semi-formal": [
                 ("Chloe", f"Hi {en_name}. Whether you want to talk through a workplace situation or test an idea, the floor is yours."),
                 ("Marcus", f"Hello {en_name}. What topic or scenario shall we unpack today?"),
             ],
@@ -2051,7 +2063,7 @@ def handle_incoming_message(message: types.Message):
                 ("Marcus", f"Welcome, {en_name}. Share any policy question, theoretical argument, or thesis point you would like to examine."),
             ],
         }
-        spk_op, line_op = random.choice(openers.get(reg_now, openers["Professional"]))
+        spk_op, line_op = random.choice(openers.get(reg_now, openers["Semi-formal"]))
         _update_session(
             uid,
             mode="CHAT",
