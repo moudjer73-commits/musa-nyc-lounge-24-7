@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os, sys, time, json, re, html, base64, shutil, sqlite3, hashlib, tempfile, threading, traceback, asyncio, subprocess, logging
+import os, sys, time, json, re, html, base64, shutil, sqlite3, hashlib, tempfile, threading, traceback, asyncio, subprocess, logging, random
 
 for _m, _p in [
     ("telebot", "pyTelegramBotAPI"), ("genai", "google-genai"), ("groq", "groq"),
@@ -41,14 +41,15 @@ except Exception:
     HAS_PYPDF = False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("NYCLoungeV15_2")
+logger = logging.getLogger("NYCLoungeV16")
 
 PRIMARY_OWNER_ID = "8874707150"
 HF_REPO_ID = "moudjer/musa-nyc-lounge-vault"
 EMBEDDED_HF_REV_B64 = "==AWVd0YClmbM5UQsNVRJh3SRl0cotkY1pUR4hlRGd3QmNGZfZGa"
 EMBEDDED_CFG_B64 = "fSJ0bHVhdi1lZ251b2wtY3luLWFzdW0vcmVqZHVvbSIgOiJPUEVSX0JEX0ZIIiAsIlhVR2NCaW5MTkFsU0VJeEtRSXNoS2J1SkV4WEZGd0NmY2RfZmgiIDoiTkVLT1RfRkgiICwiaHNhbGYtNS4zLWluaW1lZyIgOiJMRURPTV9JTklNRUdfREVJRklSRVYiICwiVUY3ZDF0YVVkNGR4SFlVRnhUNWRuQ05MWUYzYnlkR1dIV0VncWNpYVEyODJpODhWQ2p4NV9rc2csbE1rV2I5eERaSjFSMHEzd0RPMlZpN2RHWUYzYnlkR1dOVWhMMW1tZVJUYUsyYThDc1prOV9rc2ciIDoiU1lFS19RT1JHX0RFSUZJUkVWIiAsIkFNTEowcmMtRzctZERvMkxaWUEtNTQyM29EV0pjV0R6ME5NZTJyVEROZHhJNk5SOGJBLlFBLGd3X3FvX2hqQy02Qlk1bld4cEhTUFNaQ016REtSV2FYR1Z1NE91NEhHcVNMNk5SOGJBLlFBLFEzSzI4V1pESU9wV1ptZjhRaGJQZzVvS21wRUxEcHNZQU1BUHJ6NmF4c0xMNk5SOGJBLlFBLHdtandrWHEwWWZiTXJxTm02LWdqcENUQVV2d0lzZ2ExWmpHc0JKR1RneU1JNk5SOGJBLlFBIiA6IlNZRUtfSU5JTUVHX0RFSUZJUkVWIiAsIjR2UlU5OEZFRWllaXNVZVItZEU2UWtWLUw4RnhKV1A0RkFBOjI3MDYzODI2OTgiIDoiTkVLT1RfR1RfREVJRklSRVYiew=="
 
-DB_PATH = "/content/musa_nyc_lounge_v8.db" if os.path.exists("/content") else "/tmp/musa_nyc_lounge_v8.db"
+# استخدام مسار في /tmp مضمون الكتابة 100% على جميع أنظمة التشغيل
+DB_PATH = "/tmp/musa_nyc_lounge_active.db"
 os.makedirs("/tmp/tts_cache_hd", exist_ok=True)
 os.makedirs("/tmp/pdf_exports", exist_ok=True)
 
@@ -66,15 +67,25 @@ def _bootstrap():
                     os.environ[k] = json.dumps(v) if isinstance(v, (list, dict)) else str(v)
         except Exception:
             pass
+
     if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) < 4096:
-        tok = os.environ.get("HF_TOKEN", "").strip()
-        if tok:
-            try:
-                dl = hf_hub_download(repo_id=HF_REPO_ID, filename="musa_nyc_lounge_v8.db", repo_type="dataset", token=tok)
-                shutil.copyfile(dl, DB_PATH)
-                os.chmod(DB_PATH, 0o666)
-            except Exception:
-                pass
+        if os.path.exists("/content/musa_nyc_lounge_v8.db") and os.path.getsize("/content/musa_nyc_lounge_v8.db") >= 4096:
+            with open("/content/musa_nyc_lounge_v8.db", "rb") as sf, open(DB_PATH, "wb") as df:
+                df.write(sf.read())
+        else:
+            tok = os.environ.get("HF_TOKEN", "").strip()
+            if tok:
+                try:
+                    dl = hf_hub_download(repo_id=HF_REPO_ID, filename="musa_nyc_lounge_v8.db", repo_type="dataset", token=tok)
+                    with open(dl, "rb") as sf, open(DB_PATH, "wb") as df:
+                        df.write(sf.read())
+                except Exception:
+                    pass
+    try:
+        if os.path.exists(DB_PATH):
+            os.chmod(DB_PATH, 0o666)
+    except Exception:
+        pass
 
 _bootstrap()
 
@@ -108,7 +119,7 @@ def _collect_groq_keys() -> List[str]:
     return _parse_key_list(["VERIFIED_GROQ_KEYS", "GROQ_API_KEY", "GROQ_KEYS"])
 
 # ------------------------------------------------------------------------------
-# جداول v15 المعزولة والنظيفة تماماً
+# قاعدة البيانات المعزولة والمحصنة ضد القراءة فقط
 # ------------------------------------------------------------------------------
 _db_lock = threading.Lock()
 _last_sync_ts = 0.0
@@ -120,10 +131,9 @@ def db_connect() -> sqlite3.Connection:
     except Exception:
         pass
     conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
-def _init_v15_tables():
+def _init_v16_tables():
     with _db_lock, db_connect() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS session_v15 (
@@ -173,28 +183,9 @@ def _init_v15_tables():
                 quiz_json TEXT DEFAULT '{}'
             )
         """)
-        try:
-            cnt = conn.execute("SELECT COUNT(*) FROM vault_v15").fetchone()[0]
-            if cnt == 0:
-                old_info = conn.execute("PRAGMA table_info(lexical_vault)").fetchall()
-                if old_info:
-                    c_names = [r[1] for r in old_info]
-                    old_rows = conn.execute("SELECT * FROM lexical_vault").fetchall()
-                    for r in old_rows:
-                        d = dict(zip(c_names, r))
-                        chk = d.get("chunk") or d.get("phrase") or d.get("expression") or d.get("word") or ""
-                        ar = d.get("meaning_ar") or d.get("meaning") or d.get("translation") or ""
-                        ctx = d.get("context_sentence") or d.get("context") or d.get("example") or ""
-                        if str(chk).strip():
-                            conn.execute(
-                                "INSERT INTO vault_v15 (user_id, chunk, meaning_ar, context_sentence, srs_stage) VALUES (?, ?, ?, ?, 1)",
-                                (int(PRIMARY_OWNER_ID), str(chk).strip(), str(ar).strip(), str(ctx).strip()),
-                            )
-        except Exception:
-            pass
         conn.commit()
 
-_init_v15_tables()
+_init_v16_tables()
 
 def sync_db_async(force: bool = False):
     global _last_sync_ts
@@ -206,9 +197,9 @@ def sync_db_async(force: bool = False):
         return
     def _up():
         try:
-            tmp = f"/tmp/db_{int(time.time())}.db"
+            tmp = f"/tmp/db_sync_{int(time.time())}.db"
             with _db_lock:
-                shutil.copy2(DB_PATH, tmp)
+                shutil.copyfile(DB_PATH, tmp)
             HfApi(token=hf_tok).upload_file(path_or_fileobj=tmp, path_in_repo="musa_nyc_lounge_v8.db", repo_id=HF_REPO_ID, repo_type="dataset")
             os.remove(tmp)
         except Exception:
@@ -299,35 +290,21 @@ def _log_dna(user_id: int, corr_lines: str):
         pass
 
 # ------------------------------------------------------------------------------
-# محرك الذكاء الاصطناعي السريع (Groq + Gemini)
+# محرك الذكاء الاصطناعي السريع بمهلة 8 ثوانٍ وتخطي المفاتيح المستنفدة فوراً
 # ------------------------------------------------------------------------------
-_PINNED_GROQ: Optional[Tuple[str, str]] = None
-_PINNED_GEMINI: Optional[Tuple[str, str]] = None
+FAST_GROQ_MODELS = [
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
+FAST_GEMINI_MODELS = [
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+]
 
-def _discover_groq_models(client: Groq) -> List[str]:
-    cands = []
-    try:
-        for m in getattr(client.models.list(), "data", []):
-            mid = getattr(m, "id", "") or ""
-            low = mid.lower()
-            if not any(x in low for x in ("whisper", "guard", "tts", "playai", "orpheus", "embed", "vision", "allam", "deepseek")):
-                cands.append(mid)
-    except Exception:
-        pass
-    cands.sort(key=lambda x: 1 if "llama-3.3-70b" in x.lower() or "llama-4" in x.lower() else (2 if "70b" in x.lower() else 4))
-    return cands[:5] if cands else ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-
-def _discover_gemini_models(client: genai.Client) -> List[str]:
-    cands = []
-    try:
-        for m in client.models.list():
-            sn = (getattr(m, "name", "") or "").replace("models/", "")
-            if "gemini" in sn.lower() and not any(x in sn.lower() for x in ("embedding", "imagen", "veo", "aqa", "tts", "audio", "learnlm")):
-                cands.append(sn)
-    except Exception:
-        pass
-    cands.sort(key=lambda x: 1 if "2.5-flash-lite" in x else (2 if "2.0-flash" in x else (3 if "flash" in x else 6)))
-    return cands[:5] if cands else ["gemini-2.5-flash-lite", "gemini-2.0-flash"]
+_COOLDOWN_UNTIL: Dict[str, float] = {}
+_LAST_GOOD_ROUTE: Optional[Tuple[str, str, str]] = None
 
 def _parse_schema_safe(raw_txt: str, schema_cls: Any) -> Any:
     t = re.sub(r"<think>.*?</think>", "", (raw_txt or "").strip(), flags=re.DOTALL).strip()
@@ -351,60 +328,74 @@ def _parse_schema_safe(raw_txt: str, schema_cls: Any) -> Any:
             return schema_cls(**clean_d)
         raise
 
+def _try_single_route(prov: str, api_key: str, model_id: str, sys_p: str, usr_p: str, j_inst: str, schema_cls: Any, temp: float) -> Any:
+    if prov == "groq":
+        gc = Groq(api_key=api_key, timeout=8.5, max_retries=0)
+        cc = gc.chat.completions.create(
+            model=model_id,
+            messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
+            response_format={"type": "json_object"},
+            temperature=temp,
+        )
+        return _parse_schema_safe(cc.choices[0].message.content, schema_cls)
+    else:
+        mc = genai.Client(api_key=api_key, http_options={"timeout": 9000})
+        resp = mc.models.generate_content(
+            model=model_id,
+            contents=usr_p,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=sys_p + j_inst,
+                response_mime_type="application/json",
+                response_schema=schema_cls,
+                temperature=temp,
+            ),
+        )
+        if resp and resp.text:
+            return _parse_schema_safe(resp.text, schema_cls)
+        raise RuntimeError("Empty Gemini response")
+
 def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0.6) -> Any:
-    global _PINNED_GROQ, _PINNED_GEMINI
+    global _LAST_GOOD_ROUTE
     f_names = list(schema_cls.model_fields.keys())
     f_desc = "\n".join([f'- "{k}": {v.description}' for k, v in schema_cls.model_fields.items()])
-    j_inst = f"\n\nReturn strictly a flat JSON object with these keys:\n{f_desc}\nRequired keys: {json.dumps(f_names)}. Every string field must be a plain string."
+    j_inst = f"\n\nReturn strictly a flat JSON object with these keys:\n{f_desc}\nRequired keys: {json.dumps(f_names)}. Every string field must be a plain string (never HTML-encode apostrophes)."
 
-    if _PINNED_GROQ:
-        gk, gm = _PINNED_GROQ
-        try:
-            cc = Groq(api_key=gk, timeout=14.0).chat.completions.create(
-                model=gm, messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
-                response_format={"type": "json_object"}, temperature=temp,
-            )
-            return _parse_schema_safe(cc.choices[0].message.content, schema_cls)
-        except Exception:
-            _PINNED_GROQ = None
+    now = time.time()
+    if _LAST_GOOD_ROUTE:
+        prov, k, m = _LAST_GOOD_ROUTE
+        if _COOLDOWN_UNTIL.get(f"{prov}:{k}:{m}", 0) < now:
+            try:
+                return _try_single_route(prov, k, m, sys_p, usr_p, j_inst, schema_cls, temp)
+            except Exception as e:
+                _COOLDOWN_UNTIL[f"{prov}:{k}:{m}"] = now + (90 if "429" in str(e) or "rate" in str(e).lower() else 30)
+                _LAST_GOOD_ROUTE = None
 
+    routes = []
     for gk in _collect_groq_keys():
+        for gm in FAST_GROQ_MODELS:
+            routes.append(("groq", gk, gm))
+    for mk in _collect_gemini_keys():
+        for gm_id in FAST_GEMINI_MODELS:
+            routes.append(("gemini", mk, gm_id))
+
+    for prov, k, m in routes:
+        r_key = f"{prov}:{k}:{m}"
+        if _COOLDOWN_UNTIL.get(r_key, 0) > time.time():
+            continue
         try:
-            gc = Groq(api_key=gk, timeout=14.0)
-            for gm in _discover_groq_models(gc):
-                try:
-                    cc = gc.chat.completions.create(
-                        model=gm, messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
-                        response_format={"type": "json_object"}, temperature=temp,
-                    )
-                    res = _parse_schema_safe(cc.choices[0].message.content, schema_cls)
-                    _PINNED_GROQ = (gk, gm)
-                    return res
-                except Exception:
-                    continue
-        except Exception:
+            res = _try_single_route(prov, k, m, sys_p, usr_p, j_inst, schema_cls, temp)
+            _LAST_GOOD_ROUTE = (prov, k, m)
+            return res
+        except Exception as e:
+            err_s = str(e).lower()
+            cd_sec = 120 if ("429" in err_s or "rate" in err_s or "quota" in err_s) else 30
+            _COOLDOWN_UNTIL[r_key] = time.time() + cd_sec
             continue
 
-    for mk in _collect_gemini_keys():
+    _COOLDOWN_UNTIL.clear()
+    for prov, k, m in routes[:4]:
         try:
-            mc = genai.Client(api_key=mk)
-            for gm_id in _discover_gemini_models(mc):
-                try:
-                    resp = mc.models.generate_content(
-                        model=gm_id, contents=usr_p,
-                        config=genai_types.GenerateContentConfig(
-                            system_instruction=sys_p + j_inst,
-                            response_mime_type="application/json",
-                            response_schema=schema_cls,
-                            temperature=temp,
-                        ),
-                    )
-                    if resp and resp.text:
-                        res = _parse_schema_safe(resp.text, schema_cls)
-                        _PINNED_GEMINI = (mk, gm_id)
-                        return res
-                except Exception:
-                    continue
+            return _try_single_route(prov, k, m, sys_p, usr_p, j_inst, schema_cls, temp)
         except Exception:
             continue
 
@@ -420,7 +411,8 @@ def _h(v: Any) -> str:
     return html.escape(raw, quote=False)
 
 def _clean_tts(t: str) -> str:
-    t = re.sub(r"<[^>]+>|\[[^\]]*\]|[\u0600-\u06FF]+", " ", str(t or ""))
+    t = html.unescape(str(t or ""))
+    t = re.sub(r"<[^>]+>|\[[^\]]*\]|[\u0600-\u06FF]+", " ", t)
     return re.sub(r"\s+", " ", re.sub(r"[^\x00-\x7F’'\",.!?;:\-\s()]+", " ", t)).strip()
 
 def build_audio(segments: List[Tuple[str, str]], slow: bool = False) -> Optional[str]:
@@ -428,12 +420,12 @@ def build_audio(segments: List[Tuple[str, str]], slow: bool = False) -> Optional
     valid = [(s, _clean_tts(re.sub(r"^\s*(Jake|Chloe|Marcus)\s*:\s*", "", t))) for s, t in segments if len(_clean_tts(t)) > 2]
     if not valid:
         return None
-    h_k = hashlib.md5(f"V15::{rate}::{'||'.join([f'{s}:{t}' for s,t in valid])}".encode()).hexdigest()
+    h_k = hashlib.md5(f"V16::{rate}::{'||'.join([f'{s}:{t}' for s,t in valid])}".encode()).hexdigest()
     cache_p = f"/tmp/tts_cache_hd/{h_k}.mp3"
     if os.path.exists(cache_p) and os.path.getsize(cache_p) > 800:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         tmp.close()
-        shutil.copy2(cache_p, tmp.name)
+        shutil.copyfile(cache_p, tmp.name)
         return tmp.name
     parts, list_f, out_p = [], tempfile.NamedTemporaryFile(delete=False, suffix=".txt").name, tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
     try:
@@ -461,7 +453,7 @@ def build_audio(segments: List[Tuple[str, str]], slow: bool = False) -> Optional
             except Exception:
                 pass
         if os.path.exists(out_p) and os.path.getsize(out_p) > 800:
-            shutil.copy2(out_p, cache_p)
+            shutil.copyfile(out_p, cache_p)
             return out_p
     except Exception:
         pass
@@ -480,7 +472,7 @@ def transcribe_voice(v_bytes: bytes) -> str:
     for gk in _collect_groq_keys():
         try:
             with open(target, "rb") as af:
-                tr = Groq(api_key=gk, timeout=15.0).audio.transcriptions.create(file=("v.mp3", af.read()), model="whisper-large-v3-turbo")
+                tr = Groq(api_key=gk, timeout=12.0).audio.transcriptions.create(file=("v.mp3", af.read()), model="whisper-large-v3-turbo")
             if tr and getattr(tr, "text", "").strip():
                 return tr.text.strip()
         except Exception:
@@ -510,24 +502,24 @@ def generate_pdf_sheet(pdf_data: Dict[str, Any]) -> Optional[str]:
         return None
 
 # ------------------------------------------------------------------------------
-# القوالب التحريرية المرنة
+# القوالب التحريرية المحصنة
 # ------------------------------------------------------------------------------
 class ChatSchema(BaseModel):
-    primary_speaker: str = Field(default="Jake", description="Speaker name ('Jake', 'Chloe', or 'Marcus'). MUST match whoever asked the previous question or whoever the user addressed by name!")
-    dialogue_en: str = Field(default="Jake: That makes total sense—let's talk it over. How do you see it playing out?", description="Natural 2-3 sentence spoken reply directly reacting to the user's exact situation/feeling first, then adding a fresh angle. Do NOT repeat old topics like 'client presentation'.")
-    has_actual_errors: bool = Field(default=False, description="True ONLY if the USER's message has real grammar, wrong verb/preposition, broken collocation, or indirect-question word-order errors. Ignore trivial texting commas!")
-    error_corrections_list: str = Field(default="", description="Analyze ONLY the user's message. Format each real fix on a new line: 'user wrong phrase -> natural fix'. Leave empty if user's sentence is already natural.")
-    better_alternatives_list: str = Field(default="", description="Analyze ONLY the user's words (NEVER the bot's reply!). If the user used basic/crutch phrasing, give 1-2 genuinely better native upgrades ('user phrase -> stronger native idiom/verb'). Leave empty if user's short greeting is already natural.")
-    tone_and_why_en: str = Field(default="Tone: Clear and direct.", description="Evaluate ONLY the USER's message tone and explain why the user's phrasing was adjusted (e.g. indirect question order, preposition choice).")
+    primary_speaker: str = Field(default="Jake", description="Speaker name ('Jake', 'Chloe', or 'Marcus'). MUST match whoever the user addressed by name or whoever spoke last!")
+    dialogue_en: str = Field(default="Jake: That makes total sense—let's talk it over. How do you see it playing out?", description="Natural 2-3 sentence spoken reply reacting directly to the user's exact situation/feeling first, then adding a fresh angle.")
+    has_actual_errors: bool = Field(default=False, description="True if the USER's message has ANY grammar, verb-preposition trap (like 'discuss about'), collocation error (like 'take a fast decision'), or indirect-question word-order error. Ignore missing commas in casual texting!")
+    error_corrections_list: str = Field(default="", description="Analyze ONLY the user's message. Put every grammar, preposition ('discuss with X about Y' -> 'talk to X about Y' or 'discuss Y with X'), and collocation ('take a fast decision' -> 'make a quick decision') error here on separate lines as 'wrong phrase -> right phrase'.")
+    better_alternatives_list: str = Field(default="", description="Analyze ONLY the user's words (NEVER the bot's reply!). Give 1-2 stronger native idioms/upgrades for already-correct simple phrases ('user phrase -> stronger native phrase'). Leave empty if user's short greeting is already natural.")
+    tone_and_why_en: str = Field(default="Tone: Clear and direct.", description="Evaluate ONLY the USER's message tone and explain why the corrections were made.")
     recast_casual_en: str = Field(default="", description="How a native speaker naturally says the USER's message in Casual talk")
-    recast_professional_en: str = Field(default="", description="How a native speaker naturally expresses the USER's intent in a real workplace (NO stiff robot-speak!)")
-    recast_formal_en: str = Field(default="", description="How a native writer expresses the USER's point in authentic executive/academic prose (use natural words like 'cumbersome/counterproductive', NEVER robotic parodies!)")
-    spoken_flow_en: str = Field(default="", description="Phonetic & connected-speech tip for pronouncing the USER's corrected sentence naturally")
+    recast_professional_en: str = Field(default="", description="How a native speaker naturally expresses the USER's intent in a real workplace (natural human speech, NO stiff robot-speak!)")
+    recast_formal_en: str = Field(default="", description="How a native writer expresses the USER's point in authentic executive/academic prose")
+    spoken_flow_en: str = Field(default="", description="Real connected-speech tip (linking, Flap-T, schwa) for pronouncing the USER's corrected sentence naturally")
     key_expressions_en: str = Field(default="", description="Pick 2 expressions from dialogue_en. Put each on a NEW line: • expression 1 — short meaning. 'Example.' | • expression 2 — short meaning. 'Example.' | • Try next: target phrase")
     arabic_translation_and_notes: str = Field(default="", description="1) حرفياً (أصل الصورة الذهنية الحرفية): ... | 2) الأمثل (الترجمة العربية الفصيحة الطبيعية): ... | 3) تفكيك أصل الصورة المجازية للتعبيرين.")
 
 class StudyMinerSchema(BaseModel):
-    dossier_title_en: str = Field(default="Linguistic Analysis & Expression Dossier", description="Title")
+    dossier_title_en: str = Field(default="Linguistic Analysis & Expression Dossier", description="Clean title")
     summary_or_corrections_en: str = Field(default="", description="Direct English answer, tone summary, or 'wrong -> right' fixes")
     core_output_en: str = Field(default="", description="Polished version of user's draft OR primary usable scenario sentence")
     casual_version_en: str = Field(default="", description="Casual everyday spoken version")
@@ -536,13 +528,13 @@ class StudyMinerSchema(BaseModel):
     phrasal_and_idioms_en: str = Field(default="", description="3 extracted phrasal verbs/idioms (or synonym comparisons) with original context & new example")
     collocations_and_templates_en: str = Field(default="", description="3 high-value word partners (collocations) + 2 reusable sentence templates with [Slots]")
     pragmatics_and_drill_en: str = Field(default="", description="Subtext, where synonym X works vs Y fails, and 1-line practice drill")
-    arabic_notes_and_translations: str = Field(default="", description="Literal (حرفياً) vs Optimal (الأمثل) Arabic translations of extracted expressions and nuances")
+    arabic_notes_and_translations: str = Field(default="", description="Literal (حرفياً) vs Optimal (الأمثل) Arabic translations of all extracted expressions and nuances")
 
 class PodcastSchema(BaseModel):
     episode_title_en: str = Field(default="Why Good Plans Lose Momentum", description="Episode title")
-    script_en: str = Field(default="", description="6-turn natural spoken script (Jake, Chloe, Marcus) with mid-sentence interruptions and backchanneling.")
+    script_en: str = Field(default="", description="6-turn natural spoken script (Jake, Chloe, Marcus). Put each speaker on a NEW line ('Jake: ...', 'Chloe: ...', 'Marcus: ...') with natural interruptions and backchanneling.")
     closing_question_to_user_en: str = Field(default="Musa, how do you usually handle this when it comes up?", description="Direct question to Musa")
-    key_expressions_and_rhythm_en: str = Field(default="", description="3 standout expressions with definitions/examples + fast-speech decoding tip")
+    key_expressions_and_rhythm_en: str = Field(default="", description="3 standout expressions with definitions/examples + real connected-speech tip (never invent fake word abbreviations)")
     audio_recap_script_en: str = Field(default="", description="1-sentence audio recap of the 3 key expressions")
     arabic_episode_notes: str = Field(default="", description="Literal (حرفياً) vs Optimal (الأمثل) Arabic translations of the 3 key expressions and summary")
 
@@ -602,9 +594,8 @@ def build_inline_kb(tok: str, ctype: str = "chat") -> types.InlineKeyboardMarkup
 
 def send_html_safe(chat_id: int, html_text: str, reply_markup: Any = None):
     try:
-        if len(html_text) <= 4090:
+        if len(html_text) <= 4080:
             return bot.send_message(chat_id, html_text, parse_mode="HTML", reply_markup=reply_markup)
-        # إذا تجاوزت البطاقة 4090 حرفاً، نرسل القسم الرئيسي والمطوية الإنجليزية أولاً، ثم المطوية العربية كاملةً دون بتر!
         if "<blockquote expandable><b>Translation" in html_text:
             part1, part2 = html_text.split("<blockquote expandable><b>Translation", 1)
             bot.send_message(chat_id, part1.strip()[:4050], parse_mode="HTML")
@@ -630,30 +621,28 @@ def _fmt_fixes(raw: str, strike: bool = True) -> str:
     return "\n".join(out)
 
 SYS_PROMPT = """
-You are the linguistic engine of 'Musa's NYC Lounge'. Obey these 6 laws strictly:
+You are the linguistic engine of 'Musa's NYC Lounge'. Obey these 7 laws strictly:
 1. ANALYZE ONLY THE USER'S WORDS:
    - `error_corrections_list`, `better_alternatives_list`, `tone_and_why_en`, `recast_*`, and `spoken_flow_en` must evaluate ONLY what the USER wrote—NEVER analyze or quote the bot's own `dialogue_en`!
 2. CATCH EVERY REAL GRAMMAR, PREPOSITION & COLLOCATION ERROR IN `error_corrections_list`:
    - Never flag missing commas in casual texting (e.g. 'Hey Chloe I am...' is NOT an error).
    - YOU MUST CATCH AND STRIKETHROUGH every verb-preposition trap and collocation calque in `error_corrections_list` (and set `has_actual_errors=True`)!
-   - Examples of MANDATORY `error_corrections_list` items:
+   - Mandatory `error_corrections_list` examples:
      * 'discuss with my boss about [X]' -> 'talk to my boss about [X]' (or 'discuss [X] with my boss' — 'discuss' NEVER takes 'about'!)
-     * 'take a fast decision' -> 'make a quick decision' (collocation error: we MAKE decisions, not take them!)
-     * 'explain me' -> 'explain to me', 'depend of' -> 'depend on', 'married with' -> 'married to'.
+     * 'take a fast decision' -> 'make a quick decision' (we MAKE decisions, not take them!)
+     * 'explain me' -> 'explain to me', 'depend of' -> 'depend on'.
    - Reserve `better_alternatives_list` ONLY for upgrading already-correct simple phrases into richer idioms.
-7. BAN HALLUCINATED PHONETICS:
-   - Never invent fake word truncations or acronyms (NEVER say 'paralysis' becomes 'pa-lis' or 'Don't get me started' becomes 'D-g-m-s'!).
-   - Only describe real American connected speech: linking consonants to vowels, Flap-T (water/better), dropping final /t/ or /d/ between consonants ('just_go'), and schwa /ə/ reduction.
 3. BAN ROBOTIC CARICATURES IN PROFESSIONAL/FORMAL RECASTS:
-   - Never write stiff, inhuman sentences like 'I am analyzing the factors contributing to the bot's perceived annoyance' or 'May I verify whether you are Marcus?'.
-   - Always write how real, articulate humans actually speak and write in workplace and executive contexts.
+   - Write how real, articulate humans actually speak and write in workplace and executive contexts.
 4. CONVERSATIONAL CONTINUITY & MEMORY:
-   - If the user addresses a specific speaker (e.g. Chloe or Marcus) or answers a speaker's question, that SAME speaker must reply.
-   - Always acknowledge the user's real-life context first (e.g. if they say they are at work, or annoyed, react to that directly) and never repeat stale topics like 'client presentation/demo'.
+   - If the user addresses a specific speaker (e.g. Chloe or Marcus), that SAME speaker must reply.
+   - Always acknowledge the user's real-life context first.
 5. CLEAN MULTI-LINE KEY EXPRESSIONS:
-   - In `key_expressions_en`, put each expression on its own separate line starting with '• '. Never cram multiple expressions into one paragraph with semicolons.
+   - Put each expression on its own separate line starting with '• '.
 6. TRUE METAPHORICAL LITERAL TRANSLATION:
-   - In Arabic notes, 'حرفياً' must explain the literal physical/metaphorical image of the idiom (e.g. 'a real pain' = 'حرفياً: ألم/وجع رأس حقيقي' NOT 'عبء'; 'wrapped up' = 'حرفياً: لفّ الحزمة وطواها').
+   - In Arabic notes, 'حرفياً' must explain the literal physical/metaphorical image of the idiom.
+7. BAN HALLUCINATED PHONETICS:
+   - Never invent fake word truncations or acronyms. Only describe real connected speech (linking, Flap-T, schwa /ə/).
 """
 
 def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool = False):
@@ -771,7 +760,6 @@ def execute_podcast(chat_id: int, user_id: int, topic: str = "", hosts: int = 3)
         f"<blockquote expandable><b>Translation &amp; Arabic Notes ▼</b>\n\n{_h(data.arabic_episode_notes)}</blockquote>"
     )
     tok = hashlib.md5(f"POD:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    # تقسيم الحوار الصوتي جملةً بجملة بين أصوات Jake و Chloe و Marcus الحقيقية
     segs = []
     normalized_lines = re.sub(r"(?:^|\n|\s)+(Jake|Chloe|Marcus)\s*:\s*", r"\n\1: ", data.script_en).strip().splitlines()
     for ln in normalized_lines:
@@ -782,6 +770,7 @@ def execute_podcast(chat_id: int, user_id: int, topic: str = "", hosts: int = 3)
         segs = [("Jake", data.script_en)]
     if data.audio_recap_script_en.strip():
         segs.append(("Marcus", f"Key expressions from this episode: {data.audio_recap_script_en}"))
+
     pdf_d = {"title": data.episode_title_en, "register": reg, "main_en": data.script_en, "instant_fix": data.closing_question_to_user_en, "diagnosis_en": data.key_expressions_and_rhythm_en, "ar_anchor": data.arabic_episode_notes}
     store_card(tok, user_id, segs, pdf_d, [(data.episode_title_en, data.arabic_episode_notes[:200], data.key_expressions_and_rhythm_en[:200])], data.arabic_episode_notes)
 
@@ -834,59 +823,61 @@ def handle_incoming_message(message: types.Message):
     uid = message.from_user.id if getattr(message, "from_user", None) else int(PRIMARY_OWNER_ID)
     txt = (message.text or message.caption or "").strip()
     low = txt.lower()
+
+    if low in ("/guide", "guide", "user guide"):
+        send_guide(chat_id, uid)
+        return
+    if low in ("/start", "/help", "/new", "new topic") or low in ("/chat", "/lounge") or txt.startswith(("Chat", "💬")):
+        _update_session(uid, mode="CHAT", sub_state="", clear_hist=(low in ("/start", "/new")))
+        reg_now = _get_session(uid)["register"]
+        openers_pool = {
+            "Casual": [
+                "<b>Jake</b>\nHey Musa—how's your day going so far? Anything interesting happening at work, or just trying to get through the shift?",
+                "<b>Chloe</b>\nHey Musa! We were just talking about how hard it is to focus when ten things are pulling at your attention. How's your energy today?",
+                "<b>Marcus</b>\nWhat's up, Musa? Jump in—we can talk about whatever's on your mind today.",
+            ],
+            "Professional": [
+                "<b>Chloe</b>\nHi Musa. Good to catch you between tasks—how is your workday going so far, or what topic would you like to dive into?",
+                "<b>Marcus</b>\nHello Musa. Whether you want to talk through a workplace scenario or unwind with a good discussion, the floor is yours.",
+            ],
+            "Formal": [
+                "<b>Marcus</b>\nWelcome, Musa. What question, policy dilemma, or idea shall we examine today?",
+                "<b>Chloe</b>\nGood day, Musa. Feel free to share any topic or argument you would like to explore in depth.",
+            ],
+        }
+        send_html_safe(chat_id, random.choice(openers_pool.get(reg_now, openers_pool["Professional"])), reply_markup=build_reply_kb(uid))
+        return
+    if low == "/podcast" or txt.startswith(("Podcast", "🎙️")):
+        _update_session(uid, mode="PODCAST")
+        kb = types.InlineKeyboardMarkup()
+        kb.row(types.InlineKeyboardButton("2 Hosts (Duo)", callback_data="edpod:2"), types.InlineKeyboardButton("3 Hosts (Roundtable)", callback_data="edpod:3"))
+        send_html_safe(chat_id, "<b>Podcast Studio</b>\nTap below for an instant episode, or type any topic:", reply_markup=kb)
+        return
+    if low == "/study" or txt.startswith(("Study", "📚")):
+        _update_session(uid, mode="STUDY")
+        send_html_safe(chat_id, "<b>Study &amp; Expression Miner</b>\nSend any word, question, draft paragraph, article, PDF, image, or voice recording:", reply_markup=build_reply_kb(uid))
+        return
+    if low == "/quiz" or txt.startswith(("Quiz", "🎯")):
+        _update_session(uid, mode="QUIZ")
+        send_quiz(chat_id, uid)
+        return
+    if low == "/vault" or txt.startswith(("Vault", "💎")):
+        show_vault(chat_id, uid)
+        return
+    if low in ("/casual", "/informal", "/professional", "/semiformal", "/formal") or txt.startswith(("Casual", "Professional", "Formal", "🟢", "🔵", "🟣")):
+        r_target = "Casual" if ("casual" in low or "informal" in low or txt.startswith("🟢")) else ("Formal" if ("formal" in low and "semi" not in low and not txt.startswith("🔵")) else "Professional")
+        _update_session(uid, register=r_target)
+        send_html_safe(chat_id, f"<b>Register set to: {r_target}</b>", reply_markup=build_reply_kb(uid))
+        return
+
+    # إشعار استلام فوري خلال 0.2 ثانية يحذف نفسه فور جاهزية البطاقة
+    ack_msg = None
     try:
-        bot.send_chat_action(chat_id, "typing")
+        ack_msg = bot.send_message(chat_id, "✍️ ...")
     except Exception:
         pass
-    try:
-        if low in ("/guide", "guide", "user guide"):
-            send_guide(chat_id, uid)
-            return
-        if low in ("/start", "/help", "/new", "new topic") or low in ("/chat", "/lounge") or txt.startswith(("Chat", "💬")):
-            _update_session(uid, mode="CHAT", sub_state="", clear_hist=(low in ("/start", "/new")))
-            import random
-            reg_now = _get_session(uid)["register"]
-            openers_pool = {
-                "Casual": [
-                    "<b>Jake</b>\nHey Musa—how's your day going so far? Anything interesting happening at work, or just trying to get through the shift?",
-                    "<b>Chloe</b>\nHey Musa! We were just talking about how hard it is to focus when you've got ten things pulling at your attention. How's your energy today?",
-                    "<b>Marcus</b>\nWhat's up, Musa? Jump in—we can talk about whatever's on your mind today.",
-                ],
-                "Professional": [
-                    "<b>Chloe</b>\nHi Musa. Good to catch you between tasks—how is your workday going so far, or what topic would you like to dive into?",
-                    "<b>Marcus</b>\nHello Musa. Whether you want to talk through a workplace scenario or just unwind with a good discussion, the floor is yours.",
-                ],
-                "Formal": [
-                    "<b>Marcus</b>\nWelcome, Musa. What question, policy dilemma, or idea shall we examine today?",
-                    "<b>Chloe</b>\nGood day, Musa. Feel free to share any topic or argument you would like to explore in depth.",
-                ],
-            }
-            chosen_opener = random.choice(openers_pool.get(reg_now, openers_pool["Professional"]))
-            send_html_safe(chat_id, chosen_opener, reply_markup=build_reply_kb(uid))
-            return
-        if low == "/podcast" or txt.startswith(("Podcast", "🎙️")):
-            _update_session(uid, mode="PODCAST")
-            kb = types.InlineKeyboardMarkup()
-            kb.row(types.InlineKeyboardButton("2 Hosts (Duo)", callback_data="edpod:2"), types.InlineKeyboardButton("3 Hosts (Roundtable)", callback_data="edpod:3"))
-            send_html_safe(chat_id, "<b>Podcast Studio</b>\nTap below for an instant episode, or type any topic:", reply_markup=kb)
-            return
-        if low == "/study" or txt.startswith(("Study", "📚")):
-            _update_session(uid, mode="STUDY")
-            send_html_safe(chat_id, "<b>Study &amp; Expression Miner</b>\nSend any word, question, draft paragraph, article, PDF, image, or voice recording:", reply_markup=build_reply_kb(uid))
-            return
-        if low == "/quiz" or txt.startswith(("Quiz", "🎯")):
-            _update_session(uid, mode="QUIZ")
-            send_quiz(chat_id, uid)
-            return
-        if low == "/vault" or txt.startswith(("Vault", "💎")):
-            show_vault(chat_id, uid)
-            return
-        if low in ("/casual", "/informal", "/professional", "/semiformal", "/formal") or txt.startswith(("Casual", "Professional", "Formal", "🟢", "🔵", "🟣")):
-            r_target = "Casual" if ("casual" in low or "informal" in low or txt.startswith("🟢")) else ("Formal" if ("formal" in low and "semi" not in low and not txt.startswith("🔵")) else "Professional")
-            _update_session(uid, register=r_target)
-            send_html_safe(chat_id, f"<b>Register set to: {r_target}</b>", reply_markup=build_reply_kb(uid))
-            return
 
+    try:
         if message.content_type == "document":
             fb = bot.download_file(bot.get_file(message.document.file_id).file_path)
             if (message.document.file_name or "").lower().endswith(".pdf") and HAS_PYPDF:
@@ -896,32 +887,32 @@ def handle_incoming_message(message: types.Message):
             else:
                 dt = fb.decode("utf-8", errors="ignore")
             execute_study_and_miner(chat_id, uid, dt)
-            return
-
-        if message.content_type in ("voice", "audio"):
+        elif message.content_type in ("voice", "audio"):
             fid = message.voice.file_id if message.content_type == "voice" else message.audio.file_id
             tr = transcribe_voice(bot.download_file(bot.get_file(fid).file_path))
             if not tr:
                 send_html_safe(chat_id, "Could not catch the audio clearly—please try speaking closer to the mic.")
-                return
-            if _get_session(uid)["mode"] == "STUDY" or len(tr.split()) > 70:
+            elif _get_session(uid)["mode"] == "STUDY" or len(tr.split()) > 70:
                 execute_study_and_miner(chat_id, uid, tr, is_voice=True)
             else:
                 execute_chat_turn(chat_id, uid, tr, is_voice=True)
-            return
-
-        if not txt:
-            return
-        mode = _get_session(uid)["mode"]
-        if len(txt.split()) > 65 or mode == "STUDY":
-            execute_study_and_miner(chat_id, uid, txt)
-        elif mode == "PODCAST":
-            execute_podcast(chat_id, uid, topic=txt)
-        else:
-            execute_chat_turn(chat_id, uid, txt)
+        elif txt:
+            mode = _get_session(uid)["mode"]
+            if len(txt.split()) > 65 or mode == "STUDY":
+                execute_study_and_miner(chat_id, uid, txt)
+            elif mode == "PODCAST":
+                execute_podcast(chat_id, uid, topic=txt)
+            else:
+                execute_chat_turn(chat_id, uid, txt)
     except Exception as err:
         logger.error(f"Handler error: {traceback.format_exc()}")
-        send_html_safe(chat_id, f"<b>Jake</b>\nI hear you—let's look at that closely. <i>(Note: {_h(str(err)[:120])})</i>")
+        send_html_safe(chat_id, f"<b>Jake</b>\nLet's try that again in a second. <i>(Note: {_h(str(err)[:120])})</i>")
+    finally:
+        if ack_msg:
+            try:
+                bot.delete_message(chat_id, ack_msg.message_id)
+            except Exception:
+                pass
 
 @bot.message_handler(content_types=["text", "voice", "audio", "photo", "document"])
 def on_message(message: types.Message):
@@ -1006,35 +997,23 @@ if os.environ.get("LIVE_SELF_TEST") == "1":
     except Exception:
         pass
     oid = int(PRIMARY_OWNER_ID)
-    # محاكاة دقيقة لإرسال /start من تيليجرام
-    class _DummyUser:
-        id = oid
-        first_name = "Musa"
-    class _DummyChat:
-        id = oid
-    class _DummyMsg:
-        chat = _DummyChat()
-        from_user = _DummyUser()
-        text = "/start"
-        caption = None
-        content_type = "text"
-    handle_incoming_message(_DummyMsg())
-    print("✅ V15_2_START_AND_CHAT_OK", flush=True)
+    _update_session(oid, mode="CHAT", register="Casual", clear_hist=True)
+    execute_chat_turn(oid, oid, "Hey Chloe I am exhausted today and I need to take a fast decision before I discuss with my boss about taking a few days off", is_voice=False)
+    print("✅ V16_LIVE_TEST_OK", flush=True)
     os._exit(0)
 
 if __name__ == "__main__":
-    print("🚀 V15.2 Polling Active...", flush=True)
+    print("🚀 V16.0 Polling Active...", flush=True)
     try:
         bot.remove_webhook()
     except Exception:
         pass
-    # إرسال إشعار حي للمستخدم فور إقلاع الخادم السحابي الجديد
     try:
         oid = int(PRIMARY_OWNER_ID)
         send_html_safe(
             oid,
-            "<b>🟢 Musa’s NYC Lounge — 24/7 Server Connected</b>\n"
-            "The new engine is now actively listening. Send any message or tap a button below:",
+            "<b>🟢 Musa’s NYC Lounge — V16.0 Ready &amp; Listening</b>\n"
+            "Instant response mode is active. Send any message or tap a button below:",
             reply_markup=build_reply_kb(oid),
         )
     except Exception:
