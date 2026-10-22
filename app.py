@@ -689,7 +689,11 @@ def _get_live_gemini_models(client: genai.Client) -> List[str]:
 
 def _is_populated(obj: Any) -> bool:
     d = obj.model_dump() if hasattr(obj, "model_dump") else {}
-    for col in ("primary_reply_en", "core_senses_and_subtext_en", "core_output_en", "script_en", "scenario_en", "transformed_text_en", "new_expressions_en", "content_bullets_en"):
+    for col in (
+        "primary_reply_en", "unified_senses_en_ar", "polished_version_en",
+        "spoken_american_en", "top_chunks_en_ar", "direct_feedback_or_answer_en",
+        "script_en", "scenario_en", "transformed_text_en", "new_expressions_en", "content_bullets_en",
+    ):
         if col in d:
             return len(str(d.get(col) or "").strip()) > 5
     return True
@@ -814,25 +818,38 @@ class LexiconExtraSchema(BaseModel):
     title_en: str = Field(default="Lexicon Deep Dive", description="Title of deep dive")
     content_bullets_en: str = Field(default="", description="5-6 rich, detailed bullet blocks separated by newline ('\n'), with bold headings, full example sentences, ❌/✅ boundary checks, and concise Arabic nuances.")
 
-class StudyMinerSchema(BaseModel):
-    dossier_title_en: str = Field(default="Linguistic Dossier", description="Sharp title")
-    diagnosis_and_flow_en: str = Field(default="", description="For drafts: 'wrong -> right' fixes + Given-to-New/End-Weight flow analysis. For articles: summary of author's rhetorical strategy & hedging (NEVER invent fake errors on advanced articles!). For questions: direct Nuance Ladder.")
-    spoken_delivery_en: str = Field(default="", description="Spoken Delivery version: active verb-driven phrasing and natural rhythm suitable for saying aloud")
-    workplace_written_en: str = Field(default="", description="Crisp Workplace Written version: diplomatic, direct, collaborative (focus on shared timelines/solutions, zero personal blame)")
-    analytical_c2_prose_en: str = Field(default="", description="Polished C2 Analytical Prose: Given-Before-New cohesion, End-Weight focus, and precise active verbs/nominalization")
-    whole_chunks_harvest_en: str = Field(default="", description="3-4 standout whole-chunk idioms/light-verb expressions on separate lines (correct inflections only, e.g. 'ironing out' NEVER 'iron-outting'!) with meaning and a fresh example")
-    collocations_and_skeletons_en: str = Field(default="", description="3 collocation forks + 2 reusable C2 rhetorical sentence skeletons with [Slots]")
-    subtext_and_drill_en: str = Field(default="", description="Pragmatic subtext radar (where X works vs Y fails) + 1 interactive fill-in-the-blank drill")
+class PrecisionEditorSchema(BaseModel):
+    polished_version_en: str = Field(default="", description="Clean, natural, idiomatic polish of the user's draft that preserves their core meaning and intended tone without robotic bloat.")
+    surgical_diffs_en_ar: str = Field(default="", description="Each fix on a separate line: '• ❌ [exact error/weak phrase] ➔ ✅ **[native fix]** — [concise reason + Arabic note if helpful]'. If error-free, write '• ✓ Grammatically solid—see vocabulary upgrades below.'")
+    lexical_upgrades_en_ar: str = Field(default="", description="3 high-impact vocabulary or collocation upgrades from the draft on separate lines: '• [simple word] ➔ **[C1/C2 native verb/chunk]** (المعنى السياقي) — \"[short example]\"'")
+    your_turn_prompt_en: str = Field(default="", description="1-sentence interactive prompt inviting the user to reply right now using one of the upgraded chunks or structures.")
+
+class ArabicBridgeSchema(BaseModel):
+    spoken_american_en: str = Field(default="", description="How a native American naturally expresses this Arabic thought aloud in conversation or a meeting (active verbs, natural flow).")
+    executive_written_en: str = Field(default="", description="Crisp, diplomatic workplace/professional written version of this Arabic thought.")
+    c2_academic_prose_en: str = Field(default="", description="Authoritative C2 academic/analytical prose (nominalization, Given-Before-New flow, End-Weight focus).")
+    building_blocks_and_trap_en_ar: str = Field(default="", description="On separate lines:\n• **[Key English Chunk 1]:** [المعنى السياقي وكيفية توظيفه]\n• **[Key English Chunk 2]:** [المعنى السياقي وكيفية توظيفه]\n• ❌ **Literal Translation Trap:** [what Arabic speakers mistakenly write literally] ➔ ✅ **[Native phrasing]**")
+    your_turn_prompt_en: str = Field(default="", description="1-sentence prompt inviting the user to write a follow-up sentence in English using one of the building blocks above.")
+
+class ModularMinerSchema(BaseModel):
+    theme_title_en: str = Field(default="Close-Reading Harvest", description="Short 3-5 word title")
+    top_chunks_en_ar: str = Field(default="", description="Top 4 standout idioms, phrasal verbs, or C1/C2 collocations from the text. Format EACH as a numbered block:\n1. **[Exact Expression]** — `[Grammar Frame]`\n• المعنى السياقي: [Eloquent Arabic equivalent]\n• New Example: \"[Fresh 10-14 word sentence on a different topic]\"")
+    your_turn_prompt_en: str = Field(default="", description="1-sentence challenge asking the user to reply with their own sentence using one of the 4 expressions above.")
+
+class TutorLoopSchema(BaseModel):
+    title_en: str = Field(default="Interactive Studio Feedback", description="Short title")
+    direct_feedback_or_answer_en: str = Field(default="", description="If the user is practicing a sentence from the previous Study card: evaluate their sentence, praise what worked, fix any slip-up (❌ ➔ ✅), and show the polished version! If the user asked a linguistic/nuance question: give the direct, authoritative rule with Arabic conceptual anchor.")
+    register_or_nuance_examples_en_ar: str = Field(default="", description="3 sharp bullet points showing Spoken, Professional, and C2 Academic examples (or contrasting the synonyms/structures asked about) with concise Arabic notes.")
+    next_step_challenge_en: str = Field(default="", description="1-sentence follow-up challenge to keep the active learning loop going.")
 
 class DraftShiftSchema(BaseModel):
     shift_title_en: str = Field(default="Style Transformation", description="Title of transformation")
     transformed_text_en: str = Field(default="", description="The rewritten text")
-    key_refinements_en: str = Field(default="", description="2 concise bullets explaining the structural/lexical upgrades made")
+    key_refinements_en: str = Field(default="", description="3 concise bullets explaining the exact lexical, syntactic, or rhetorical upgrades made (with brief Arabic meanings).")
 
 class MoreMinerSchema(BaseModel):
-    supplement_title_en: str = Field(default="Next Batch — Extracted Chunks & Skeletons", description="Title")
-    new_expressions_en: str = Field(default="", description="4 COMPLETELY NEW whole-chunk expressions/collocations from the text (not extracted previously), each on a new line with definition and example")
-    advanced_templates_en: str = Field(default="", description="2 additional C2 rhetorical sentence skeletons from the text")
+    supplement_title_en: str = Field(default="Deep Harvest", description="Title")
+    new_expressions_en: str = Field(default="", description="3-4 rich blocks separated by blank lines (either 4 brand-new chunks with Arabic & examples, OR 3 C2 sentence skeletons with [Slots] & applied examples, OR Rhetorical & Nominalization analysis).")
 
 class PodcastSchema(BaseModel):
     episode_title_en: str = Field(default="NYC Studio Roundtable", description="Episode title")
@@ -1008,26 +1025,45 @@ def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[s
         )
         return kb
 
-    kb.row(
-        types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
-        types.InlineKeyboardButton("📄 PDF", callback_data=f"edpdf:{tok}"),
-        types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-        types.InlineKeyboardButton("📖 Lexicon", callback_data=f"edlexcard:{tok}"),
-    )
-    if ctype == "miner":
+    if ctype == "draft":
         kb.row(
-            types.InlineKeyboardButton("⛏️ Mine Next Batch", callback_data=f"edmore:{tok}"),
-            types.InlineKeyboardButton("🎯 Test Me on Text", callback_data=f"edqztext:{tok}"),
-        )
-    elif ctype == "draft":
-        kb.row(
-            types.InlineKeyboardButton("🤝 Soften", callback_data=f"edshift:soften:{tok}"),
-            types.InlineKeyboardButton("⚡ Tighten", callback_data=f"edshift:condense:{tok}"),
             types.InlineKeyboardButton("🎙️ Spoken", callback_data=f"edshift:spoken:{tok}"),
-            types.InlineKeyboardButton("🏛️ C2 Prose", callback_data=f"edshift:c2:{tok}"),
+            types.InlineKeyboardButton("💼 Executive", callback_data=f"edshift:soften:{tok}"),
+            types.InlineKeyboardButton("🏛️ C2 Academic", callback_data=f"edshift:c2:{tok}"),
+            types.InlineKeyboardButton("⚡ Tighten", callback_data=f"edshift:condense:{tok}"),
         )
-    if lookup_terms and ctype in ("study", "miner", "draft"):
-        btns = [types.InlineKeyboardButton(f"🔍 {t[:22]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(lookup_terms[:2])]
+        kb.row(
+            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
+            types.InlineKeyboardButton("🎯 Quiz Fixes", callback_data=f"edqztext:{tok}"),
+            types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
+            types.InlineKeyboardButton("⛏️ Mine Instead", callback_data=f"edrecast:miner:{tok}"),
+        )
+    elif ctype == "bridge":
+        kb.row(
+            types.InlineKeyboardButton("🎧 Listen All 3", callback_data=f"edtts:1x:{tok}"),
+            types.InlineKeyboardButton("🐢 Slow 0.85x", callback_data=f"edtts:slow:{tok}"),
+            types.InlineKeyboardButton("💾 Save Chunks", callback_data=f"edsave:{tok}"),
+        )
+    elif ctype == "miner":
+        kb.row(
+            types.InlineKeyboardButton("🏗️ C2 Templates", callback_data=f"edmore:skel:{tok}"),
+            types.InlineKeyboardButton("🔬 Rhetoric & Flow", callback_data=f"edmore:rhet:{tok}"),
+            types.InlineKeyboardButton("⛏️ Next 4 Chunks", callback_data=f"edmore:chunks:{tok}"),
+        )
+        kb.row(
+            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
+            types.InlineKeyboardButton("🎯 Cloze Quiz", callback_data=f"edqztext:{tok}"),
+            types.InlineKeyboardButton("💾 Save All", callback_data=f"edsave:{tok}"),
+            types.InlineKeyboardButton("✍️ Edit as Draft", callback_data=f"edrecast:draft:{tok}"),
+        )
+    else:
+        kb.row(
+            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
+            types.InlineKeyboardButton("🎯 Practice Quiz", callback_data=f"edqztext:{tok}"),
+            types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
+        )
+    if lookup_terms and ctype in ("study", "miner", "draft", "bridge", "clinic"):
+        btns = [types.InlineKeyboardButton(f"🔍 {t[:24]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(lookup_terms[:2])]
         if btns:
             kb.row(*btns)
     return kb
@@ -1289,140 +1325,275 @@ def execute_lexicon_extension(chat_id: int, user_id: int, term: str, ext_type: s
     send_html_safe(chat_id, f"<b>{_h(res.title_en)} — {_h(clean_term)}</b>\n\n{_clean_multiline_bullets(res.content_bullets_en)}")
 
 # ------------------------------------------------------------------------------
-# محرك 3: المختبر ثلاثي المسارات (Study: Article Miner / Draft Surgery / Nuance Clinic)
+# محرك 3: ورشة الدراسة التفاعلية الرشيقة (V22 Interactive Study Workbench)
 # ------------------------------------------------------------------------------
-def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voice: bool = False, already_mined: str = "", shift: str = ""):
+def _detect_study_route(text: str, user_id: int, forced_lens: str = "") -> str:
+    if forced_lens in ("draft", "miner", "bridge", "clinic"):
+        return forced_lens
+    clean = text.strip()
+    low = clean.lower()
+    w_cnt = len(clean.split())
+
+    # 1. إذا كان النص يحتوي على حروف عربية (أكثر من كلمتين بالعربية) -> جسر الصياغة AR -> EN Bridge
+    ar_chars = len(re.findall(r"[\u0600-\u06FF]", clean))
+    if ar_chars > 8:
+        return "bridge"
+
+    # 2. أوامر بادئة صريحة
+    if low.startswith(("mine:", "extract:", "article:")):
+        return "miner"
+    if low.startswith(("edit:", "fix:", "draft:", "polish:")):
+        return "draft"
+
+    # 3. أسئلة الفروق الدلالية والنحوية ("How do I...", "What is the difference...", "vs")
+    if (
+        low.startswith(("what ", "what'", "how ", "why ", "when ", "where ", "which ", "can i say", "is it correct", "difference"))
+        or (" vs " in low and w_cnt < 35)
+        or (clean.endswith("?") and w_cnt < 35)
+    ):
+        return "clinic"
+
+    # 4. إذا كان المستخدم يرد بجملة قصيرة (أقل من 30 كلمة) بعد بطاقة Study سابقة -> المدرب التفاعلي يقيّم محاولته ويصححها!
+    s = _get_session(user_id)
+    last_study_ctx = [h for h in s.get("history", []) if isinstance(h, dict) and str(h.get("u", "")).startswith("[STUDY")]
+    if last_study_ctx and w_cnt <= 28 and not any(x in low for x in ("http://", "https://")):
+        return "clinic"
+
+    # 5. التمييز بين مقال للتعدين وبين مسودة المستخدم
+    first_person = len(re.findall(r"\b(i|my|me|we|our|us|i'm|i've|i'd)\b", low))
+    learner_slips = any(x in low for x in ("discuss about", "depend of", "explain me", "informations", "feedbacks", "do a mistake", "cannot success", "in my opinion i think"))
+    if learner_slips:
+        return "draft"
+    if w_cnt > 65 and first_person <= 1:
+        return "miner"
+    return "draft"
+
+def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voice: bool = False, already_mined: str = "", shift: str = "", forced_lens: str = ""):
     s = _get_session(user_id)
     reg = s["register"]
+    sub_st = s.get("sub_state", "") or ""
+    if not forced_lens and sub_st.startswith("STUDY_LENS:"):
+        forced_lens = sub_st.replace("STUDY_LENS:", "").strip()
 
-    # 1. استدعاء جراحي مستقل عند الضغط على Soften / Tighten / Spoken / C2 Prose
+    # 1. التحويل الأسلوبي عند الطلب بلمسة زر (Spoken / Executive / C2 Academic / Tighten)
     if shift:
         shift_map = {
-            "soften": "Rewrite this text so it sounds warm, diplomatic, tactful, and collaborative in modern American workplace English (remove any personal blame).",
-            "condense": "Tighten and condense this text by 35-40% into crisp, high-impact English using active verbs and zero clutter.",
-            "spoken": "Convert this written text into natural, spontaneous spoken American English (use active verbs, contractions, spoken openers, and natural rhythm).",
-            "c2": "Transform this text into polished C2 Analytical Prose using Given-Before-New flow, End-Weight focus, and precise academic/executive verbs.",
+            "spoken": (
+                "🎙️ Natural Spoken Delivery",
+                "Rewrite this text into natural, spontaneous spoken American English suitable for saying aloud in a meeting or discussion (active verbs, contractions, spoken rhythm, zero stiffness).",
+            ),
+            "soften": (
+                "💼 Crisp & Diplomatic Executive Written",
+                "Rewrite this text into warm, tactful, solution-oriented American executive/workplace English (focus on shared goals and timelines, zero personal blame).",
+            ),
+            "c2": (
+                "🏛️ C2 Academic & Analytical Prose",
+                "Transform this text into authoritative C2 Academic/Analytical prose using Given-Before-New information flow, End-Weight focus, strategic nominalization, and organic demonstrative cohesion (no mechanical 'Furthermore/Moreover').",
+            ),
+            "condense": (
+                "⚡ Tightened High-Impact Version (-35%)",
+                "Condense this text by 35-40% into razor-sharp, high-impact English by eliminating clutter and using precision verbs.",
+            ),
         }
+        sh_title, sh_prompt = shift_map.get(shift, shift_map["spoken"])
         sh_data: DraftShiftSchema = call_llm_structured(
-            f"{SYS_PROMPT}\n{shift_map.get(shift, shift_map['spoken'])}",
-            f"Text:\n\"{user_input[:3000]}\"",
+            f"{SYS_PROMPT}\n{sh_prompt}",
+            f"Original Text:\n\"{user_input[:3500]}\"",
             DraftShiftSchema,
-            temp=0.5,
+            temp=0.42,
         )
         tok = hashlib.md5(f"SHF:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-        v_segs = [("Chloe", sh_data.transformed_text_en)]
-        pdf_d = {"title": sh_data.shift_title_en, "register": reg, "main_en": sh_data.transformed_text_en, "instant_fix": sh_data.key_refinements_en}
+        v_segs = [("Marcus" if shift == "c2" else "Chloe", sh_data.transformed_text_en)]
+        pdf_d = {"title": sh_title, "register": reg, "main_en": sh_data.transformed_text_en, "instant_fix": sh_data.key_refinements_en}
         store_card(tok, user_id, v_segs, pdf_d, [(sh_data.transformed_text_en[:90], sh_data.key_refinements_en, user_input[:200])], source_text=user_input)
         sh_html = (
-            f"<b>{_h(sh_data.shift_title_en)}</b>\n\n"
+            f"<b>{sh_title}</b>\n\n"
             f"<i>\"{_fmt_inline_md(sh_data.transformed_text_en)}\"</i>\n\n"
-            f"<b>Structural &amp; Lexical Upgrades</b>\n{_clean_multiline_bullets(sh_data.key_refinements_en)}"
+            f"<b>🔬 What Changed &amp; Why</b>\n{_clean_multiline_bullets(sh_data.key_refinements_en)}"
         )
         send_html_safe(chat_id, sh_html, reply_markup=build_inline_kb(tok, "draft"))
         return
 
-    # 2. استدعاء مستقل عند الضغط على Mine Next Batch
+    # 2. الاستخراج الإضافي عند الطلب في وضع التعدين (C2 Templates / Rhetoric & Flow / Next 4 Chunks)
     if already_mined:
-        m_task = f"Previously extracted expressions: [{already_mined}]. Mine 4 COMPLETELY NEW whole-chunk expressions, phrasal verbs, or collocations from this text (zero overlap with the list above!), plus 2 additional C2 rhetorical sentence skeletons."
-        m_data: MoreMinerSchema = call_llm_structured(f"{SYS_PROMPT}\n{m_task}", f"Text:\n\"{user_input[:4500]}\"", MoreMinerSchema, temp=0.55)
+        if already_mined.startswith("SKEL_ONLY::"):
+            prev_m = already_mined.replace("SKEL_ONLY::", "")
+            m_task = (
+                "Extract 3 reusable C2 Rhetorical Sentence Templates from this text. Format each as a numbered block:\n"
+                "1. **Pattern:** `[Frame with [Slots], e.g. Far from [V-ing X], [Subj] merely [Verb Y]...]`\n"
+                "• الوظيفة البلاغية: [Arabic explanation of rhetorical effect]\n"
+                "• Applied Example: \"[Brand-new sentence built with this exact skeleton]\""
+            )
+            hdr_icon = "🏗️ Reusable C2 Sentence Templates"
+        elif already_mined.startswith("RHET_ONLY::"):
+            prev_m = already_mined.replace("RHET_ONLY::", "")
+            m_task = (
+                "Analyze the Author's Prose Architecture & Nominalization in 3 numbered blocks:\n"
+                "1. **Argument & Cohesion Flow:** How the author links ideas (Given-to-New, End-Weight, transitions).\n"
+                "2. **Hedging & Epistemic Stance:** Exact words/structures used to qualify claims.\n"
+                "3. **Spoken Verb-Driven ➔ C2 Nominalization Map:** Show 2 sentences from the text contrasted with their everyday spoken equivalents (with Arabic notes)."
+            )
+            hdr_icon = "🔬 Rhetoric, Cohesion & Nominalization Breakdown"
+        else:
+            prev_m = already_mined
+            m_task = (
+                f"Previously extracted: [{prev_m}]. Mine 4 COMPLETELY NEW whole-chunk expressions, phrasal verbs, or academic collocations from this text (zero overlap!). Format each as:\n"
+                "1. **[Exact Expression]** — `[Grammar Frame]`\n"
+                "• المعنى السياقي: [Eloquent Arabic meaning]\n"
+                "• New Example: \"[Fresh 10-14 word sentence on a different topic]\""
+            )
+            hdr_icon = "⛏️ Next 4 Extracted Chunks"
+
+        m_data: MoreMinerSchema = call_llm_structured(f"{SYS_PROMPT}\n{m_task}", f"Text:\n\"{user_input[:4500]}\"", MoreMinerSchema, temp=0.42)
         tok = hashlib.md5(f"MOR:{user_id}:{time.time()}".encode()).hexdigest()[:10]
         v_items = []
         for ln in m_data.new_expressions_en.splitlines():
-            if len(ln.strip()) > 6:
-                t_c, d_c, _ = _clean_vault_entry(ln, "", user_input[:200])
+            if re.match(r"^[1-9]\.", ln.strip()):
+                t_c, d_c, _ = _clean_vault_entry(re.sub(r"^[1-9]\.\s*", "", ln.strip()), "", user_input[:160])
                 if t_c:
                     v_items.append((t_c, d_c, ln))
-        new_mined = f"{already_mined}, {', '.join([x[0] for x in v_items])}".strip(", ")
-        store_card(tok, user_id, [("Marcus", m_data.new_expressions_en)], {"title": m_data.supplement_title_en, "main_en": m_data.new_expressions_en, "diagnosis_en": m_data.advanced_templates_en}, v_items, source_text=user_input, mined_so_far=new_mined)
-        m_html = (
-            f"<b>{_h(m_data.supplement_title_en)}</b>\n\n"
-            f"<b>Fresh Whole-Chunk Harvest</b>\n{_clean_multiline_bullets(m_data.new_expressions_en)}\n\n"
-            f"<b>C2 Rhetorical Skeletons</b>\n{_clean_multiline_bullets(m_data.advanced_templates_en)}"
-        )
+        new_mined = f"{prev_m}, {', '.join([x[0] for x in v_items])}".strip(", ")
+        store_card(tok, user_id, [("Marcus", m_data.new_expressions_en)], {"title": hdr_icon, "main_en": m_data.new_expressions_en}, v_items, source_text=user_input, mined_so_far=new_mined)
+        m_html = f"<b>{hdr_icon}</b>\n\n{_format_unified_senses(m_data.new_expressions_en)}"
         send_html_safe(chat_id, m_html, reply_markup=build_inline_kb(tok, "miner", _extract_lookup_terms(v_items)))
         return
 
-    # 3. التوجيه الذكي بين المسارات الثلاثة (Article Miner vs. Nuance Clinic vs. Draft Surgery)
-    w_cnt = len(user_input.split())
-    low_in = user_input.strip().lower()
-    is_question = low_in.startswith(("what ", "what'", "how ", "why ", "when ", "where ", "which ", "can you", "could you", "is there", "difference", "meaning")) or (low_in.endswith("?") and w_cnt < 50)
-    is_miner = (w_cnt > 48 and not is_question)
+    # 3. تحديد المسار الذكي
+    route = _detect_study_route(user_input, user_id, forced_lens=("draft" if is_voice and not forced_lens else forced_lens))
 
-    if is_miner:
+    # المسار أ: جسر الصياغة من الفكرة العربية إلى الإنجليزية الأصيلة (AR -> EN Thought Architect)
+    if route == "bridge":
         task = (
-            "PATH A — ADVANCED TEXT & ARTICLE MINER:\n"
-            "- Treat the input as a corpus text to harvest from. Do NOT invent fake grammar corrections or corrupt standard idioms like 'move the needle'!\n"
-            "- In `diagnosis_and_flow_en`, briefly explain the author's rhetorical flow, hedging, and cohesion strategy.\n"
-            "- Extract 4 high-value whole-chunk idioms/phrasal verbs with fresh examples, and extract 2 actual C2 sentence skeletons with [Slots] from the text."
+            "ARABIC-TO-ENGLISH THOUGHT ARCHITECT:\n"
+            "The user wrote an idea or paragraph in Arabic (or mixed AR/EN). Show how to express this exact meaning natively in American English without literal translation stiffness:\n"
+            "1. `spoken_american_en`: natural, effortless spoken NYC phrasing.\n"
+            "2. `executive_written_en`: crisp, diplomatic workplace phrasing.\n"
+            "3. `c2_academic_prose_en`: high-level C2 analytical/academic prose (nominalization & Given-to-New flow).\n"
+            "4. `building_blocks_and_trap_en_ar`: 2 key native chunks used + the ❌ Literal Arabic Calque Trap to avoid.\n"
+            "5. `your_turn_prompt_en`: invite the user to write 1 sentence using one of these chunks."
         )
-    elif is_question:
+        b_res: ArabicBridgeSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Arabic/Mixed Input:\n\"{user_input[:3000]}\"", ArabicBridgeSchema, temp=0.42)
+        _update_session(user_id, new_turn={"u": f"[STUDY AR->EN]: {user_input[:160]}", "b": f"C2: {b_res.c2_academic_prose_en[:180]} | Blocks: {b_res.building_blocks_and_trap_en_ar[:180]}"})
+
+        html_b = (
+            f"<b>🌉 AR ➔ EN Native Expression Bridge</b>\n\n"
+            f"🎙️ <b>1. Natural Spoken American</b>\n<i>\"{_fmt_inline_md(b_res.spoken_american_en)}\"</i>\n\n"
+            f"💼 <b>2. Crisp Executive Written</b>\n<i>\"{_fmt_inline_md(b_res.executive_written_en)}\"</i>\n\n"
+            f"🏛️ <b>3. C2 Academic &amp; Analytical Prose</b>\n<b>\"{_fmt_inline_md(b_res.c2_academic_prose_en)}\"</b>\n\n"
+            f"<b>🧱 Key Building Blocks &amp; Calque Trap</b>\n{_clean_multiline_bullets(b_res.building_blocks_and_trap_en_ar)}\n\n"
+            f"🎯 <b>Your Turn:</b> <i>{_fmt_inline_md(b_res.your_turn_prompt_en)}</i>"
+        )
+        tok = hashlib.md5(f"BRG:{user_id}:{time.time()}".encode()).hexdigest()[:10]
+        v_segs = [("Jake", b_res.spoken_american_en), ("Chloe", b_res.executive_written_en), ("Marcus", b_res.c2_academic_prose_en)]
+        pdf_d = {"title": "AR to EN Expression Bridge", "register": reg, "main_en": b_res.executive_written_en, "spoken_inf": b_res.spoken_american_en, "written_form": b_res.c2_academic_prose_en, "diagnosis_en": b_res.building_blocks_and_trap_en_ar}
+        v_items = [(b_res.executive_written_en[:80], user_input[:200], b_res.c2_academic_prose_en)]
+        store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=b_res.executive_written_en)
+        send_html_safe(chat_id, html_b, reply_markup=build_inline_kb(tok, "bridge"))
+        return
+
+    # المسار ب: التعدين الرشيق للمقالات والنصوص (Modular Corpus Miner)
+    if route == "miner":
         task = (
-            "PATH C — PRAGMATIC & NUANCE CLINIC:\n"
-            "- Answer the user's question directly with a sharp Nuance Ladder (exact register, collocational fit, and where each option sounds wrong).\n"
-            "- Provide authentic Spoken Delivery, Workplace Written, and Analytical C2 examples (never put informal phrasal verbs inside the C2 Analytical version!)."
+            "MODULAR CLOSE-READING & CHUNK MINER:\n"
+            "Extract the Top 4 highest-value idioms, phrasal verbs, or C1/C2 collocations from this text. Do NOT invent grammar errors on the text!\n"
+            "For each of the 4 items, show: Exact Expression, Grammar Frame, eloquent contextual Arabic meaning, and a brand-new example sentence."
         )
-    else:
+        m_res: ModularMinerSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Text:\n\"{user_input[:5500]}\"", ModularMinerSchema, temp=0.4)
+        _update_session(user_id, new_turn={"u": f"[STUDY MINER]: {user_input[:140]}", "b": m_res.top_chunks_en_ar[:260]})
+
+        html_m = (
+            f"<b>⛏️ {_h(m_res.theme_title_en)} — Top 4 Chunks</b>\n\n"
+            f"{_format_unified_senses(m_res.top_chunks_en_ar)}\n\n"
+            f"🎯 <b>Active Practice:</b> <i>{_fmt_inline_md(m_res.your_turn_prompt_en)}</i>"
+        )
+        tok = hashlib.md5(f"MIN:{user_id}:{time.time()}".encode()).hexdigest()[:10]
+        v_items = []
+        for ln in m_res.top_chunks_en_ar.splitlines():
+            if re.match(r"^[1-9]\.", ln.strip()):
+                t_c, d_c, _ = _clean_vault_entry(re.sub(r"^[1-9]\.\s*", "", ln.strip()), "", m_res.theme_title_en)
+                if t_c:
+                    v_items.append((t_c, d_c, ln))
+        v_segs = [("Marcus", m_res.top_chunks_en_ar)]
+        pdf_d = {"title": m_res.theme_title_en, "register": "C1/C2 Corpus Harvest", "main_en": m_res.top_chunks_en_ar}
+        store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_input[:4500], mined_so_far=", ".join([x[0] for x in v_items]))
+        send_html_safe(chat_id, html_m, reply_markup=build_inline_kb(tok, "miner", _extract_lookup_terms(v_items)))
+        return
+
+    # المسار ج: المدرب التفاعلي وعيادة الفروق الدقيقة (Interactive Tutor Loop & Nuance Clinic)
+    if route == "clinic":
+        recent_study = "\n".join([f"Prior Input: {h.get('u','')}\nPrior Coaching: {h.get('b','')}" for h in s.get("history", [])[-3:] if isinstance(h, dict)])
         task = (
-            "PATH B — DRAFT SURGERY & SPOKEN/WRITTEN ARCHITECTURE:\n"
-            "- Diagnose grammar/collocation errors ('wrong -> right') and evaluate information flow.\n"
-            "- Provide 3 distinct, natural versions: 1) Spoken Delivery (verb-driven, conversational rhythm), 2) Crisp Workplace Written (diplomatic, solution-focused, zero personal blame), and 3) Polished C2 Analytical Prose (Given-to-New flow, End-Weight focus)."
+            "INTERACTIVE STUDY TUTOR & NUANCE CLINIC:\n"
+            "- Check `Recent Study Context`. If the user is replying with a practice sentence or testing a chunk from the previous card, evaluate their attempt warmly, show any ❌ ➔ ✅ refinements, and give 3 register variations!\n"
+            "- If the user is asking a linguistic question ('X vs Y', 'How do I say...', grammar rule), answer it with razor-sharp clarity, 3 register examples (Spoken, Executive, C2 Academic), and Arabic nuances."
         )
+        c_res: TutorLoopSchema = call_llm_structured(
+            f"{SYS_PROMPT}\n{task}",
+            f"Recent Study Context:\n{recent_study}\n\nUser's Current Input:\n\"{user_input[:2000]}\"",
+            TutorLoopSchema,
+            temp=0.45,
+        )
+        _update_session(user_id, new_turn={"u": f"[STUDY PRACTICE/Q]: {user_input[:160]}", "b": c_res.direct_feedback_or_answer_en[:220]})
 
-    data: StudyMinerSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Register: {reg}\nInput:\n\"{user_input[:5000]}\"", StudyMinerSchema, temp=0.5)
+        html_c = (
+            f"<b>🎓 {_h(c_res.title_en)}</b>\n\n"
+            f"{_fmt_inline_md(c_res.direct_feedback_or_answer_en)}\n\n"
+            f"<b>📊 Examples &amp; Nuances Across Registers</b>\n{_clean_multiline_bullets(c_res.register_or_nuance_examples_en_ar)}\n\n"
+            f"🎯 <b>Next Step:</b> <i>{_fmt_inline_md(c_res.next_step_challenge_en)}</i>"
+        )
+        tok = hashlib.md5(f"CLN:{user_id}:{time.time()}".encode()).hexdigest()[:10]
+        v_segs = [("Chloe", c_res.direct_feedback_or_answer_en), ("Marcus", c_res.register_or_nuance_examples_en_ar)]
+        pdf_d = {"title": c_res.title_en, "register": reg, "main_en": c_res.direct_feedback_or_answer_en, "diagnosis_en": c_res.register_or_nuance_examples_en_ar}
+        v_items = [(c_res.title_en[:70], c_res.direct_feedback_or_answer_en[:240], c_res.register_or_nuance_examples_en_ar[:240])]
+        store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_input)
+        send_html_safe(chat_id, html_c, reply_markup=build_inline_kb(tok, "clinic"))
+        return
 
-    # في مسار تعدين النصوص الطويلة (Miner)، لا نكرر طباعة المقال الأصلي بل نعرض الحصاد المعجمي والبلاغي مباشرةً!
-    if is_miner:
-        top = (
-            f"<b>⛏️ {_h(data.dossier_title_en)}</b>\n\n"
-            f"<b>Rhetorical Flow &amp; Cohesion</b>\n{_fmt_inline_md(data.diagnosis_and_flow_en)}\n\n"
-            f"<b>1. Whole-Chunk Harvest</b>\n{_clean_multiline_bullets(data.whole_chunks_harvest_en)}\n\n"
-            f"<b>2. Collocation Forks &amp; C2 Skeletons</b>\n{_clean_multiline_bullets(data.collocations_and_skeletons_en)}"
-        )
-    else:
-        top = (
-            f"<b>{_h(data.dossier_title_en)}</b>\n\n"
-            f"{_fmt_inline_md(data.diagnosis_and_flow_en)}\n\n"
-            f"🎙️ <b>Spoken Delivery:</b>\n<i>\"{_fmt_inline_md(data.spoken_delivery_en)}\"</i>\n\n"
-            f"💼 <b>Crisp Workplace Written:</b>\n<i>\"{_fmt_inline_md(data.workplace_written_en)}\"</i>\n\n"
-            f"🏛️ <b>Analytical C2 Prose:</b>\n<b>\"{_fmt_inline_md(data.analytical_c2_prose_en)}\"</b>"
-        )
-
-    dr_en = (
-        f"<b>Chunks, Templates &amp; Subtext Radar ▼</b>\n\n"
-        + (
-            f"<b>Spoken vs. Written Distillations</b>\n"
-            f"• <b>Spoken:</b> <i>\"{_fmt_inline_md(data.spoken_delivery_en)}\"</i>\n"
-            f"• <b>Executive C2:</b> <b>\"{_fmt_inline_md(data.analytical_c2_prose_en)}\"</b>\n\n───\n"
-            if is_miner
-            else f"<b>Key Chunks &amp; Nuances</b>\n{_clean_multiline_bullets(data.whole_chunks_harvest_en)}\n\n"
-                 f"<b>Collocations &amp; Sentence Frames</b>\n{_clean_multiline_bullets(data.collocations_and_skeletons_en)}\n\n───\n"
-        )
-        + f"{_fmt_inline_md(data.subtext_and_drill_en)}"
+    # المسار د (الافتراضي للمسودات والصوتيات): المحرر الجراحي المركز (Precision Editor)
+    task = (
+        "PRECISION DRAFT & SPEECH EDITOR:\n"
+        "1. `polished_version_en`: Polish the user's text so it sounds 100% natural, clear, and idiomatic in the target register while keeping their personal voice.\n"
+        "2. `surgical_diffs_en_ar`: List every grammar, preposition, collocation, or L1 Arabic calque fix as '• ❌ [user phrase] ➔ ✅ **[native fix]** — [concise reason]'.\n"
+        "3. `lexical_upgrades_en_ar`: 3 specific word/collocation upgrades from their draft with Arabic meanings.\n"
+        "4. `your_turn_prompt_en`: 1-sentence challenge inviting them to reply using one of the upgrades."
     )
+    d_res: PrecisionEditorSchema = call_llm_structured(
+        f"{SYS_PROMPT}\n{task}",
+        f"Target Register: {reg}\nUser's Draft:\n\"{user_input[:4000]}\"",
+        PrecisionEditorSchema,
+        temp=0.42,
+    )
+    _update_session(user_id, new_turn={"u": f"[STUDY DRAFT]: {user_input[:160]}", "b": f"Polished: {d_res.polished_version_en[:180]} | Upgrades: {d_res.lexical_upgrades_en_ar[:180]}"})
 
-    tok = hashlib.md5(f"STD:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    v_segs = [("Jake", data.spoken_delivery_en), ("Chloe", data.workplace_written_en), ("Marcus", data.analytical_c2_prose_en)]
+    if d_res.surgical_diffs_en_ar and ("->" in d_res.surgical_diffs_en_ar or "➔" in d_res.surgical_diffs_en_ar):
+        _log_dna(user_id, d_res.surgical_diffs_en_ar.replace("➔", "->"))
+
+    v_prefix = f"🎙️ <b>Voice Draft:</b> <i>\"{_h(user_input[:240])}\"</i>\n\n" if is_voice else ""
+    html_d = (
+        f"{v_prefix}<b>✍️ Polished Version ({_h(reg)})</b>\n"
+        f"<i>\"{_fmt_inline_md(d_res.polished_version_en)}\"</i>\n\n"
+        f"<b>🔧 Surgical Fixes (❌ ➔ ✅)</b>\n{_clean_multiline_bullets(d_res.surgical_diffs_en_ar)}\n\n"
+        f"<b>🚀 Vocabulary &amp; Collocation Upgrades</b>\n{_clean_multiline_bullets(d_res.lexical_upgrades_en_ar)}\n\n"
+        f"🎯 <b>Your Turn:</b> <i>{_fmt_inline_md(d_res.your_turn_prompt_en)}</i>"
+    )
+    tok = hashlib.md5(f"DRF:{user_id}:{time.time()}".encode()).hexdigest()[:10]
+    v_segs = [("Chloe", d_res.polished_version_en)]
     pdf_d = {
-        "title": data.dossier_title_en,
+        "title": "Precision Draft Surgery",
         "register": reg,
-        "main_en": data.workplace_written_en,
-        "instant_fix": data.diagnosis_and_flow_en,
-        "diagnosis_en": f"{data.whole_chunks_harvest_en}\n\n{data.collocations_and_skeletons_en}",
-        "spoken_inf": data.spoken_delivery_en,
-        "spoken_semi": data.workplace_written_en,
-        "written_form": data.analytical_c2_prose_en,
+        "main_en": d_res.polished_version_en,
+        "instant_fix": d_res.surgical_diffs_en_ar,
+        "diagnosis_en": d_res.lexical_upgrades_en_ar,
     }
     v_items = []
-    for ln in data.whole_chunks_harvest_en.splitlines():
-        if len(ln.strip()) > 6:
-            t_c, d_c, _ = _clean_vault_entry(ln, "", data.workplace_written_en)
+    for ln in d_res.lexical_upgrades_en_ar.splitlines():
+        if "➔" in ln or "->" in ln:
+            pts = re.split(r"➔|->", ln, maxsplit=1)
+            t_c, d_c, _ = _clean_vault_entry(pts[1], pts[0], d_res.polished_version_en)
             if t_c:
-                v_items.append((t_c, d_c, ln))
-    target_for_shift = data.workplace_written_en if is_question else user_input[:3000]
-    store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=target_for_shift, mined_so_far=", ".join([x[0] for x in v_items]))
-
-    ctype = "miner" if is_miner else ("study" if is_question else ("draft" if w_cnt > 6 else "study"))
-    send_html_safe(chat_id, f"{top}\n\n<blockquote expandable>{dr_en}</blockquote>", reply_markup=build_inline_kb(tok, ctype, _extract_lookup_terms(v_items)))
+                v_items.append((t_c, d_c, d_res.polished_version_en))
+    store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_input[:3500])
+    send_html_safe(chat_id, html_d, reply_markup=build_inline_kb(tok, "draft", _extract_lookup_terms(v_items)))
 
 # ------------------------------------------------------------------------------
 # محرك 4: استوديو البودكاست الإذاعي التفاعلي (3 Formats + Ear-First + Call-In)
@@ -1762,11 +1933,24 @@ def handle_incoming_message(message: types.Message):
         return
     if low == "/study" or txt.startswith(("Study", "📚")):
         _update_session(uid, mode="STUDY", sub_state="")
+        s_kb = types.InlineKeyboardMarkup()
+        s_kb.row(
+            types.InlineKeyboardButton("🤖 Smart Auto •", callback_data="edstudylens:auto"),
+            types.InlineKeyboardButton("✍️ Draft Editor", callback_data="edstudylens:draft"),
+            types.InlineKeyboardButton("🌉 AR ➔ EN Bridge", callback_data="edstudylens:bridge"),
+        )
+        s_kb.row(
+            types.InlineKeyboardButton("⛏️ Text Miner", callback_data="edstudylens:miner"),
+            types.InlineKeyboardButton("🎓 Nuance Tutor", callback_data="edstudylens:clinic"),
+        )
         send_html_safe(
             chat_id,
-            "<b>Study — Article Miner, Draft Surgery &amp; Nuance Clinic</b>\n"
-            "Send any question, draft paragraph, article, PDF, or voice recording:",
-            reply_markup=build_reply_kb(uid),
+            "<b>📚 Interactive Study Workbench</b>\n\n"
+            "• <b>✍️ Send an English Draft / Voice Note:</b> Get a clean polished version, surgical ❌➔✅ fixes, and 1-tap buttons for <i>Spoken, Executive, C2 Academic, or Tightened</i> rewrites.\n"
+            "• <b>🌉 Send an Idea in Arabic:</b> Build it natively across Spoken, Executive, and C2 Academic English.\n"
+            "• <b>⛏️ Send an Article / PDF:</b> Harvest the Top 4 chunks first, then tap <i>C2 Templates</i> or <i>Rhetoric &amp; Flow</i> on demand.\n"
+            "• <b>🎯 Reply to Practice:</b> Try using any upgraded chunk right here and I'll coach your sentence!",
+            reply_markup=s_kb,
         )
         return
     if low == "/podcast" or txt.startswith(("Podcast", "🎙️")):
