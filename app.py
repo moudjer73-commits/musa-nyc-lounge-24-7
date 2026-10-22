@@ -48,7 +48,7 @@ HF_REPO_ID = "moudjer/musa-nyc-lounge-vault"
 EMBEDDED_HF_REV_B64 = "==AWVd0YClmbM5UQsNVRJh3SRl0cotkY1pUR4hlRGd3QmNGZfZGa"
 EMBEDDED_CFG_B64 = "fSJ0bHVhdi1lZ251b2wtY3luLWFzdW0vcmVqZHVvbSIgOiJPUEVSX0JEX0ZIIiAsIlhVR2NCaW5MTkFsU0VJeEtRSXNoS2J1SkV4WEZGd0NmY2RfZmgiIDoiTkVLT1RfRkgiICwiaHNhbGYtNS4zLWluaW1lZyIgOiJMRURPTV9JTklNRUdfREVJRklSRVYiICwiVUY3ZDF0YVVkNGR4SFlVRnhUNWRuQ05MWUYzYnlkR1dIV0VncWNpYVEyODJpODhWQ2p4NV9rc2csbE1rV2I5eERaSjFSMHEzd0RPMlZpN2RHWUYzYnlkR1dOVWhMMW1tZVJUYUsyYThDc1prOV9rc2ciIDoiU1lFS19RT1JHX0RFSUZJUkVWIiAsIkFNTEowcmMtRzctZERvMkxaWUEtNTQyM29EV0pjV0R6ME5NZTJyVEROZHhJNk5SOGJBLlFBLGd3X3FvX2hqQy02Qlk1bld4cEhTUFNaQ016REtSV2FYR1Z1NE91NEhHcVNMNk5SOGJBLlFBLFEzSzI4V1pESU9wV1ptZjhRaGJQZzVvS21wRUxEcHNZQU1BUHJ6NmF4c0xMNk5SOGJBLlFBLHdtandrWHEwWWZiTXJxTm02LWdqcENUQVV2d0lzZ2ExWmpHc0JKR1RneU1JNk5SOGJBLlFBIiA6IlNZRUtfSU5JTUVHX0RFSUZJUkVWIiAsIjR2UlU5OEZFRWllaXNVZVItZEU2UWtWLUw4RnhKV1A0RkFBOjI3MDYzODI2OTgiIDoiTkVLT1RfR1RfREVJRklSRVYiew=="
 
-DB_PATH = "/content/musa_nyc_lounge_v8.db" if os.path.exists("/content") else os.path.abspath("musa_nyc_lounge_v8.db")
+DB_PATH = "/content/musa_nyc_lounge_v8.db" if os.path.exists("/content") else "/tmp/musa_nyc_lounge_v8.db"
 os.makedirs("/tmp/tts_cache_hd", exist_ok=True)
 os.makedirs("/tmp/pdf_exports", exist_ok=True)
 
@@ -71,7 +71,8 @@ def _bootstrap():
         if tok:
             try:
                 dl = hf_hub_download(repo_id=HF_REPO_ID, filename="musa_nyc_lounge_v8.db", repo_type="dataset", token=tok)
-                shutil.copy2(dl, DB_PATH)
+                shutil.copyfile(dl, DB_PATH)
+                os.chmod(DB_PATH, 0o666)
             except Exception:
                 pass
 
@@ -113,6 +114,11 @@ _db_lock = threading.Lock()
 _last_sync_ts = 0.0
 
 def db_connect() -> sqlite3.Connection:
+    try:
+        if os.path.exists(DB_PATH):
+            os.chmod(DB_PATH, 0o666)
+    except Exception:
+        pass
     conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
