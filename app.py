@@ -233,7 +233,8 @@ def _init_tables():
             VALUES (?, 'Musa (Host)', 'owner', 'owner', -1, 0, ?, 0)
         """, (PRIMARY_OWNER_ID, _today_str()))
         conn.execute("UPDATE members_v17 SET status='owner', daily_limit=-1 WHERE user_id=?", (PRIMARY_OWNER_ID,))
-        conn.execute("DELETE FROM vault_v15 WHERE chunk LIKE 'Productivity Paradoxes:%'")
+        conn.execute("DELETE FROM vault_v15 WHERE chunk LIKE 'Productivity Paradoxes:%' OR chunk LIKE '%Management chose%'")
+        conn.execute("UPDATE session_v15 SET history_json='[]' WHERE history_json LIKE '%Management chose%'")
         conn.commit()
 
 _init_tables()
@@ -688,7 +689,7 @@ def _get_live_gemini_models(client: genai.Client) -> List[str]:
 
 def _is_populated(obj: Any) -> bool:
     d = obj.model_dump() if hasattr(obj, "model_dump") else {}
-    for col in ("primary_bubble_en", "core_senses_and_subtext_en", "core_output_en", "script_en", "scenario_en", "transformed_text_en", "new_expressions_en", "content_bullets_en"):
+    for col in ("primary_reply_en", "core_senses_and_subtext_en", "core_output_en", "script_en", "scenario_en", "transformed_text_en", "new_expressions_en", "content_bullets_en"):
         if col in d:
             return len(str(d.get(col) or "").strip()) > 5
     return True
@@ -788,34 +789,33 @@ def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0
 # القوالب الرشيقة المعزولة (Lean Modular Schemas)
 # ------------------------------------------------------------------------------
 class ChatSchema(BaseModel):
-    primary_speaker: str = Field(default="Chloe", description="'Jake', 'Chloe', or 'Marcus'. Must match the host who spoke last or whom the user addressed!")
-    primary_bubble_en: str = Field(default="", description="Natural NYC reply matching the user's message length and energy (1-3 sentences). Ban robotic validation ('I hear you', 'That makes total sense'). Pivot naturally to a fresh real-life anecdote or angle if the topic is exhausted.")
-    second_speaker: str = Field(default="", description="Optional second host ('Jake', 'Chloe', or 'Marcus') who chimes in with a quick 1-sentence reaction or playful pushback. Leave '' if a single bubble feels more natural.")
-    second_bubble_en: str = Field(default="", description="The second host's 1-sentence interjection (sent as a separate live bubble). Leave '' if second_speaker is empty.")
-    has_actual_errors: bool = Field(default=False, description="True ONLY if the user's message has a genuine grammar, uncountable noun ('informations'), preposition ('discuss about', 'depend of', 'explain me'), or collocation ('take a fast decision', 'do a mistake') error.")
-    error_corrections_list: str = Field(default="", description="If has_actual_errors is True, list 'wrong phrase -> right phrase' on separate lines. Leave '' if the user's English is already natural and error-free!")
-    your_line_nyc_style_en: str = Field(default="", description="How a native New Yorker naturally expresses the user's exact thought in the SAME mood and register (using spoken ellipsis, light verbs, or crisp phrasing—NEVER pompous thesaurus prose!).")
-    chunks_in_reply_en: str = Field(default="", description="2 natural whole-chunk expressions from the hosts' reply on separate lines: • **chunk** — concise meaning. 'Example.'")
-    active_challenge_chunk: str = Field(default="", description="1 short, versatile chunk (2-4 words) for the user to try in their next message.")
+    primary_speaker: str = Field(default="Chloe", description="MUST be one of the currently ACTIVE hosts in the room! Speak naturally in the first person ('I/me').")
+    primary_reply_en: str = Field(default="", description="Spontaneous, natural, human response (1-3 sentences) directly engaging with what the user said. Speak like a real friend texting—no robotic catchphrases, no forced idioms, no 'studio management/HR' jokes!")
+    second_speaker: str = Field(default="", description="If ONLY 1 host is active in the room, this MUST be ''! If 2 or 3 hosts are active, optionally pick a second ACTIVE host ONLY when a brief reaction or second perspective feels completely natural (otherwise leave '').")
+    second_reply_en: str = Field(default="", description="Leave '' if second_speaker is empty. Otherwise 1 natural sentence from second_speaker.")
+    has_actual_errors: bool = Field(default=False, description="Check ONLY `CURRENT_USER_MESSAGE`. True ONLY for genuine grammar, word-order, uncountable noun ('informations'), preposition ('discuss about', 'depend of', 'explain me'), or lexical ('dominate the language', 'one to one') errors. Note: 'discuss X with Y' is 100% CORRECT! Ignore casual abbreviations ('cuz', 'wanna', 'gonna') and capitalization!")
+    error_corrections_list: str = Field(default="", description="If has_actual_errors is True on `CURRENT_USER_MESSAGE`, write 'wrong phrase -> right phrase'. Leave '' if there are no real errors.")
+    user_line_natural_rephrase_en: str = Field(default="", description="Rewrite the USER'S own message (`CURRENT_USER_MESSAGE`) from the USER'S first-person perspective as a native American speaker would naturally say it. NEVER write the host's answer here! If the user's line is already completely natural, write '✓ Natural as is — or: \"[1 smooth alternative]\"'.")
+    expressions_from_reply_en: str = Field(default="", description="1 or 2 natural expressions or phrasal verbs actually used in the reply on separate lines: • **expression** — clear meaning. 'Natural example sentence.'")
 
 class LexiconSchema(BaseModel):
     headword_or_query: str = Field(default="", description="The target English word/chunk OR Arabic query")
     corpus_distribution_badge: str = Field(default="Spoken: High | Workplace: Very High | Academic: Moderate", description="Authentic usage distribution across Spoken, Workplace, and Academic registers")
     syntactic_and_prosody_frame: str = Field(default="", description="Mandatory grammar frame (e.g. 'hold off on + [noun/-ing]') + Semantic Prosody & Polarity (Positive, Neutral, Negative, or Negative-Polarity only)")
-    core_senses_and_subtext_en: str = Field(default="", description="Clear breakdown of core senses (polysemy if multiple meanings exist), pragmatic subtext, and where it sounds wrong")
-    contextual_arabic_and_activator: str = Field(default="", description="If query is English: eloquent contextual Arabic equivalents (الفصحى السياقية الرصينة) for each sense. If query is Arabic: the Lexical Activator grouping authentic English equivalents into (1. Spoken/Idiomatic, 2. Workplace/Diplomatic, 3. C2 Analytical) + L1 Calque Trap warning.")
+    core_senses_and_subtext_en: str = Field(default="", description="Put each numbered sense on a NEW line ('1. ...\n2. ...'), followed by pragmatic subtext and register boundaries")
+    contextual_arabic_and_activator: str = Field(default="", description="Put each numbered sense on a NEW line ('1. ...\n2. ...'). If query is English: eloquent contextual Arabic equivalents (الفصحى السياقية الرصينة). If query is Arabic: Lexical Activator grouping English equivalents into (1. Spoken/Idiomatic, 2. Workplace/Diplomatic, 3. C2 Analytical) + L1 Calque Trap warning.")
     collocation_grid_and_frames_en: str = Field(default="", description="Collocation grid on separate lines: • Verbs + term: ...\n• Nouns/Adjectives + term: ...\n• Ready Spoken Frame: '...'")
-    authentic_examples_en: str = Field(default="", description="2 natural full-sentence examples (1 spoken/workplace, 1 analytical/executive)")
+    authentic_examples_en: str = Field(default="", description="2 natural full-sentence examples on separate lines ('1. ...\n2. ...')")
 
 class LexiconExtraSchema(BaseModel):
     title_en: str = Field(default="Lexicon Deep Dive", description="Title ('Collocation Matrix', 'Synonym Contrast & Boundaries', or 'Word Family & Derivatives')")
-    content_bullets_en: str = Field(default="", description="4-5 rich bullet points with contextual examples and concise Arabic nuances")
+    content_bullets_en: str = Field(default="", description="4-5 rich bullet points, each on a SEPARATE line ('\n'), with accurate inflections (e.g. 'bandied about', never 'banded about'), examples, and concise Arabic nuances")
 
 class StudyMinerSchema(BaseModel):
     dossier_title_en: str = Field(default="Linguistic Dossier", description="Sharp title")
     diagnosis_and_flow_en: str = Field(default="", description="For drafts: 'wrong -> right' fixes + Given-to-New/End-Weight flow analysis. For articles: summary of author's rhetorical strategy & hedging (NEVER invent fake errors on advanced articles!). For questions: direct Nuance Ladder.")
-    spoken_delivery_en: str = Field(default="", description="Spoken Delivery version: active verb-driven phrasing, spoken discourse markers, and natural ellipsis suitable for saying aloud")
-    workplace_written_en: str = Field(default="", description="Crisp Workplace Written version: diplomatic, direct, collaborative (focus on shared timelines/solutions, zero personal blame, zero bureaucratic bloat)")
+    spoken_delivery_en: str = Field(default="", description="Spoken Delivery version: active verb-driven phrasing and natural rhythm suitable for saying aloud")
+    workplace_written_en: str = Field(default="", description="Crisp Workplace Written version: diplomatic, direct, collaborative (focus on shared timelines/solutions, zero personal blame)")
     analytical_c2_prose_en: str = Field(default="", description="Polished C2 Analytical Prose: Given-Before-New cohesion, End-Weight focus, and precise active verbs/nominalization")
     whole_chunks_harvest_en: str = Field(default="", description="3-4 standout whole-chunk idioms/light-verb expressions on separate lines (correct inflections only, e.g. 'ironing out' NEVER 'iron-outting'!) with meaning and a fresh example")
     collocations_and_skeletons_en: str = Field(default="", description="3 collocation forks + 2 reusable C2 rhetorical sentence skeletons with [Slots]")
@@ -851,38 +851,91 @@ class QuizSchema(BaseModel):
     target_expression_en: str = Field(default="", description="The winning whole-chunk expression")
 
 # ------------------------------------------------------------------------------
-# دستور الطبيعة والأصالة والعفوية (Natural Spoken & Written Immersion Laws)
+# دستور العفوية والطبيعية الكاملة (Authentic, Unscripted Human English)
 # ------------------------------------------------------------------------------
 SYS_PROMPT = """
-You are the linguistic engine of 'Musa’s NYC Lounge', an elite American English studio. Obey these 6 laws of Natural, Authentic, and Spontaneous English:
+You are the engine of 'Musa’s NYC Lounge'. In Chat mode, you portray real, intelligent New York friends (Chloe, Jake, Marcus) chatting naturally with Musa:
+- Chloe: perceptive, warm, articulate media strategist in Manhattan.
+- Jake: straightforward, witty, pragmatic product lead in Brooklyn.
+- Marcus: calm, thoughtful strategy & policy thinker.
 
-1. ZERO AI-ESE, ZERO THERAPIST VALIDATION & ZERO THESAURUS VOMIT:
-   - NEVER start replies with robotic validation ('I hear you', 'That makes total sense', 'Let's unpack that', 'Keep that energy up').
-   - NEVER turn casual everyday thoughts (like relaxing in bed) into pompous, comical pseudo-academic prose ('deliberate restorative leisure'). Match pragmatic reality!
-   - NEVER stuff 4 heavy idioms into a single sentence. Real native speakers rely on crisp delexicalized verb chunks ('get around to', 'make do with', 'pan out', 'come down to', 'hold off on') and at most 1 vivid idiom per turn.
+STRICT NATURALNESS LAWS:
+1. SPEAK LIKE REAL HUMANS, NOT SITCOM ACTORS OR AI BOTS:
+   - Use effortless, everyday American English. Do NOT try to force idioms into every sentence.
+   - BANNED PHRASES: Never say 'Truth be told', 'Fair enough', 'Management chose to', 'I hear you', 'That makes total sense', or 'Let's unpack that'.
+   - NEVER pretend you are 'employees on a shift' or talk about 'HR/Management/compliance'. You are simply friends hanging out in a chat!
+   - If the user asks a language, meaning, or life question in Chat, answer it directly, naturally, and insightfully like a sharp friend.
 
-2. SPOKEN GRAMMAR vs. WRITTEN ARCHITECTURE:
-   - In SPOKEN English (Chat, Spoken Delivery, Podcast): use natural contractions, spoken ellipsis ('Sounds like a plan', 'Been meaning to ask'), conversational openers ('Truth be told,', 'Come to think of it,', 'Look, the thing is—'), and vague category tails ('...and stuff like that', '...or something along those lines').
-   - In WRITTEN English (Workplace & Analytical C2 Prose): ban mechanical schoolbook connectors ('Furthermore,', 'Moreover,'). Use organic demonstrative cohesion ('This reluctance to delegate...', 'Such bureaucratic inertia...'), Given-Before-New information flow, End-Weight focus, and active precision verbs ('hinge on', 'stem from', 'undermine', 'bolster', 'erode').
+2. STRICTLY OBEY THE ACTIVE ROOM ROSTER:
+   - You will be given `ACTIVE_HOSTS_IN_ROOM` (1, 2, or 3 names).
+   - ONLY characters listed in `ACTIVE_HOSTS_IN_ROOM` are present! Anyone not listed is NOT in the chat and must NEVER speak or be spoken for.
 
-3. REAL NYC GROUP-CHAT DYNAMICS (JAKE, CHLOE & MARCUS):
-   - Jake (31, Brooklyn product lead): quick, pragmatic, dry humor, hates corporate fluff.
-   - Chloe (29, Manhattan media strategist): perceptive, warm, reads subtext and human motives.
-   - Marcus (36, strategy & policy advisor): calm, analytical, loves playing Devil's Advocate.
-   - Mirror the user's message length and energy! If a casual topic is exhausted, pivot naturally by sharing a quick real-life NYC moment or playful debate.
-   - NEVER call the user Jake, Chloe, or Marcus! NEVER write stage directions in parentheses like `(interrupting)` or `(laughs)`.
+3. SURGICAL ERROR CHECK (CURRENT MESSAGE ONLY):
+   - Evaluate ONLY `CURRENT_USER_MESSAGE`. Never repeat corrections from earlier messages.
+   - Ignore casual texting ('cuz', 'wanna', 'gonna'), missing punctuation, or lowercase names ('chloe', 'jake').
+   - 'discuss [something] with [someone]' is 100% CORRECT—only flag 'discuss about'.
 
-4. SURGICAL ERROR TRIAGE (USER'S WORDS ONLY):
-   - Flag ONLY genuine grammar, uncountable noun ('informations', 'feedbacks'), verb-preposition ('discuss about', 'depend of', 'explain me'), or collocation ('take a fast decision', 'do a mistake') errors.
-   - Never corrupt standard idioms (keep 'move the needle', never 'move the needle forward'; inflect phrasal verbs on the verb: 'ironing out', NEVER 'iron-outting').
-
-5. 100% ENGLISH IMMERSION + CONTEXTUAL ARABIC EXCLUSIVELY IN LEXICON:
-   - Keep Chat, Study, Podcast, and Quiz 100% in English.
-   - Use eloquent contextual Arabic (الفصحى السياقية الرصينة) ONLY inside `LexiconSchema` and `LexiconExtraSchema`—never robotic literal word-for-word translations.
+4. 100% ENGLISH IN CHAT/STUDY/PODCAST/QUIZ, CONTEXTUAL ARABIC ONLY IN LEXICON.
 """
 
 # ------------------------------------------------------------------------------
-# بناء لوحات المفاتيح والأزرار الرشيقة
+# إدارة الحضور الديناميكي في الغرفة (1 أو 2 أو 3 شخصيات بحرية كاملة)
+# ------------------------------------------------------------------------------
+ALL_HOSTS = ["Chloe", "Jake", "Marcus"]
+
+def _get_active_roster(user_id: int) -> List[str]:
+    sub = _get_session(user_id).get("sub_state", "") or ""
+    if sub.startswith("ROSTER:"):
+        names = [x.strip() for x in sub.replace("ROSTER:", "").split(",") if x.strip() in ALL_HOSTS]
+        if names:
+            return names
+    elif sub.startswith("SOLO:"):
+        h = sub.replace("SOLO:", "").strip()
+        if h in ALL_HOSTS:
+            return [h]
+    return ["Chloe", "Jake", "Marcus"]
+
+def _set_active_roster(user_id: int, hosts: List[str]) -> List[str]:
+    valid = [h for h in ALL_HOSTS if h in hosts]
+    if not valid:
+        valid = ["Chloe"]
+    _update_session(user_id, sub_state="ROSTER:" + ",".join(valid))
+    return valid
+
+def _update_roster_from_text(user_id: int, user_text: str) -> List[str]:
+    """فهم أوامر المستخدم النصية لإدخال أو إخراج أي شخصية (1 أو 2 أو 3) تلقائياً"""
+    roster = list(_get_active_roster(user_id))
+    low = user_text.lower()
+    mentioned = [h for h in ALL_HOSTS if h.lower() in low]
+
+    # 1. طلب الانفراد بشخص أو شخصين ("only talk to Chloe", "leave us alone", "one-on-one with Chloe")
+    if any(p in low for p in ("only wanna talk to", "only want to talk to", "just wanna talk to", "just want to talk to", "leave us alone", "one-on-one", "one to one", "talk to just one", "alone with")):
+        if mentioned:
+            return _set_active_roster(user_id, mentioned)
+        return _set_active_roster(user_id, [roster[0]])
+
+    # 2. طرد أو إسكات شخص محدد ("shut up Marcus", "take Marcus away", "don't butt in Jake", "get out Jake")
+    if any(p in low for p in ("shut up", "take him away", "take marcus away", "take jake away", "don't butt in", "dont butt in", "don't but in", "get out", "leave the chat", "go away", "kick out")):
+        if mentioned:
+            new_r = [h for h in roster if h not in mentioned]
+            return _set_active_roster(user_id, new_r if new_r else ["Chloe"])
+
+    # 3. استدعاء شخص غائب إلى المحادثة ("bring Marcus", "where is Marcus", "Marcus come here", "Marcus are you there", "call Jake")
+    if any(p in low for p in ("where is", "where's", "bring him", "bring marcus", "bring jake", "bring chloe", "come here", "are you there", "what about you", "join us", "call marcus", "call jake")):
+        for m in mentioned:
+            if m not in roster:
+                roster.append(m)
+        return _set_active_roster(user_id, roster)
+
+    # 4. إذا خاطب المستخدم اسماً غير موجود حالياً في الغرفة بشكل مباشر وموجب، نضيفه تلقائياً
+    if len(mentioned) == 1 and mentioned[0] not in roster and not any(x in low for x in ("not ", "don't", "dont", "without")):
+        roster.append(mentioned[0])
+        return _set_active_roster(user_id, roster)
+
+    return roster
+
+# ------------------------------------------------------------------------------
+# بناء لوحات المفاتيح وأزرار الحضور المرنة (🟢 / ⚪) بدون Roleplay وبدون Spark
 # ------------------------------------------------------------------------------
 def build_reply_kb(user_id: int) -> types.ReplyKeyboardMarkup:
     s = _get_session(user_id)
@@ -911,18 +964,27 @@ def _extract_lookup_terms(vault_items: List[Tuple[str, str, str]]) -> List[str]:
                 terms.append(t)
     return terms
 
-def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[str]] = None) -> types.InlineKeyboardMarkup:
+def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[str]] = None, roster: Optional[List[str]] = None) -> types.InlineKeyboardMarkup:
     kb = types.InlineKeyboardMarkup()
     if ctype == "chat":
+        active_r = roster if roster else ["Chloe", "Jake", "Marcus"]
         kb.row(
-            types.InlineKeyboardButton("🎧 Voice", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("🔍 Lexicon", callback_data=f"edlexcard:{tok}"),
+            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
+            types.InlineKeyboardButton("📖 Lexicon", callback_data=f"edlexcard:{tok}"),
             types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-            types.InlineKeyboardButton("☕ Spark", callback_data=f"edchat:spark:{tok}"),
+        )
+        # شريط التحكم الحر في الشخصيات (اضغط على أي شخصية لإدخالها 🟢 أو إخراجها ⚪، سواء 1 أو 2 أو 3)
+        kb.row(
+            *[
+                types.InlineKeyboardButton(
+                    f"{'🟢' if h in active_r else '⚪'} {h}",
+                    callback_data=f"edroster:{h}:{tok}",
+                )
+                for h in ALL_HOSTS
+            ]
         )
         if lookup_terms:
-            btns = [types.InlineKeyboardButton(f"🔍 {t[:20]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(lookup_terms[:2])]
-            btns.append(types.InlineKeyboardButton("🎭 Roleplay", callback_data="edscen:menu"))
+            btns = [types.InlineKeyboardButton(f"🔍 {t[:22]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(lookup_terms[:2])]
             kb.row(*btns)
         return kb
 
@@ -942,7 +1004,7 @@ def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[s
         types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
         types.InlineKeyboardButton("📄 PDF", callback_data=f"edpdf:{tok}"),
         types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-        types.InlineKeyboardButton("🔍 Lexicon", callback_data=f"edlexcard:{tok}"),
+        types.InlineKeyboardButton("📖 Lexicon", callback_data=f"edlexcard:{tok}"),
     )
     if ctype == "miner":
         kb.row(
@@ -980,6 +1042,8 @@ def _fmt_fixes(raw: str, strike: bool = True) -> str:
         if "->" in cl or "→" in cl:
             pts = re.split(r"->|→", cl, maxsplit=1)
             l, r = _h(pts[0].strip("~❌ ")), _h(pts[1].strip("✅ "))
+            if l.lower() == r.lower() or l.lower() in ("cuz", "wanna", "gonna") or ("discuss with" in l.lower() and "discuss" == r.lower()):
+                continue
             if l and r:
                 out.append(f"✏️ <s>{l}</s> → <b>{r}</b>" if strike else f"• <i>{l}</i> → <b>{r}</b>")
         else:
@@ -987,58 +1051,76 @@ def _fmt_fixes(raw: str, strike: bool = True) -> str:
     return "\n".join(out)
 
 # ------------------------------------------------------------------------------
-# محرك 1: الدردشة الحية بفقاعات منفصلة وتفاعل صوتي تلقائي (Live Multi-Bubble Chat)
+# محرك 1: الدردشة الحرة الطبيعية (1 أو 2 أو 3 شخصيات بعفوية كاملة)
 # ------------------------------------------------------------------------------
 def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool = False, special_angle: str = "", user_first_name: str = "Musa") -> ChatSchema:
     s = _get_session(user_id)
     reg = s["register"]
-    hist_str = "\n".join([f"{user_first_name}: {h.get('u','')}\nLounge: {h.get('b','')}" for h in s["history"][-6:] if isinstance(h, dict)])
-    vault_terms = _get_recent_vault_terms(user_id, 3)
-    vault_hint = f"If natural, weave one of these saved expressions into the reply: {', '.join(vault_terms)}." if vault_terms else ""
-    now_str = datetime.now(timezone.utc).strftime("%A")
+    active_roster = _update_roster_from_text(user_id, user_text)
 
-    angle_inst = ""
-    if special_angle == "spark":
-        angle_inst = "Start a fresh, spontaneous NYC table topic—share an amusing or thought-provoking situation that happened today, or a friendly debate between Jake, Chloe, and Marcus, and pull the user into it!"
-    elif special_angle == "devil":
-        angle_inst = "Have Marcus or Jake play Devil's Advocate—challenge the user's point with a sharp, friendly counter-perspective!"
+    hist_lines = []
+    for h in s["history"][-5:]:
+        if isinstance(h, dict):
+            b_clean = h.get("b", "")
+            if "management chose to" not in b_clean.lower():
+                hist_lines.append(f"User: {h.get('u','')[:90]} | Reply: {b_clean[:150]}")
+    hist_str = "\n".join(hist_lines)
 
-    sys_p = f"{SYS_PROMPT}\nDay context: {now_str}. Active Register: {reg}. User's name: {user_first_name}. {vault_hint} {angle_inst}"
-    usr_p = f"Recent Chat:\n{hist_str}\n\n{user_first_name} ({'voice note' if is_voice else 'message'}): \"{user_text}\""
-    data: ChatSchema = call_llm_structured(sys_p, usr_p, ChatSchema, temp=0.68)
+    if len(active_roster) == 1:
+        roster_rule = (
+            f"ACTIVE_HOSTS_IN_ROOM: [{active_roster[0]}] (1-on-1 private chat).\n"
+            f"`primary_speaker` MUST be '{active_roster[0]}', and `second_speaker` MUST be '' (empty). Do NOT mention the other hosts unless asked!"
+        )
+    elif len(active_roster) == 2:
+        roster_rule = (
+            f"ACTIVE_HOSTS_IN_ROOM: [{active_roster[0]}, {active_roster[1]}] (2-person room; the third friend is NOT here).\n"
+            f"`primary_speaker` MUST be either '{active_roster[0]}' or '{active_roster[1]}'. `second_speaker` can be '' or the other active host from [{active_roster[0]}, {active_roster[1]}] ONLY."
+        )
+    else:
+        roster_rule = (
+            "ACTIVE_HOSTS_IN_ROOM: [Chloe, Jake, Marcus] (all 3 friends are in the chat).\n"
+            "Pick the most relevant `primary_speaker`. Leave `second_speaker` as '' unless a brief 1-line reaction from another host genuinely adds to the conversation."
+        )
 
-    p_spk = data.primary_speaker if data.primary_speaker in ("Jake", "Chloe", "Marcus") else "Chloe"
-    p_bub = re.sub(r"^\s*(Jake|Chloe|Marcus)\s*:\s*", "", re.sub(r"\([^)]*\)", "", data.primary_bubble_en or "")).strip()
-    s_spk = data.second_speaker.strip() if data.second_speaker.strip() in ("Jake", "Chloe", "Marcus") and data.second_speaker.strip() != p_spk else ""
-    s_bub = re.sub(r"^\s*(Jake|Chloe|Marcus)\s*:\s*", "", re.sub(r"\([^)]*\)", "", data.second_bubble_en or "")).strip() if s_spk else ""
+    sys_p = f"{SYS_PROMPT}\nActive Register: {reg}. User's name: {user_first_name}.\n{roster_rule}"
+    usr_p = (
+        f"Recent Context (for continuity only—do NOT re-correct old lines):\n{hist_str}\n\n"
+        f"CURRENT_USER_MESSAGE:\n\"{user_text}\""
+    )
+    data: ChatSchema = call_llm_structured(sys_p, usr_p, ChatSchema, temp=0.62)
+
+    # فرض صارم في الكود لقائمة الحضور النشطة (يستحيل أن يتحدث شخص خارج القائمة النشطة)
+    p_spk = data.primary_speaker if data.primary_speaker in active_roster else active_roster[0]
+    if len(active_roster) == 1:
+        s_spk, s_bub = "", ""
+    else:
+        cand_s = data.second_speaker.strip()
+        if cand_s in active_roster and cand_s != p_spk and data.second_reply_en.strip():
+            s_spk = cand_s
+            s_bub = re.sub(r"^\s*(Jake|Chloe|Marcus)\s*:\s*", "", re.sub(r"\([^)]*\)", "", data.second_reply_en)).strip()
+        else:
+            s_spk, s_bub = "", ""
+
+    p_bub = re.sub(r"^\s*(Jake|Chloe|Marcus)\s*:\s*", "", re.sub(r"\([^)]*\)", "", data.primary_reply_en or "")).strip()
+    p_bub = re.sub(r"^(Truth be told|Fair enough),\s*", "", p_bub, flags=re.I)
+    if p_bub:
+        p_bub = p_bub[0].upper() + p_bub[1:]
 
     combined_diag = f"{p_spk}: {p_bub}" + (f"\n{s_spk}: {s_bub}" if s_spk and s_bub else "")
-    _update_session(user_id, new_turn={"u": user_text[:220], "b": combined_diag[:280]})
+    _update_session(user_id, new_turn={"u": user_text[:200], "b": combined_diag[:260]})
 
-    if data.has_actual_errors and data.error_corrections_list.strip():
-        _log_dna(user_id, data.error_corrections_list)
-
-    mastery_banner = ""
-    for vt in vault_terms:
-        if len(vt) > 3 and vt.lower() in user_text.lower():
-            mastery_banner = f"🎯 <b>Spot-on active usage:</b> <i>{_h(vt)}</i>\n\n"
-            break
-
-    # الصمت الذكي عند الصواب: لا نعرض سطر التصحيح إلا إذا وُجد خطأ فعلي!
     fix_block = ""
     if data.has_actual_errors and data.error_corrections_list.strip():
         fmt_f = _fmt_fixes(data.error_corrections_list, strike=True)
         if fmt_f:
+            _log_dna(user_id, data.error_corrections_list)
             fix_block = f"\n\n{fmt_f}"
 
-    clean_chunks = _clean_multiline_bullets(data.chunks_in_reply_en)
-    ch_chunk = re.sub(r"\*+", "", data.active_challenge_chunk or "").strip(" '\"\u201c\u201d•*")
-    challenge_line = f"\n• <b>Try next:</b> <code>{_h(ch_chunk)}</code>" if ch_chunk and "target" not in ch_chunk.lower() else ""
-
+    clean_chunks = _clean_multiline_bullets(data.expressions_from_reply_en)
     echo_drawer = (
         f"<b>💡 Native Echo ▼</b>\n"
-        f"• <b>Your line, NYC style:</b> <i>\"{_fmt_inline_md(data.your_line_nyc_style_en)}\"</i>\n"
-        f"{clean_chunks}{challenge_line}"
+        f"• <b>Your line, natural NYC:</b> <i>\"{_fmt_inline_md(data.user_line_natural_rephrase_en)}\"</i>"
+        + (f"\n{clean_chunks}" if clean_chunks else "")
     )
 
     tok = hashlib.md5(f"CHT:{user_id}:{time.time()}".encode()).hexdigest()[:10]
@@ -1048,43 +1130,30 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
         "register": reg,
         "main_en": combined_diag,
         "instant_fix": data.error_corrections_list,
-        "diagnosis_en": data.chunks_in_reply_en,
-        "spoken_inf": data.your_line_nyc_style_en,
+        "diagnosis_en": data.expressions_from_reply_en,
+        "spoken_inf": data.user_line_natural_rephrase_en,
         "spoken_semi": p_bub,
         "written_form": s_bub or p_bub,
     }
     v_items = []
-    for ln in data.chunks_in_reply_en.splitlines():
+    for ln in data.expressions_from_reply_en.splitlines():
         if len(ln.strip()) > 6:
             t_c, d_c, _ = _clean_vault_entry(ln, "", combined_diag)
             if t_c:
                 v_items.append((t_c, d_c, combined_diag))
-    if not v_items and ch_chunk:
-        v_items.append((ch_chunk, data.your_line_nyc_style_en, combined_diag))
 
     store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_text)
     l_terms = _extract_lookup_terms(v_items)
-    kb_markup = build_inline_kb(tok, "chat", l_terms)
+    kb_markup = build_inline_kb(tok, "chat", l_terms, roster=active_roster)
 
     v_hdr = f"🎙️ <i>\"{_h(user_text)}\"</i>\n\n" if is_voice else ""
-
-    # إرسال الفقاعات الحية (فقاعتان منفصلتان إذا تدخل متحدث ثانٍ، أو فقاعة واحدة نظيفة)
+    body_dialogue = f"<b>{_h(p_spk)}</b>\n{_fmt_inline_md(p_bub)}"
     if s_spk and s_bub:
-        first_html = f"{mastery_banner}{v_hdr}<b>{_h(p_spk)}</b>\n{_fmt_inline_md(p_bub)}"
-        send_html_safe(chat_id, first_html)
-        if os.environ.get("LIVE_SELF_TEST") != "1":
-            try:
-                bot.send_chat_action(chat_id, "typing")
-            except Exception:
-                pass
-            time.sleep(1.15)
-        second_html = f"<b>{_h(s_spk)}</b>\n{_fmt_inline_md(s_bub)}{fix_block}\n\n<blockquote expandable>{echo_drawer}</blockquote>"
-        send_html_safe(chat_id, second_html, reply_markup=kb_markup)
-    else:
-        single_html = f"{mastery_banner}{v_hdr}<b>{_h(p_spk)}</b>\n{_fmt_inline_md(p_bub)}{fix_block}\n\n<blockquote expandable>{echo_drawer}</blockquote>"
-        send_html_safe(chat_id, single_html, reply_markup=kb_markup)
+        body_dialogue += f"\n\n<b>{_h(s_spk)}</b>\n{_fmt_inline_md(s_bub)}"
 
-    # الانغماس السمعي التلقائي: إذا أرسل المستخدم صوتاً، يرد المذيعون بصوت تلقائياً!
+    full_html = f"{v_hdr}{body_dialogue}{fix_block}\n\n<blockquote expandable>{echo_drawer}</blockquote>"
+    send_html_safe(chat_id, full_html, reply_markup=kb_markup)
+
     if is_voice and os.environ.get("LIVE_SELF_TEST") != "1":
         def _auto_voice():
             try:
@@ -1109,7 +1178,7 @@ def execute_lexicon_lookup(chat_id: int, user_id: int, query_text: str):
     reg = _get_session(user_id)["register"]
     task = (
         "3-LENS CONTEXTUAL LEXICON & ACTIVATOR:\n"
-        "- LENS 1 (English Word/Chunk): Show Corpus Distribution badge, mandatory Syntactic Frame & Semantic Prosody/Polarity, Polysemy/Core Senses with subtext, eloquent contextual Arabic equivalents (الفصحى السياقية الرصينة) for each sense, Collocation Grid + Ready Spoken Frame, and 2 authentic examples.\n"
+        "- LENS 1 (English Word/Chunk): Show Corpus Distribution badge, mandatory Syntactic Frame & Semantic Prosody/Polarity, Polysemy/Core Senses (each sense on a NEW line!), eloquent contextual Arabic equivalents (الفصحى السياقية الرصينة) for each sense on a NEW line, Collocation Grid + Ready Spoken Frame, and 2 authentic examples.\n"
         "- LENS 2 (Arabic Word/Idiom/Concept): Act as a Lexical Activator—group natural American English equivalents into (1. Spoken & Idiomatic NYC, 2. Workplace & Diplomatic, 3. C2 Analytical/Academic), warn against L1 Arabic-to-English calque traps, and give collocations & examples.\n"
         "- LENS 3 (X vs Y or In-Context *word*): Contrast exact collocational, syntactic, and register boundaries."
     )
@@ -1140,9 +1209,9 @@ def execute_lexicon_lookup(chat_id: int, user_id: int, query_text: str):
 
 def execute_lexicon_extension(chat_id: int, user_id: int, term: str, ext_type: str):
     prompts = {
-        "colloc": f"Provide an expanded Collocation Matrix for '{term}': 1) Verbs + {term}, 2) Adjectives/Nouns + {term}, 3) Prepositional frames, 4) Two full spoken/written chunks with concise Arabic meanings.",
-        "syn": f"Contrast '{term}' with its 3 closest English synonyms: show exact nuance differences, where '{term}' works vs where each synonym fails, with examples and concise Arabic notes.",
-        "family": f"Provide the complete Word Family & Derivatives (Noun, Verb, Adjective, Adverb, Idiomatic Antonym) for '{term}' with examples and concise Arabic meanings.",
+        "colloc": f"Provide an expanded Collocation Matrix for '{term}' with each item on a SEPARATE line ('\\n'):\n• Verbs + {term}\n• Adjectives/Nouns + {term}\n• Prepositional frames\n• Complete spoken chunk\n• Complete written chunk (with concise Arabic meanings).",
+        "syn": f"Contrast '{term}' with its 3 closest English synonyms. Put each synonym on a SEPARATE line ('\\n') with **Bold Synonym Name**, exact nuance boundary, natural example, and concise Arabic note. Ensure 100% accurate verb inflections (e.g. 'bandied about', never 'banded about').",
+        "family": f"Provide the complete Word Family & Derivatives (Noun, Verb, Adjective, Adverb, Idiomatic Antonym) for '{term}', putting each part of speech on a SEPARATE line ('\\n') with example and concise Arabic meaning.",
     }
     res: LexiconExtraSchema = call_llm_structured(f"{SYS_PROMPT}\n{prompts.get(ext_type, prompts['colloc'])}", f"Target: {term}", LexiconExtraSchema, temp=0.45)
     send_html_safe(chat_id, f"<b>{_h(res.title_en)} — {_h(term)}</b>\n\n{_clean_multiline_bullets(res.content_bullets_en)}")
@@ -1604,7 +1673,7 @@ def handle_incoming_message(message: types.Message):
         _update_session(
             uid,
             mode="CHAT",
-            sub_state="",
+            sub_state=("ROSTER:Chloe,Jake,Marcus" if low in ("/start", "/new") else None),
             clear_hist=(low in ("/start", "/new")),
             new_turn={"u": "[Joined the lounge]", "b": f"{spk_op}: {line_op}"},
         )
@@ -1868,31 +1937,27 @@ def on_callback(call: types.CallbackQuery):
         term = c["source_text"] if c and c.get("source_text") else fb_txt.splitlines()[0]
         bot.answer_callback_query(call.id, "Loading deep dive...")
         threading.Thread(target=execute_lexicon_extension, args=(chat_id, uid, term, ext_type), daemon=True).start()
-    elif d.startswith("edchat:"):
-        _, angle, tok = d.split(":", 2)
-        c = load_card(tok)
-        usr_orig = c["source_text"] if c and c.get("source_text") else "Give us a fresh table topic!"
-        bot.answer_callback_query(call.id, "Sparking table banter...")
-        threading.Thread(target=execute_chat_turn, args=(chat_id, uid, usr_orig, False, angle, en_name), daemon=True).start()
-    elif d.startswith("edscen:"):
-        sub = d.split(":", 1)[1]
-        if sub == "menu":
-            bot.answer_callback_query(call.id)
-            kb = types.InlineKeyboardMarkup()
-            kb.row(types.InlineKeyboardButton("Tough Negotiation", callback_data="edscen:neg"), types.InlineKeyboardButton("Thesis / Policy Defense", callback_data="edscen:def"))
-            kb.row(types.InlineKeyboardButton("Project Crisis Room", callback_data="edscen:cri"), types.InlineKeyboardButton("Hot-Seat Debate", callback_data="edscen:deb"))
-            send_html_safe(chat_id, "<b>🎭 High-Stakes Roleplay Arena</b>\nPick a live scenario to step into with the hosts:", reply_markup=kb)
+    elif d.startswith("edroster:"):
+        _, h_toggle, tok = d.split(":", 2)
+        cur_r = list(_get_active_roster(uid))
+        if h_toggle in cur_r:
+            if len(cur_r) == 1:
+                bot.answer_callback_query(call.id, f"At least one friend ({h_toggle}) must stay in the chat!")
+                return
+            cur_r.remove(h_toggle)
+            action_note = f"{h_toggle} stepped out. Active now: {', '.join(cur_r)}"
         else:
-            scen_prompts = {
-                "neg": ("Marcus", f"{en_name}, the board wants the new governance report rolled out by Friday morning, no exceptions. Tell me honestly—why are you asking to push the date back?"),
-                "def": ("Marcus", f"Let's put your thesis to the test, {en_name}. Critics argue that municipal digital platforms are mere window dressing unless institutional culture changes first. How do you defend your model?"),
-                "cri": ("Jake", f"Alright {en_name}, we've got a situation—our lead engineer just called in sick two hours before the rollout, and key features are still unverified. What's your call?"),
-                "deb": ("Chloe", f"Here's a controversial take, {en_name}: remote and hybrid work is quietly killing mentorship for younger professionals. Do you buy that, or is it just management nostalgia?"),
-            }
-            bot.answer_callback_query(call.id, "Scenario active!")
-            spk_s, line_s = scen_prompts.get(sub, scen_prompts["neg"])
-            _update_session(uid, mode="CHAT", new_turn={"u": "[Started Roleplay]", "b": f"{spk_s}: {line_s}"})
-            send_html_safe(chat_id, f"<b>{spk_s}</b>\n{_h(line_s)}", reply_markup=build_reply_kb(uid))
+            cur_r.append(h_toggle)
+            action_note = f"{h_toggle} joined! Active now: {', '.join(cur_r)}"
+        updated_r = _set_active_roster(uid, cur_r)
+        bot.answer_callback_query(call.id, action_note)
+        c = load_card(tok)
+        l_terms = _extract_lookup_terms(c["vault_items"]) if c and c.get("vault_items") else []
+        try:
+            bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_inline_kb(tok, "chat", l_terms, roster=updated_r))
+        except Exception:
+            pass
+
     elif d.startswith("edmore:"):
         tok = d.split(":", 1)[1]
         c = load_card(tok)
@@ -1983,9 +2048,9 @@ if os.environ.get("LIVE_SELF_TEST") == "1":
         is_voice=False,
         user_first_name="Musa",
     )
-    if not res_c.primary_bubble_en.strip():
+    if not res_c.primary_reply_en.strip():
         raise RuntimeError("Self-test failed: Empty primary_bubble_en")
-    print("   🎯 Verified Primary Speaker Continuity:", res_c.primary_speaker, "->", res_c.primary_bubble_en[:80])
+    print("   🎯 Verified Primary Speaker Continuity:", res_c.primary_speaker, "->", res_c.primary_reply_en[:80])
     print("   🎯 Verified Zero Fake Fixes on Correct Line:", "has_actual_errors =", res_c.has_actual_errors)
     print("✅ STUDIO_V18_VERIFIED_OK", flush=True)
     os._exit(0)
