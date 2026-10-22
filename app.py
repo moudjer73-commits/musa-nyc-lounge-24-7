@@ -692,7 +692,8 @@ def _is_populated(obj: Any) -> bool:
     for col in (
         "primary_reply_en", "unified_senses_en_ar", "polished_version_en",
         "spoken_american_en", "top_chunks_en_ar", "direct_feedback_or_answer_en",
-        "script_en", "scenario_en", "transformed_text_en", "new_expressions_en", "content_bullets_en",
+        "script_en", "on_air_host_response_en", "scenario_or_stem_en", "evaluation_and_score_en",
+        "transformed_text_en", "new_expressions_en", "content_bullets_en",
     ):
         if col in d:
             return len(str(d.get(col) or "").strip()) > 5
@@ -724,19 +725,37 @@ def _parse_schema_safe(raw_txt: str, schema_cls: Any) -> Any:
     return res
 
 def _try_single_gemini_call(api_key: str, model_id: str, sys_p: str, usr_p: str, schema_cls: Any, temp: float) -> Any:
-    mc = genai.Client(api_key=api_key, http_options={"timeout": 12000})
-    resp = mc.models.generate_content(
-        model=model_id,
-        contents=usr_p,
-        config=genai_types.GenerateContentConfig(
-            system_instruction=sys_p,
-            response_mime_type="application/json",
-            response_schema=schema_cls,
-            temperature=temp,
-        ),
-    )
-    if resp and resp.text:
-        return _parse_schema_safe(resp.text, schema_cls)
+    mc = genai.Client(api_key=api_key, http_options={"timeout": 22000})
+    cfg_kwargs: Dict[str, Any] = {
+        "system_instruction": sys_p,
+        "response_mime_type": "application/json",
+        "response_schema": schema_cls,
+        "temperature": temp,
+    }
+    if "flash" in model_id.lower() and "thinking" not in model_id.lower():
+        try:
+            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
+        except Exception:
+            pass
+    try:
+        resp = mc.models.generate_content(
+            model=model_id,
+            contents=usr_p,
+            config=genai_types.GenerateContentConfig(**cfg_kwargs),
+        )
+        if resp and resp.text:
+            return _parse_schema_safe(resp.text, schema_cls)
+    except Exception as e1:
+        if "thinking" in str(e1).lower() or "invalid" in str(e1).lower():
+            cfg_kwargs.pop("thinking_config", None)
+            resp2 = mc.models.generate_content(
+                model=model_id,
+                contents=usr_p,
+                config=genai_types.GenerateContentConfig(**cfg_kwargs),
+            )
+            if resp2 and resp2.text:
+                return _parse_schema_safe(resp2.text, schema_cls)
+        raise e1
     raise ValueError("Empty Gemini response")
 
 def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0.55) -> Any:
@@ -776,16 +795,13 @@ def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0
                 return res
             except Exception as e:
                 err_s = str(e).lower()
-                if "404" in err_s:
-                    _UNAVAILABLE_MODELS_UNTIL[gm_id] = time.time() + 3600
+                if any(x in err_s for x in ("404", "not found", "503", "504", "timeout", "timed out", "overloaded", "unavailable", "deadline")):
+                    _UNAVAILABLE_MODELS_UNTIL[gm_id] = time.time() + 180
                     break
-                if "503" in err_s or "504" in err_s or "overloaded" in err_s or "unavailable" in err_s:
-                    _UNAVAILABLE_MODELS_UNTIL[gm_id] = time.time() + 120
-                    break
-                if "429" in err_s or "quota" in err_s or "exhausted" in err_s:
+                if any(x in err_s for x in ("429", "quota", "exhausted", "resource_exhausted")):
                     _DEAD_KEYS_UNTIL[mk] = time.time() + 60
                     continue
-                continue
+                break
 
     return schema_cls()
 
@@ -852,27 +868,34 @@ class MoreMinerSchema(BaseModel):
     new_expressions_en: str = Field(default="", description="3-4 rich blocks separated by blank lines (either 4 brand-new chunks with Arabic & examples, OR 3 C2 sentence skeletons with [Slots] & applied examples, OR Rhetorical & Nominalization analysis).")
 
 class PodcastSchema(BaseModel):
-    episode_title_en: str = Field(default="NYC Studio Roundtable", description="Episode title")
-    listening_focus_en: str = Field(default="", description="1-sentence ear-training cue telling the listener what angle or contrast to listen for")
-    script_en: str = Field(default="", description="8-turn lively NYC studio dialogue (Jake, Chloe, Marcus). Each speaker on a NEW line ('Jake: ...'). Highlight 3-4 key idioms in **bold** inside the script. NO stage directions in parentheses!")
-    closing_question_to_user_en: str = Field(default="", description="Engaging on-air question inviting the user to call in / reply with their take")
-    key_expressions_en: str = Field(default="", description="4 standout whole-chunk expressions used in script_en, on separate lines with meaning and example")
-    audio_recap_script_en: str = Field(default="", description="1-sentence spoken recap of the key expressions")
+    episode_title_en: str = Field(default="NYC Studio Roundtable", description="Compelling, podcast-style episode title")
+    episode_summary_and_ear_cue_en: str = Field(default="", description="2 sharp sentences: Sentence 1 sets the scene/conflict of the episode; Sentence 2 tells the listener what specific argument or contrast to listen for in the audio.")
+    script_en: str = Field(default="", description="7-turn natural, unscripted NYC dialogue (Jake, Chloe, Marcus). Put EACH speaker turn on a NEW line starting strictly with 'Jake: ...', 'Chloe: ...', or 'Marcus: ...' (DO NOT put asterisks around speaker names!). Highlight 4 standout idioms/chunks inside the dialogue using **bold**. Zero stage directions in parentheses!")
+    fast_speech_and_chunks_en_ar: str = Field(default="", description="Break down the 4 bolded expressions from script_en as numbered blocks:\n1. **[Exact Expression]** — `[Connected Speech / Stress Guide, e.g. 'gonna hafta / stress on HINGE']`\n• المعنى السياقي: [Eloquent Arabic meaning]\n• Why it works here: [1-line pragmatic note]")
+    on_air_call_in_question_en: str = Field(default="", description="Direct, thought-provoking question from the hosts inviting the listener (by name) to call in with a voice note or text reply.")
+
+class PodcastCallInSchema(BaseModel):
+    on_air_host_response_en: str = Field(default="", description="2-host live studio reaction to the user's call-in comment (e.g. 'Chloe: ...\nMarcus: ...'), welcoming their point on air, engaging with their idea, and asking a sharp follow-up.")
+    call_in_language_polish_en_ar: str = Field(default="", description="On separate lines:\n• **Your Call-In Polished (Broadcast-Ready):** '[Natural native upgrade of what the user said]'\n• **Fixes / Upgrades:** [Any ❌ ➔ ✅ grammar/collocation fix, or '✓ Spot-on delivery!']\n• **Power Chunk from Hosts:** **[expression]** — [Arabic meaning]")
 
 class QuizSchema(BaseModel):
-    category_en: str = Field(default="C1/C2 Precision & Collocations", description="Category")
-    scenario_en: str = Field(default="", description="Sentence with a blank OR C2 key-word transformation prompt")
+    quiz_mode_badge_en: str = Field(default="Collocation & Valency Precision", description="Exact badge for the drill mode")
+    scenario_or_stem_en: str = Field(default="", description="For Collocation/Pragmatics/Vault: a realistic C1/C2 sentence with a ____ blank (or situational prompt). For C2 Transformation: 'Base Sentence: ...\nKEY WORD: **[WORD]**\nComplete the second sentence using 3-6 words including the KEY WORD so it means the same:'")
     option_a: str = Field(default="", description="Option A")
     option_b: str = Field(default="", description="Option B")
     option_c: str = Field(default="", description="Option C")
     option_d: str = Field(default="", description="Option D")
     correct_letter: str = Field(default="B", description="'A', 'B', 'C', or 'D'")
-    explanation_en: str = Field(default="", description="Clear English explanation of why the correct option wins and why the others fail")
-    target_expression_en: str = Field(default="", description="The winning whole-chunk expression")
+    winning_reason_en_ar: str = Field(default="", description="Why the correct option wins (exact collocation, syntactic frame, register fit, and eloquent Arabic meaning).")
+    distractor_anatomy_en: str = Field(default="", description="Explain briefly on separate lines why EACH of the other 3 options fails (e.g. '• Option A: fails because...\n• Option C: wrong preposition...').")
+    complete_native_sentence_en: str = Field(default="", description="The complete, final winning sentence written out cleanly so it can be read aloud by TTS audio.")
+    target_expression_en: str = Field(default="", description="The core 2-5 word winning expression or collocation to save/lookup.")
+    active_production_prompt_en: str = Field(default="", description="A 1-sentence challenge inviting the user to type or speak their OWN sentence using `target_expression_en`.")
 
-# ------------------------------------------------------------------------------
-# دستور العفوية والطبيعية الكاملة (Authentic, Unscripted Human English)
-# ------------------------------------------------------------------------------
+class ActiveQuizEvalSchema(BaseModel):
+    evaluation_and_score_en: str = Field(default="", description="Direct assessment of the user's sentence (e.g. '9/10 — Natural & accurate!' or '7/10 — Good idea, small preposition slip') + exact explanation.")
+    surgical_fix_and_model_en_ar: str = Field(default="", description="On separate lines:\n• **Your Sentence Polished:** '[100% natural native version]'\n• **Fix / Nuance:** [❌ ➔ ✅ or why it works + Arabic note]\n• **Bonus C2 Variation:** '[High-level executive/academic version]'")
+
 SYS_PROMPT = """
 You are the engine of 'Musa’s NYC Lounge'. In Chat mode, you portray real, intelligent New York friends (Chloe, Jake, Marcus) chatting naturally with Musa:
 - Chloe: perceptive, warm, articulate media strategist in Manhattan.
@@ -1070,9 +1093,15 @@ def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[s
 
 def send_html_safe(chat_id: int, html_text: str, reply_markup: Any = None):
     try:
-        if len(html_text) <= 4080:
-            return bot.send_message(chat_id, html_text, parse_mode="HTML", reply_markup=reply_markup)
-        return bot.send_message(chat_id, html_text[:4050], parse_mode="HTML", reply_markup=reply_markup)
+        clean_html = re.sub(r"<b>\s*<b>", "<b>", html_text)
+        clean_html = re.sub(r"</b>\s*</b>", "</b>", clean_html)
+        if len(clean_html) <= 4080:
+            return bot.send_message(chat_id, clean_html, parse_mode="HTML", reply_markup=reply_markup)
+        cut_idx = clean_html.rfind("<blockquote expandable>")
+        if cut_idx > 400:
+            bot.send_message(chat_id, clean_html[:cut_idx].strip(), parse_mode="HTML")
+            return bot.send_message(chat_id, clean_html[cut_idx:].strip()[:4050], parse_mode="HTML", reply_markup=reply_markup)
+        return bot.send_message(chat_id, clean_html[:4050], parse_mode="HTML", reply_markup=reply_markup)
     except Exception:
         clean_plain = html.unescape(re.sub(r"<[^>]+>", "", html_text))
         return bot.send_message(chat_id, clean_plain[:4000], reply_markup=reply_markup)
@@ -1596,114 +1625,341 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
     send_html_safe(chat_id, html_d, reply_markup=build_inline_kb(tok, "draft", _extract_lookup_terms(v_items)))
 
 # ------------------------------------------------------------------------------
-# محرك 4: استوديو البودكاست الإذاعي التفاعلي (3 Formats + Ear-First + Call-In)
+# محرك 4: استوديو البودكاست الإذاعي المتكامل (V23 — مطويات مضمونة + مفكك النطق + مداخلة على الهواء)
 # ------------------------------------------------------------------------------
+def _format_podcast_script_safe(raw_script: str) -> str:
+    """تنسيق نص البودكاست بأمان تام دون أي تداخل لوسوم <b> داخل المطوية القابلة للطي"""
+    clean = html.unescape(str(raw_script or "")).strip()
+    clean = re.sub(r"\([^)]*\)", "", clean)
+    clean = re.sub(r"\*+\s*(Jake|Chloe|Marcus)\s*\*+\s*:", r"\1:", clean)
+    clean = re.sub(r"(Jake|Chloe|Marcus)\s*:\s*\*+", r"\1: ", clean)
+    norm = re.sub(r"(?:^|\n|\s)+(Jake|Chloe|Marcus)\s*:\s*", r"\n\1: ", clean).strip()
+    out_turns = []
+    for ln in norm.splitlines():
+        ln_s = ln.strip()
+        if not ln_s:
+            continue
+        m = re.match(r"^(Jake|Chloe|Marcus)\s*:\s*(.+)$", ln_s)
+        if m:
+            spk, body = m.group(1), m.group(2).strip()
+            out_turns.append(f"🎙️ <b>{spk}:</b> {_fmt_inline_md(body)}")
+        else:
+            out_turns.append(_fmt_inline_md(ln_s))
+    return "\n\n".join(out_turns)
+
 def execute_podcast(chat_id: int, user_id: int, topic: str = "", hosts: int = 3, fmt_style: str = "roundtable", user_first_name: str = "Musa"):
     s = _get_session(user_id)
     reg = s["register"]
-    _update_session(user_id, mode="PODCAST", podcast_hosts=hosts, sub_state="PODCAST_ACTIVE")
+    _update_session(user_id, mode="PODCAST", podcast_hosts=hosts, sub_state=f"PODCAST_ACTIVE:{fmt_style}")
 
+    vault_terms = _get_recent_vault_terms(user_id, 5)
     style_prompts = {
-        "roundtable": f"Produce a lively 3-host NYC Roundtable ({reg}) with Jake, Chloe & Marcus building on and challenging each other's points naturally.",
-        "clash": f"Produce a sharp 2-host 'Clash of Views' debate ({reg}) between Jake (pragmatic, fast-moving execution) and Marcus (deep structural/strategic caution).",
-        "case": f"Produce a perceptive 2-host 'Case Breakdown' ({reg}) with Chloe and Marcus dissecting real-world human dynamics and institutional blind spots.",
+        "roundtable": f"FORMAT: 3-Host NYC Roundtable ({reg}). Jake, Chloe, and Marcus trade sharp, unscripted perspectives, interrupting and building on each other's points like a real NY podcast.",
+        "clash": f"FORMAT: 2-Host Clash of Views Debate ({reg}) between Jake (fast, pragmatic, anti-bureaucracy) and Marcus (strategic, structural, cautious). Use authentic agreement/pushback markers.",
+        "case": f"FORMAT: 2-Host Deep Case Breakdown ({reg}) with Chloe and Marcus dissecting human psychology, leadership blind spots, and decision-making.",
+        "vault": (
+            f"FORMAT: Personalized 'Vault Mastery' Episode ({reg}) with Chloe, Jake & Marcus.\n"
+            f"Naturally weave these saved expressions into the hosts' dialogue (bolding them with **): {', '.join(vault_terms) if vault_terms else 'hold off on, throw around, come down to, pan out'}."
+        ),
     }
     chosen_inst = style_prompts.get(fmt_style, style_prompts["roundtable"])
-    t_p = topic.strip() if len(topic.strip()) > 2 else f"Unfiltered {reg} NYC discussion on work habits, decision-making, and modern life"
+    t_p = topic.strip() if len(topic.strip()) > 2 else f"Compelling {reg} NYC discussion on work culture, ambition, and modern habits"
 
     data: PodcastSchema = call_llm_structured(
-        f"{SYS_PROMPT}\n{chosen_inst}\nAddress {user_first_name} in the closing question. Highlight 3-4 natural idioms in **bold** inside script_en. NEVER put stage directions in parentheses!",
-        f"Topic: {t_p}",
+        f"{SYS_PROMPT}\n{chosen_inst}\nAddress {user_first_name} in `on_air_call_in_question_en`. Highlight 4 key idioms in **bold** inside `script_en` (NEVER bold speaker names!).",
+        f"Episode Topic: {t_p}",
         PodcastSchema,
-        temp=0.7,
+        temp=0.65,
     )
 
-    raw_s = _fmt_inline_md(re.sub(r"\([^)]*\)", "", data.script_en))
-    for spk in ("Jake", "Chloe", "Marcus"):
-        raw_s = re.sub(rf"(?:^|\n|\s)+{spk}\s*:\s*", f"\n\n<b>{spk}:</b> ", raw_s)
-    raw_s = raw_s.strip()
+    script_html = _format_podcast_script_safe(data.script_en)
+    chunks_html = _format_unified_senses(data.fast_speech_and_chunks_en_ar)
 
-    clean_pod_exp = _clean_multiline_bullets(data.key_expressions_en)
+    badge_map = {
+        "roundtable": "🎙️ 3-Host Roundtable",
+        "clash": "⚡ Clash Debate (Jake vs. Marcus)",
+        "case": "🔍 Deep Case Study",
+        "vault": "💎 Your Vault in Action",
+    }
+    fmt_badge = badge_map.get(fmt_style, "🎙️ NYC Studio")
+
     html_out = (
-        f"<b>🎙️ NYC Podcast Studio ({_h(reg)})</b>\n"
-        f"<i>{_h(data.episode_title_en)}</i>\n\n"
-        f"🎯 <b>Listening Focus:</b> {_fmt_inline_md(data.listening_focus_en)}\n\n"
-        f"📞 <b>On-Air Call-In ({_h(user_first_name)}):</b> <i>\"{_fmt_inline_md(data.closing_question_to_user_en)}\"</i>\n"
-        f"<i>(Send a voice note or text reply right now to join the hosts on air!)</i>\n\n"
-        f"<blockquote expandable><b>📜 Annotated Transcript ▼</b>\n\n{raw_s}</blockquote>\n"
-        f"<blockquote expandable><b>💎 Episode Chunks ▼</b>\n\n{clean_pod_exp}</blockquote>"
+        f"<b>{fmt_badge} • {_h(reg)}</b>\n"
+        f"<b>🎬 {_h(data.episode_title_en)}</b>\n\n"
+        f"🎧 <b>Listening Focus:</b> {_fmt_inline_md(data.episode_summary_and_ear_cue_en)}\n\n"
+        f"📞 <b>Live Call-In ({_h(user_first_name)}):</b>\n"
+        f"<i>&quot;{_fmt_inline_md(data.on_air_call_in_question_en)}&quot;</i>\n"
+        f"<i>(Reply by voice or text right now to join the hosts on air!)</i>\n\n"
+        f"<blockquote expandable>📜 <b>Tap to Open Full Episode Transcript ▼</b>\n\n{script_html}\n\n───\n<i>End of Transcript</i></blockquote>\n\n"
+        f"<blockquote expandable>💎 <b>Tap to Open Chunks &amp; Fast-Speech Decoder ▼</b>\n\n{chunks_html}\n\n───\n<i>Tap Save below to add these to your Vault</i></blockquote>"
     )
+
     tok = hashlib.md5(f"POD:{user_id}:{time.time()}".encode()).hexdigest()[:10]
     segs = _split_dialogue_segments(data.script_en, "Jake")
-    if data.audio_recap_script_en.strip():
-        segs.append(("Marcus", f"Quick studio recap: {data.audio_recap_script_en}"))
 
     v_items = []
-    for ln in data.key_expressions_en.splitlines():
-        if len(ln.strip()) > 6:
-            t_c, d_c, _ = _clean_vault_entry(ln, "", data.episode_title_en)
+    for ln in data.fast_speech_and_chunks_en_ar.splitlines():
+        if re.match(r"^[1-9]\.", ln.strip()):
+            t_c, d_c, _ = _clean_vault_entry(re.sub(r"^[1-9]\.\s*", "", ln.strip()), "", data.episode_title_en)
             if t_c:
-                v_items.append((t_c, d_c, ln))
-    pdf_d = {"title": data.episode_title_en, "register": reg, "main_en": data.script_en, "instant_fix": data.closing_question_to_user_en, "diagnosis_en": data.key_expressions_en}
-    store_card(tok, user_id, segs, pdf_d, v_items, source_text=data.episode_title_en)
-    _update_session(user_id, new_turn={"u": f"[Podcast Episode: {t_p}]", "b": f"{data.script_en[:240]} | Question: {data.closing_question_to_user_en}"})
+                v_items.append((t_c, d_c, data.episode_title_en))
+
+    pdf_d = {
+        "title": data.episode_title_en,
+        "register": f"{fmt_badge} ({reg})",
+        "main_en": data.script_en,
+        "instant_fix": data.on_air_call_in_question_en,
+        "diagnosis_en": data.fast_speech_and_chunks_en_ar,
+    }
+    store_card(tok, user_id, segs, pdf_d, v_items, source_text=f"{data.episode_title_en}\n{data.script_en}")
+    _update_session(
+        user_id,
+        mode="PODCAST",
+        sub_state=f"PODCAST_ACTIVE:{fmt_style}",
+        new_turn={"u": f"[Podcast: {data.episode_title_en}]", "b": f"{data.script_en[:320]} | Question: {data.on_air_call_in_question_en}"},
+    )
 
     kb = types.InlineKeyboardMarkup()
     kb.row(
-        types.InlineKeyboardButton("🎧 1.0x", callback_data=f"edtts:1x:{tok}"),
-        types.InlineKeyboardButton("🐢 0.85x", callback_data=f"edtts:slow:{tok}"),
-        types.InlineKeyboardButton("📄 PDF", callback_data=f"edpdf:{tok}"),
+        types.InlineKeyboardButton("🎧 Audio 1.0x", callback_data=f"edtts:1x:{tok}"),
+        types.InlineKeyboardButton("🐢 Slow 0.85x", callback_data=f"edtts:slow:{tok}"),
+        types.InlineKeyboardButton("🎯 Quiz Episode", callback_data=f"edqztext:{tok}"),
         types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
+    )
+    kb.row(
+        types.InlineKeyboardButton("📜 Separate Transcript", callback_data=f"edpodview:tr:{tok}"),
+        types.InlineKeyboardButton("💎 Separate Chunks", callback_data=f"edpodview:ch:{tok}"),
+        types.InlineKeyboardButton("📄 PDF", callback_data=f"edpdf:{tok}"),
     )
     kb.row(
         types.InlineKeyboardButton("🎙️ Roundtable", callback_data="edpod:roundtable"),
         types.InlineKeyboardButton("⚡ Clash", callback_data="edpod:clash"),
         types.InlineKeyboardButton("🔍 Case", callback_data="edpod:case"),
-        types.InlineKeyboardButton("📖 Lexicon", callback_data=f"edlexcard:{tok}"),
+        types.InlineKeyboardButton("💎 Vault Ep", callback_data="edpod:vault"),
     )
+    l_terms = _extract_lookup_terms(v_items)
+    if l_terms:
+        kb.row(*[types.InlineKeyboardButton(f"🔍 {t[:22]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(l_terms[:2])])
+
     send_html_safe(chat_id, html_out, reply_markup=kb)
 
-    mp3 = build_audio(segs, slow=False)
-    if mp3 and os.path.exists(mp3):
-        with open(mp3, "rb") as af:
-            bot.send_voice(chat_id, af, caption=f"<b>{_h(data.episode_title_en)}</b>", parse_mode="HTML")
-        os.remove(mp3)
+    if os.environ.get("LIVE_SELF_TEST") != "1":
+        def _send_pod_voice():
+            try:
+                bot.send_chat_action(chat_id, "record_voice")
+            except Exception:
+                pass
+            mp3 = build_audio(segs, slow=False)
+            if mp3 and os.path.exists(mp3):
+                with open(mp3, "rb") as af:
+                    bot.send_voice(chat_id, af, caption=f"🎧 <b>{_h(data.episode_title_en)}</b>", parse_mode="HTML")
+                os.remove(mp3)
+        threading.Thread(target=_send_pod_voice, daemon=True).start()
+
+def execute_podcast_call_in(chat_id: int, user_id: int, user_text: str, is_voice: bool = False, user_first_name: str = "Musa"):
+    s = _get_session(user_id)
+    reg = s["register"]
+    last_ep = "\n".join([f"{h.get('u','')}\n{h.get('b','')}" for h in s.get("history", [])[-2:] if isinstance(h, dict)])
+
+    task = (
+        f"LIVE ON-AIR CALL-IN RESPONSE ({reg}):\n"
+        f"The listener ({user_first_name}) just called into the podcast to answer the hosts' question.\n"
+        "1. In `on_air_host_response_en`, write a lively 2-turn studio response ('Chloe: ...\nMarcus: ...' or 'Jake: ...') welcoming Musa's point on air, reacting to his perspective, and asking a follow-up.\n"
+        "2. In `call_in_language_polish_en_ar`, show a broadcast-ready polish of what Musa said, any ❌ ➔ ✅ fix, and 1 power chunk used by the hosts."
+    )
+    res: PodcastCallInSchema = call_llm_structured(
+        f"{SYS_PROMPT}\n{task}",
+        f"Episode Context:\n{last_ep}\n\nListener ({user_first_name}) Call-In:\n\"{user_text}\"",
+        PodcastCallInSchema,
+        temp=0.6,
+    )
+    _update_session(user_id, new_turn={"u": f"[Call-In]: {user_text[:180]}", "b": res.on_air_host_response_en[:240]})
+
+    dialogue_fmt = _format_podcast_script_safe(res.on_air_host_response_en)
+    polish_fmt = _clean_multiline_bullets(res.call_in_language_polish_en_ar)
+    v_hdr = f"📞 <b>Your On-Air Voice Call-In:</b> <i>&quot;{_h(user_text)}&quot;</i>\n\n" if is_voice else f"📞 <b>On-Air Response to {_h(user_first_name)}:</b>\n\n"
+
+    html_call = (
+        f"{v_hdr}{dialogue_fmt}\n\n"
+        f"<blockquote expandable>💡 <b>Broadcast Polish &amp; Notes ▼</b>\n\n{polish_fmt}</blockquote>"
+    )
+    tok = hashlib.md5(f"CAL:{user_id}:{time.time()}".encode()).hexdigest()[:10]
+    segs = _split_dialogue_segments(res.on_air_host_response_en, "Chloe")
+    store_card(tok, user_id, segs, {"title": "On-Air Call-In", "main_en": res.on_air_host_response_en, "diagnosis_en": res.call_in_language_polish_en_ar}, [], source_text=user_text)
+
+    kb = types.InlineKeyboardMarkup()
+    kb.row(
+        types.InlineKeyboardButton("🎧 Hear Hosts", callback_data=f"edtts:1x:{tok}"),
+        types.InlineKeyboardButton("🎙️ New Roundtable", callback_data="edpod:roundtable"),
+        types.InlineKeyboardButton("⚡ New Clash", callback_data="edpod:clash"),
+    )
+    send_html_safe(chat_id, html_call, reply_markup=kb)
+
+    if os.environ.get("LIVE_SELF_TEST") != "1":
+        def _auto_call_audio():
+            mp3 = build_audio(segs, slow=False)
+            if mp3 and os.path.exists(mp3):
+                with open(mp3, "rb") as af:
+                    bot.send_voice(chat_id, af)
+                os.remove(mp3)
+        threading.Thread(target=_auto_call_audio, daemon=True).start()
 
 # ------------------------------------------------------------------------------
-# محرك 5: الكويز التفاعلي، الخزنة، رادار الأخطاء، ولوحة تحكم المالك
+# محرك 5: ساحة الكويز والإنتاج اللغوي لـ C1/C2 (5 Modes + Distractor Anatomy + Streak)
 # ------------------------------------------------------------------------------
-def send_quiz(chat_id: int, user_id: int, q_mode: str = "standard", custom_context: str = ""):
+_QUIZ_STREAK: Dict[int, int] = {}
+
+def send_quiz_hub(chat_id: int, user_id: int):
+    streak = _QUIZ_STREAK.get(user_id, 0)
+    s_badge = f" • 🔥 <b>Streak: {streak}</b>" if streak > 0 else ""
+    kb = types.InlineKeyboardMarkup()
+    kb.row(
+        types.InlineKeyboardButton("🔗 Collocations & Preps", callback_data="edqznext:colloc"),
+        types.InlineKeyboardButton("🏛️ C2 Transformations", callback_data="edqznext:c2"),
+    )
+    kb.row(
+        types.InlineKeyboardButton("🎭 Pragmatic Subtext", callback_data="edqznext:prag"),
+        types.InlineKeyboardButton("💎 My Vault & Mistakes", callback_data="edqznext:vault"),
+    )
+    kb.row(
+        types.InlineKeyboardButton("✍️ Active Production Challenge (Type/Speak)", callback_data="edqznext:produce"),
+    )
+    send_html_safe(
+        chat_id,
+        f"<b>🎯 C1/C2 Active Mastery Arena</b>{s_badge}\n\n"
+        f"Choose your training mode below, or jump straight into the question:",
+        reply_markup=kb,
+    )
+
+def send_quiz(chat_id: int, user_id: int, q_mode: str = "colloc", custom_context: str = ""):
     reg = _get_session(user_id)["register"]
-    extra = ""
-    if custom_context:
-        extra = f"Create a precision cloze/collocation question testing a key expression from this text:\n{custom_context[:1500]}"
-    elif q_mode == "dna":
-        with db_connect() as conn:
-            rows = conn.execute("SELECT error_pattern, native_fix FROM dna_v15 WHERE user_id=? ORDER BY id DESC LIMIT 5", (user_id,)).fetchall()
-        if rows:
-            extra = "Base this question specifically on testing one of these past mistake patterns: " + "; ".join([f"{r[0]} -> {r[1]}" for r in rows])
-    elif q_mode == "vault":
-        vt = _get_recent_vault_terms(user_id, 5)
-        if vt:
-            extra = "Base this question specifically on testing one of these saved expressions: " + ", ".join(vt)
-    elif q_mode == "c2":
-        extra = "Make this a Cambridge C2 Key-Word Transformation style multiple-choice question testing advanced collocations, cleft structures, or negative inversion."
+    if q_mode == "standard":
+        q_mode = "colloc"
 
-    q: QuizSchema = call_llm_structured(f"{SYS_PROMPT}\nCreate a 4-option multiple choice question ({reg}). {extra}", "Generate precision quiz.", QuizSchema, temp=0.7)
+    if q_mode == "produce":
+        vt = _get_recent_vault_terms(user_id, 6)
+        target_ch = random.choice(vt) if vt else random.choice(["hold off on", "come down to", "stem from", "hinge on", "at odds with", "fall short of"])
+        _update_session(user_id, mode="QUIZ", sub_state=f"QUIZ_PRODUCE:{target_ch}")
+        kb = types.InlineKeyboardMarkup()
+        kb.row(
+            types.InlineKeyboardButton(f"🔍 Lookup '{target_ch[:18]}'", callback_data=f"edqlk_direct:{target_ch}"),
+            types.InlineKeyboardButton("🎲 Different Expression", callback_data="edqznext:produce"),
+        )
+        kb.row(
+            types.InlineKeyboardButton("🔗 Switch to Multiple-Choice", callback_data="edqznext:colloc"),
+        )
+        send_html_safe(
+            chat_id,
+            f"<b>✍️ Active Production Challenge ({_h(reg)})</b>\n\n"
+            f"🎯 <b>Target Expression:</b> <code>{_h(target_ch)}</code>\n\n"
+            f"Write (or record a voice note with) <b>one complete, natural sentence</b> in a <i>{_h(reg)}</i> context using <b>{_h(target_ch)}</b>.\n"
+            f"<i>(Send your sentence now and I'll score it and show you the native C1/C2 polish!)</i>",
+            reply_markup=kb,
+        )
+        return
+
+    _update_session(user_id, mode="QUIZ", sub_state=f"QUIZ_MC:{q_mode}")
+
+    mode_instructions = {
+        "colloc": (
+            "MODE 1 — C1/C2 COLLOCATION & PREPOSITION VALENCY DRILL:\n"
+            "Create a high-precision sentence with a ____ blank testing an advanced verb+noun collocation, phrasal verb, or tricky verb+preposition frame. Make the 3 distractors realistic near-misses (e.g. L1 calques or close synonyms that clash collocationally)."
+        ),
+        "c2": (
+            "MODE 2 — CAMBRIDGE C2 KEY-WORD TRANSFORMATION:\n"
+            "In `scenario_or_stem_en`, provide:\n"
+            "Base Sentence: '[A complete sentence]'\n"
+            "KEY WORD: **[WORD IN CAPS]**\n"
+            "Lead-in with blank: '[Beginning of transformed sentence] ____ [end of sentence].'\n"
+            "Test C2 structures: Negative Inversion ('Little did...', 'Seldom have...'), Cleft structures, Nominalization, or Advanced Phrasal/Prepositional frames."
+        ),
+        "prag": (
+            "MODE 3 — PRAGMATIC SUBTEXT & DIPLOMATIC REGISTER FIT:\n"
+            "In `scenario_or_stem_en`, describe a delicate NYC workplace, negotiation, or academic scenario and ask: 'Which response strikes the exact diplomatic/idiomatic tone without sounding passive-aggressive, overly blunt, or unnatural?'"
+        ),
+    }
+
+    if custom_context:
+        extra = f"CONTEXT-BASED DRILL: Create a sharp C1/C2 question testing a standout expression or collocation directly from this text:\n{custom_context[:1600]}"
+    elif q_mode in ("dna", "vault"):
+        with db_connect() as conn:
+            dna_rows = conn.execute("SELECT error_pattern, native_fix FROM dna_v15 WHERE user_id=? ORDER BY id DESC LIMIT 4", (user_id,)).fetchall()
+        vt = _get_recent_vault_terms(user_id, 5)
+        items_str = "; ".join([f"{r[0]} -> {r[1]}" for r in dna_rows]) + " | Saved chunks: " + ", ".join(vt)
+        extra = f"PERSONALIZED VAULT & MISTAKE RADAR DRILL: Test one of these exact user items: {items_str}"
+    else:
+        extra = mode_instructions.get(q_mode, mode_instructions["colloc"])
+
+    q: QuizSchema = call_llm_structured(
+        f"{SYS_PROMPT}\n{extra}\nFill all fields including `winning_reason_en_ar` (with Arabic meaning) and `distractor_anatomy_en` (why the other 3 options fail).",
+        f"Register: {reg}. Generate quiz.",
+        QuizSchema,
+        temp=0.65,
+    )
     qid = hashlib.md5(f"QZ:{user_id}:{time.time()}".encode()).hexdigest()[:10]
     with _db_lock, db_connect() as conn:
         conn.execute("INSERT OR REPLACE INTO quiz_v15 (q_id, user_id, quiz_json) VALUES (?, ?, ?)", (qid, user_id, q.model_dump_json()))
         conn.commit()
+
+    streak = _QUIZ_STREAK.get(user_id, 0)
+    s_tag = f" • 🔥 {streak}" if streak > 0 else ""
+
     kb = types.InlineKeyboardMarkup()
-    kb.row(*[types.InlineKeyboardButton(x, callback_data=f"edqz:{x}:{qid}") for x in ("A", "B", "C", "D")])
+    kb.row(*[types.InlineKeyboardButton(f"{x}", callback_data=f"edqz:{x}:{q_mode}:{qid}") for x in ("A", "B", "C", "D")])
     kb.row(
-        types.InlineKeyboardButton("Next", callback_data="edqznext:standard"),
-        types.InlineKeyboardButton("My Mistakes", callback_data="edqznext:dna"),
-        types.InlineKeyboardButton("C2 Transform", callback_data="edqznext:c2"),
+        types.InlineKeyboardButton("🔗 Collocations", callback_data="edqznext:colloc"),
+        types.InlineKeyboardButton("🏛️ C2 Transform", callback_data="edqznext:c2"),
+        types.InlineKeyboardButton("🎭 Pragmatics", callback_data="edqznext:prag"),
     )
+    kb.row(
+        types.InlineKeyboardButton("💎 Vault/Radar", callback_data="edqznext:vault"),
+        types.InlineKeyboardButton("✍️ Active Write", callback_data="edqznext:produce"),
+    )
+
+    stem_fmt = _fmt_inline_md(q.scenario_or_stem_en).replace("\n", "\n\n")
     send_html_safe(
         chat_id,
-        f"<b>Quiz — {_h(q.category_en)} ({_h(reg)})</b>\n\n<i>\"{_fmt_inline_md(q.scenario_en)}\"</i>\n\n<b>A)</b> {_h(q.option_a)}\n<b>B)</b> {_h(q.option_b)}\n<b>C)</b> {_h(q.option_c)}\n<b>D)</b> {_h(q.option_d)}",
+        f"<b>🎯 {_h(q.quiz_mode_badge_en)} ({_h(reg)}){s_tag}</b>\n\n"
+        f"{stem_fmt}\n\n"
+        f"<b>A)</b> {_h(q.option_a)}\n"
+        f"<b>B)</b> {_h(q.option_b)}\n"
+        f"<b>C)</b> {_h(q.option_c)}\n"
+        f"<b>D)</b> {_h(q.option_d)}",
+        reply_markup=kb,
+    )
+
+def evaluate_active_quiz_production(chat_id: int, user_id: int, user_text: str, target_chunk: str, is_voice: bool = False):
+    reg = _get_session(user_id)["register"]
+    task = (
+        f"ACTIVE PRODUCTION EVALUATION ({reg}):\n"
+        f"The user was challenged to write/speak a natural sentence using the target expression: '{target_chunk}'.\n"
+        "Evaluate their attempt accurately, give a score out of 10, fix any grammar/collocation slip (❌ ➔ ✅), and provide both a polished natural version and a C2 analytical variation."
+    )
+    ev: ActiveQuizEvalSchema = call_llm_structured(
+        f"{SYS_PROMPT}\n{task}",
+        f"Target Expression: '{target_chunk}'\nUser's Sentence: \"{user_text}\"",
+        ActiveQuizEvalSchema,
+        temp=0.45,
+    )
+    _QUIZ_STREAK[user_id] = _QUIZ_STREAK.get(user_id, 0) + 1
+    tok = hashlib.md5(f"QEV:{user_id}:{time.time()}".encode()).hexdigest()[:10]
+    v_segs = [("Chloe", ev.surgical_fix_and_model_en_ar)]
+    store_card(tok, user_id, v_segs, {"title": f"Production Check: {target_chunk}", "main_en": user_text, "diagnosis_en": ev.surgical_fix_and_model_en_ar}, [(target_chunk, ev.evaluation_and_score_en, user_text)], source_text=target_chunk)
+
+    kb = types.InlineKeyboardMarkup()
+    kb.row(
+        types.InlineKeyboardButton("✍️ Next Production Prompt", callback_data="edqznext:produce"),
+        types.InlineKeyboardButton("🔗 Multiple-Choice Quiz", callback_data="edqznext:colloc"),
+    )
+    kb.row(
+        types.InlineKeyboardButton(f"🔍 {target_chunk[:20]}", callback_data=f"edlexcard:{tok}"),
+        types.InlineKeyboardButton("💾 Save to Vault", callback_data=f"edsave:{tok}"),
+    )
+    v_hdr = f"🎙️ <b>Your Spoken Sentence:</b> <i>&quot;{_h(user_text)}&quot;</i>\n\n" if is_voice else ""
+    send_html_safe(
+        chat_id,
+        f"{v_hdr}<b>🏆 {_fmt_inline_md(ev.evaluation_and_score_en)}</b> (🔥 Streak: {_QUIZ_STREAK[user_id]})\n\n"
+        f"{_clean_multiline_bullets(ev.surgical_fix_and_model_en_ar)}",
         reply_markup=kb,
     )
 
@@ -1721,10 +1977,13 @@ def show_vault(chat_id: int, user_id: int):
     kb = types.InlineKeyboardMarkup()
     kb.row(
         types.InlineKeyboardButton("🎯 Quiz My Vault", callback_data="edqznext:vault"),
+        types.InlineKeyboardButton("🎙️ Podcast with My Vault", callback_data="edpod:vault"),
+    )
+    kb.row(
         types.InlineKeyboardButton("📄 PDF Glossary", callback_data="edvault:pdf"),
         types.InlineKeyboardButton("🗂️ Anki TSV", callback_data="edvault:anki"),
+        types.InlineKeyboardButton("🗑️ Undo Last", callback_data="edvault:del"),
     )
-    kb.row(types.InlineKeyboardButton("🗑️ Remove Last Saved", callback_data="edvault:del"))
     send_html_safe(chat_id, "\n\n".join(blocks), reply_markup=kb)
 
 def show_radar(chat_id: int, user_id: int):
@@ -1735,7 +1994,7 @@ def show_radar(chat_id: int, user_id: int):
         return
     lines = [f"• <s>{_h(r[0])}</s> → <b>{_h(r[1])}</b>" for r in rows]
     kb = types.InlineKeyboardMarkup()
-    kb.row(types.InlineKeyboardButton("🎯 Drill My Mistake Patterns", callback_data="edqznext:dna"))
+    kb.row(types.InlineKeyboardButton("🎯 Drill My Mistake Patterns", callback_data="edqznext:vault"))
     send_html_safe(chat_id, "<b>Your Personal Linguistic Radar</b>\n<i>Recent adjustments &amp; collocation upgrades:</i>\n\n" + "\n".join(lines), reply_markup=kb)
 
 def send_guide(chat_id: int, user_id: int):
@@ -1743,11 +2002,11 @@ def send_guide(chat_id: int, user_id: int):
         "<b>Musa’s NYC Lounge — Studio Guide</b>\n\n"
         "• <b>Register Bar (Top):</b> Switch anytime between <b>Casual</b> (everyday spoken NYC), <b>Professional</b> (diplomatic workplace), and <b>Formal</b> (C2 analytical prose).\n\n"
         "• <b>5 Studio Modes (Bottom):</b>\n"
-        "1. <b>Chat:</b> Live multi-bubble NYC group chat with Jake, Chloe &amp; Marcus. Send a voice note for automatic voice replies, or tap <b>☕ Spark</b> / <b>🎭 Roleplay</b>.\n"
-        "2. <b>Lexicon:</b> 3-Lens contextual dictionary &amp; activator (EN ⇄ AR) with Collocation Matrix, Synonym Contrast &amp; Word Family.\n"
-        "3. <b>Study:</b> Automatically routes between <i>Article Miner</i>, <i>Spoken vs. Written Draft Surgery</i>, and <i>Nuance Clinic</i>.\n"
-        "4. <b>Podcast:</b> Choose <i>Roundtable</i>, <i>Clash of Views</i>, or <i>Case Breakdown</i>, and reply on air!\n"
-        "5. <b>Quiz, /vault &amp; /radar:</b> Active recall spoilers, personal error radar, and PDF/Anki exports."
+        "1. <b>Chat:</b> Spontaneous NYC conversation with 1, 2, or all 3 friends (toggle 🟢/⚪ anytime).\n"
+        "2. <b>Lexicon:</b> 10-pillar dictionary &amp; activator (EN ⇄ AR) with IPA, Oxford Collocations, Hoey Priming &amp; Learner Traps.\n"
+        "3. <b>Study:</b> Precision Draft Editor, AR➔EN Thought Bridge, Modular Text Miner &amp; Live Tutor.\n"
+        "4. <b>Podcast:</b> Roundtable, Clash Debate, Case Study &amp; <i>My Vault Episode</i> with expandable transcripts, fast-speech decoder &amp; live on-air call-ins.\n"
+        "5. <b>Quiz:</b> 5-mode C1/C2 arena (Collocations, C2 Key-Word Transformations, Pragmatics, Vault/Radar &amp; Active Production)."
     )
     send_html_safe(chat_id, g, reply_markup=build_reply_kb(user_id))
 
@@ -1957,13 +2216,18 @@ def handle_incoming_message(message: types.Message):
         _update_session(uid, mode="PODCAST", sub_state="")
         kb = types.InlineKeyboardMarkup()
         kb.row(
-            types.InlineKeyboardButton("🎙️ Roundtable (3)", callback_data="edpod:roundtable"),
-            types.InlineKeyboardButton("⚡ Clash of Views", callback_data="edpod:clash"),
-            types.InlineKeyboardButton("🔍 Case Study", callback_data="edpod:case"),
+            types.InlineKeyboardButton("🎙️ Roundtable (3 Hosts)", callback_data="edpod:roundtable"),
+            types.InlineKeyboardButton("⚡ Clash Debate (2 Hosts)", callback_data="edpod:clash"),
+        )
+        kb.row(
+            types.InlineKeyboardButton("🔍 Deep Case Study", callback_data="edpod:case"),
+            types.InlineKeyboardButton("💎 My Vault Episode", callback_data="edpod:vault"),
         )
         send_html_safe(
             chat_id,
-            "<b>NYC Podcast Studio</b>\nPick an episode format below, or type any topic you want the hosts to debate on air:",
+            "<b>🎙️ NYC Podcast Studio</b>\n\n"
+            "• <b>4 Episode Formats:</b> Choose <i>Roundtable</i>, <i>Clash Debate</i>, <i>Case Study</i>, or generate an episode using your saved <i>Vault Expressions</i>!\n"
+            "• <b>Custom Topic:</b> Or simply type any topic right now and the hosts will go live on air.",
             reply_markup=kb,
         )
         return
@@ -1973,8 +2237,9 @@ def handle_incoming_message(message: types.Message):
             lim_n = reason_q.split(":")[-1]
             send_html_safe(chat_id, f"<b>Daily Studio Limit Reached ({lim_n} sessions/day)</b>\nYour quota resets automatically tomorrow. You can review your /vault anytime.")
             return
-        _update_session(uid, mode="QUIZ", sub_state="")
-        send_quiz(chat_id, uid)
+        _update_session(uid, mode="QUIZ", sub_state="QUIZ_MC:colloc")
+        send_quiz_hub(chat_id, uid)
+        send_quiz(chat_id, uid, "colloc")
         return
 
     # 5. فحص الحصة اليومية قبل تشغيل محركات الذكاء الاصطناعي
@@ -2008,6 +2273,11 @@ def handle_incoming_message(message: types.Message):
             tr = transcribe_voice(bot.download_file(bot.get_file(fid).file_path))
             if not tr:
                 send_html_safe(chat_id, "Could not catch the audio clearly—please try speaking a bit closer to the microphone.")
+            elif _get_session(uid)["mode"] == "QUIZ" and _get_session(uid).get("sub_state", "").startswith("QUIZ_PRODUCE:"):
+                t_ch = _get_session(uid)["sub_state"].split(":", 1)[1]
+                evaluate_active_quiz_production(chat_id, uid, tr, t_ch, is_voice=True)
+            elif _get_session(uid)["mode"] == "PODCAST" and _get_session(uid).get("sub_state", "").startswith("PODCAST_ACTIVE"):
+                execute_podcast_call_in(chat_id, uid, tr, is_voice=True, user_first_name=en_name)
             elif _get_session(uid)["mode"] == "STUDY" or len(tr.split()) > 75:
                 execute_study_and_miner(chat_id, uid, tr, is_voice=True)
             else:
@@ -2017,11 +2287,14 @@ def handle_incoming_message(message: types.Message):
             mode, sub_st = sess["mode"], sess["sub_state"]
             if mode == "LEXICON":
                 execute_lexicon_lookup(chat_id, uid, txt)
-            elif len(txt.split()) > 65 or mode == "STUDY":
+            elif mode == "STUDY":
                 execute_study_and_miner(chat_id, uid, txt)
+            elif mode == "QUIZ" and sub_st.startswith("QUIZ_PRODUCE:"):
+                t_ch = sub_st.split(":", 1)[1]
+                evaluate_active_quiz_production(chat_id, uid, txt, t_ch, is_voice=False)
             elif mode == "PODCAST":
-                if sub_st == "PODCAST_ACTIVE" and not low.startswith(("new:", "topic:")):
-                    execute_chat_turn(chat_id, uid, txt, is_voice=False, user_first_name=en_name)
+                if sub_st.startswith("PODCAST_ACTIVE") and not low.startswith(("new:", "topic:")):
+                    execute_podcast_call_in(chat_id, uid, txt, is_voice=False, user_first_name=en_name)
                 else:
                     execute_podcast(chat_id, uid, topic=re.sub(r"^(new|topic)\s*:\s*", "", txt, flags=re.I), fmt_style="roundtable", user_first_name=en_name)
             else:
@@ -2229,37 +2502,93 @@ def on_callback(call: types.CallbackQuery):
         c = load_card(tok)
         bot.answer_callback_query(call.id, "Transforming style...")
         threading.Thread(target=execute_study_and_miner, args=(chat_id, uid, c["source_text"] if c else fb_txt, False, "", sh), daemon=True).start()
+    elif d.startswith("edqlk_direct:"):
+        term_d = d.split(":", 1)[1]
+        bot.answer_callback_query(call.id, f"Looking up: {term_d[:22]}...")
+        threading.Thread(target=execute_lexicon_lookup, args=(chat_id, uid, term_d), daemon=True).start()
+    elif d.startswith("edpodview:"):
+        _, v_type, tok = d.split(":", 2)
+        c = load_card(tok)
+        if not c:
+            bot.answer_callback_query(call.id, "Episode data not found.")
+            return
+        bot.answer_callback_query(call.id, "Opening full view...")
+        if v_type == "tr":
+            scr_fmt = _format_podcast_script_safe(c["pdf_dict"].get("main_en", ""))
+            send_html_safe(chat_id, f"<b>📜 Full Episode Transcript — {_h(c['pdf_dict'].get('title', ''))}</b>\n\n{scr_fmt}")
+        else:
+            ch_fmt = _format_unified_senses(c["pdf_dict"].get("diagnosis_en", ""))
+            send_html_safe(chat_id, f"<b>💎 Episode Chunks &amp; Fast-Speech Decoder</b>\n\n{ch_fmt}")
     elif d.startswith("edpod:"):
         fmt_s = d.split(":", 1)[1]
-        h_n = 3 if fmt_s in ("roundtable", "3") else 2
-        f_name = fmt_s if fmt_s in ("roundtable", "clash", "case") else "roundtable"
+        h_n = 3 if fmt_s in ("roundtable", "vault", "3") else 2
+        f_name = fmt_s if fmt_s in ("roundtable", "clash", "case", "vault") else "roundtable"
         bot.answer_callback_query(call.id, f"Producing {f_name.capitalize()} episode...")
         threading.Thread(target=execute_podcast, args=(chat_id, uid, "", h_n, f_name, en_name), daemon=True).start()
     elif d.startswith("edqz:"):
-        _, ch, qid = d.split(":", 2)
+        pts = d.split(":")
+        ch = pts[1]
+        q_mode_origin = pts[2] if len(pts) == 4 else "colloc"
+        qid = pts[-1]
         with db_connect() as conn:
             r = conn.execute("SELECT quiz_json FROM quiz_v15 WHERE q_id=?", (qid,)).fetchone()
         if r:
             q = QuizSchema.model_validate_json(r[0])
             corr = q.correct_letter.strip().upper()[:1]
-            bot.answer_callback_query(call.id, "Spot on!" if ch == corr else f"Best choice: {corr}")
+            is_right = (ch == corr)
+            if is_right:
+                _QUIZ_STREAK[uid] = _QUIZ_STREAK.get(uid, 0) + 1
+            else:
+                _QUIZ_STREAK[uid] = 0
+                opt_map = {"A": q.option_a, "B": q.option_b, "C": q.option_c, "D": q.option_d}
+                _log_dna(uid, f"{opt_map.get(ch, ch)} -> {opt_map.get(corr, q.target_expression_en)}")
+
+            bot.answer_callback_query(call.id, f"✓ Spot on! (Streak: {_QUIZ_STREAK[uid]})" if is_right else f"Best choice: {corr}")
             tok = hashlib.md5(f"QZR:{uid}:{time.time()}".encode()).hexdigest()[:10]
-            store_card(tok, uid, [("Marcus", q.explanation_en)], {"title": q.category_en, "main_en": q.scenario_en, "diagnosis_en": q.explanation_en}, [(q.target_expression_en, q.explanation_en, q.scenario_en)], source_text=q.target_expression_en)
+            v_segs = [("Marcus", q.complete_native_sentence_en or q.scenario_or_stem_en)]
+            store_card(
+                tok,
+                uid,
+                v_segs,
+                {"title": q.quiz_mode_badge_en, "main_en": q.complete_native_sentence_en, "diagnosis_en": f"{q.winning_reason_en_ar}\n\n{q.distractor_anatomy_en}"},
+                [(q.target_expression_en, q.winning_reason_en_ar, q.complete_native_sentence_en)],
+                source_text=q.target_expression_en,
+            )
             kb = types.InlineKeyboardMarkup()
             kb.row(
-                types.InlineKeyboardButton(f"🔍 {q.target_expression_en[:20]}", callback_data=f"edlexcard:{tok}"),
+                types.InlineKeyboardButton(f"➡️ Next ({q_mode_origin.upper()})", callback_data=f"edqznext:{q_mode_origin}"),
+                types.InlineKeyboardButton("🎧 Hear Sentence", callback_data=f"edtts:1x:{tok}"),
                 types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-                types.InlineKeyboardButton("Next Question", callback_data="edqznext:standard"),
             )
-            send_html_safe(
-                chat_id,
-                f"<b>{'✓ Correct (' + corr + ')' if ch == corr else 'Selected (' + ch + ') → Best Choice: (' + corr + ')'}</b>\n\n"
-                f"<b>Why It Works</b>\n{_fmt_inline_md(q.explanation_en)}",
-                reply_markup=kb,
+            kb.row(
+                types.InlineKeyboardButton(f"🔍 {q.target_expression_en[:20]}", callback_data=f"edlexcard:{tok}"),
+                types.InlineKeyboardButton("✍️ Try Using It Yourself", callback_data=f"edqztry:{tok}"),
             )
+            verdict_hdr = (
+                f"<b>✅ Correct ({corr})! • 🔥 Streak: {_QUIZ_STREAK[uid]}</b>"
+                if is_right
+                else f"<b>❌ You picked ({ch}) → ✅ Best Choice: ({corr})</b>"
+            )
+            res_html = (
+                f"{verdict_hdr}\n\n"
+                f"🗣️ <b>Complete Sentence:</b>\n<i>&quot;{_fmt_inline_md(q.complete_native_sentence_en)}&quot;</i>\n\n"
+                f"<b>🎯 Why ({corr}) Wins:</b>\n{_fmt_inline_md(q.winning_reason_en_ar)}\n\n"
+                f"<blockquote expandable>🔬 <b>Why the Other Options Fail (Distractor Anatomy) ▼</b>\n\n{_clean_multiline_bullets(q.distractor_anatomy_en)}</blockquote>"
+            )
+            send_html_safe(chat_id, res_html, reply_markup=kb)
+    elif d.startswith("edqztry:"):
+        tok = d.split(":", 1)[1]
+        c = load_card(tok)
+        target_ch = c["source_text"] if c and c.get("source_text") else "hold off on"
+        _update_session(uid, mode="QUIZ", sub_state=f"QUIZ_PRODUCE:{target_ch}")
+        bot.answer_callback_query(call.id, "Your turn! Type or speak a sentence.")
+        send_html_safe(
+            chat_id,
+            f"✍️ <b>Active Production Turn:</b>\nWrite or record a sentence right now using <code>{_h(target_ch)}</code> and I'll score and polish it!",
+        )
     elif d.startswith("edqznext:"):
         qm = d.split(":", 1)[1]
-        bot.answer_callback_query(call.id, "Loading question...")
+        bot.answer_callback_query(call.id, f"Loading {qm.upper()} drill...")
         threading.Thread(target=send_quiz, args=(chat_id, uid, qm), daemon=True).start()
     elif d.startswith("edvault:"):
         act = d.split(":", 1)[1]
