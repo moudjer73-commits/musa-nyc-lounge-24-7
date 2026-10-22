@@ -29,7 +29,14 @@ jobs:
 
       - name: Install Python Packages
         run: |
-          pip install -q pyTelegramBotAPI google-genai groq pydantic edge-tts weasyprint pypdf huggingface_hub requests
+          pip install -q pyTelegramBotAPI google-genai pydantic edge-tts weasyprint pypdf requests
 
       - name: Run Musa's NYC Lounge (5.3-Hour Relay Cycle)
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python3 app.py
