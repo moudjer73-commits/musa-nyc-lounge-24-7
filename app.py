@@ -918,27 +918,27 @@ class LexiconExtraSchema(BaseModel):
     content_bullets_en: str = Field(default="", description="4-5 detailed blocks on separate lines ('\n') contrasting the term with its closest synonyms, including register, natural examples, Arabic nuances, and a ❌ vs ✅ boundary test.")
 
 class PrecisionEditorSchema(BaseModel):
-    polished_version_en: str = Field(default="", description="Clean, natural, idiomatic polish of the user's draft in the active register that keeps their personal voice.")
-    surgical_diffs_en_ar: str = Field(default="", description="Each fix on a separate line: '• ❌ [user phrase] ➔ ✅ **[native fix]** — [concise reason + Arabic note]'. If error-free, write '• ✓ Grammatically solid—see vocabulary upgrades below.'")
-    lexical_upgrades_en_ar: str = Field(default="", description="3 high-impact vocabulary or collocation upgrades on separate lines: '• [simple word] ➔ **[C1/C2 native verb/chunk]** (المعنى السياقي) — \"[short example]\"'")
-    your_turn_prompt_en: str = Field(default="", description="1-sentence challenge inviting the user to reply right now using one of the upgraded chunks.")
+    polished_version_en: str = Field(default="", description="Natural polish of the user's text strictly matching the ACTIVE REGISTER (Casual = everyday spoken idiom; Professional = tactful workplace/executive phrasing; Formal = elevated C1/C2 formal prose). CRITICAL: Keep the user's exact meaning and pronoun perspective (1st person stays 1st person—never turn 'I feel tired' into an impersonal medical statement!).")
+    surgical_diffs_en_ar: str = Field(default="", description="ONLY real grammar, preposition, or collocation errors formatted as '• ❌ [wrong] ➔ ✅ **[fix]** — [reason]'. If the user's sentence is grammatically correct (like 'I feel so tired'), MUST write strictly: '• ✓ Grammatically solid—see register-specific upgrades below.' (NEVER mark a grammatically correct sentence with ❌!).")
+    lexical_upgrades_en_ar: str = Field(default="", description="3 vocabulary/collocation upgrades tailored strictly to the ACTIVE REGISTER on separate lines:\n• [user's word] ➔ **[Register-matched upgrade]** ([Eloquent Modern Standard Arabic meaning ONLY—never street slang and never write 'مناسبة لكذا' instead of the meaning!]) — \"[Natural example sentence in this exact register]\"")
+    your_turn_prompt_en: str = Field(default="", description="1-sentence prompt inviting the user to write a new sentence using one of the 3 upgrades above.")
 
 class ArabicBridgeSchema(BaseModel):
     spoken_american_en: str = Field(default="", description="How a native American naturally says this Arabic thought aloud in conversation (active verbs, contractions).")
     executive_written_en: str = Field(default="", description="Crisp, diplomatic workplace written version.")
-    c2_academic_prose_en: str = Field(default="", description="Authoritative C2 academic/analytical prose (nominalization, Given-Before-New flow, End-Weight focus).")
-    building_blocks_and_trap_en_ar: str = Field(default="", description="On separate lines:\n• **[English Chunk 1]:** [المعنى السياقي وكيفية توظيفه]\n• **[English Chunk 2]:** [المعنى السياقي وكيفية توظيفه]\n• ❌ **Literal Arabic Calque Trap:** [wrong literal translation] ➔ ✅ **[Native phrasing]**")
+    c2_academic_prose_en: str = Field(default="", description="Authoritative C2 academic/analytical prose keeping the intended meaning without artificial purple prose.")
+    building_blocks_and_trap_en_ar: str = Field(default="", description="On separate lines:\n• **[English Chunk 1]:** [المعنى الفصيح الرصين]\n• **[English Chunk 2]:** [المعنى الفصيح الرصين]\n• ❌ **Literal Arabic Calque Trap:** [wrong literal translation] ➔ ✅ **[Native phrasing]**")
     your_turn_prompt_en: str = Field(default="", description="1-sentence prompt inviting the user to write a sentence in English using one of the building blocks.")
 
 class ModularMinerSchema(BaseModel):
     theme_title_en: str = Field(default="Close-Reading Harvest", description="Short 3-5 word title")
-    top_chunks_en_ar: str = Field(default="", description="Top 4 standout idioms, phrasal verbs, or C1/C2 collocations from the text. Format EACH as a numbered block:\n1. **[Exact Expression]** — `[Grammar Frame]`\n• المعنى السياقي: [Eloquent Arabic equivalent]\n• New Example: \"[Fresh 10-14 word sentence on a different topic]\"")
+    top_chunks_en_ar: str = Field(default="", description="Top 4 standout idioms, phrasal verbs, or C1/C2 collocations from the text. Format EACH as a numbered block:\n1. **[Exact Expression]** — `[Grammar Frame]`\n• المعنى السياقي: [Eloquent MSA equivalent]\n• New Example: \"[Fresh 10-14 word sentence on a different topic]\"")
     your_turn_prompt_en: str = Field(default="", description="1-sentence challenge asking the user to reply with their own sentence using one of the 4 expressions.")
 
 class TutorLoopSchema(BaseModel):
-    title_en: str = Field(default="Interactive Coaching & Nuance Clinic", description="Short title")
-    direct_feedback_or_answer_en: str = Field(default="", description="If the user is practicing a sentence from the previous card: evaluate their sentence, fix any slip-up (❌ ➔ ✅), and show the polished version! If asking a linguistic question: give the direct rule with Arabic conceptual anchor.")
-    register_or_nuance_examples_en_ar: str = Field(default="", description="3 sharp bullets showing Spoken, Executive, and C2 Academic examples (or contrasting the synonyms/structures asked about) with concise Arabic notes.")
+    title_en: str = Field(default="Nuance & Practice Clinic", description="Short specific title")
+    direct_feedback_or_answer_en: str = Field(default="", description="Direct, grounded explanation or evaluation of the user's practice attempt. NEVER say 'in elite circles'! Never mark a grammatically valid sentence with ❌ unless there is a real error. Use pure Modern Standard Arabic for any Arabic anchor (no typos or street slang!).")
+    register_or_nuance_examples_en_ar: str = Field(default="", description="3 sharp bullets showing how to express the exact idea across:\n• **Casual Spoken:** \"[example]\" — (**[target chunk]**: [المعنى بالعربية الفصحى])\n• **Executive Workplace:** \"[example]\" — (**[target chunk]**: [المعنى بالعربية الفصحى])\n• **Formal / C2 Prose:** \"[example keeping the same speaker perspective]\" — (**[target chunk]**: [المعنى بالعربية الفصحى])")
     next_step_challenge_en: str = Field(default="", description="1-sentence follow-up challenge.")
 
 class DraftShiftSchema(BaseModel):
@@ -1365,12 +1365,17 @@ def _detect_study_route(text: str, user_id: int) -> str:
     low = clean.lower()
     w_cnt = len(clean.split())
 
+    # 1. نص عربي -> جسر الصياغة AR -> EN Bridge
     if len(re.findall(r"[\u0600-\u06FF]", clean)) > 8:
         return "bridge"
+
+    # 2. أوامر بادئة صريحة
     if low.startswith(("mine:", "extract:", "article:")):
         return "miner"
     if low.startswith(("edit:", "fix:", "draft:", "polish:")):
         return "draft"
+
+    # 3. سؤال لغوي صريح ("what's the difference", "how do I say", "X vs Y", علامة استفهام)
     if (
         low.startswith(("what ", "what'", "how ", "why ", "when ", "where ", "which ", "can i say", "is it correct", "difference"))
         or (" vs " in low and w_cnt < 35)
@@ -1378,15 +1383,22 @@ def _detect_study_route(text: str, user_id: int) -> str:
     ):
         return "clinic"
 
+    # 4. التحقق الذكي: لا نعتبر الجملة القصيرة "تدريباً على البطاقة السابقة" إلا إذا:
+    #    - لم تكن تكراراً لنفس جملة المستخدم السابقة (عند تغيير المستوى مثلاً!)
+    #    - وكانت تحتوي فعلاً على إحدى العبارات المقترحة في البطاقة السابقة!
     s = _get_session(user_id)
-    last_study_ctx = [h for h in s.get("history", [])[-2:] if isinstance(h, dict) and str(h.get("u", "")).startswith("[STUDY")]
-    if last_study_ctx and w_cnt <= 24:
-        return "clinic"
+    study_turns = [h for h in s.get("history", [])[-2:] if isinstance(h, dict) and str(h.get("u", "")).startswith("[STUDY")]
+    if study_turns and w_cnt <= 25:
+        last_u = re.sub(r"^\[STUDY[^\]]*\]\s*:\s*", "", str(study_turns[-1].get("u", ""))).strip().lower()
+        last_b = str(study_turns[-1].get("b", "")).lower()
+        if low != last_u:
+            # فحص هل استخدم الطالب إحدى العبارات المقترحة في البطاقة السابقة
+            suggested_terms = [m.group(1).lower() for m in re.finditer(r"\*\*(.+?)\*\*", last_b) if len(m.group(1)) > 3]
+            if any(t in low for t in suggested_terms):
+                return "clinic"
 
+    # 5. التمييز بين مقال طويل للتعدين وبين مسودة المستخدم
     first_person = len(re.findall(r"\b(i|my|me|we|our|us|i'm|i've|i'd)\b", low))
-    learner_slips = any(x in low for x in ("discuss about", "depend of", "explain me", "informations", "feedbacks", "do a mistake", "cannot success", "in my opinion i think"))
-    if learner_slips:
-        return "draft"
     if w_cnt > 65 and first_person <= 1:
         return "miner"
     return "draft"
@@ -1397,9 +1409,9 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
 
     if shift:
         shift_map = {
-            "spoken": ("🎙️ Natural Spoken Delivery", "Rewrite this text into natural, spontaneous spoken American English (active verbs, contractions, spoken rhythm)."),
-            "soften": ("💼 Crisp & Diplomatic Executive Written", "Rewrite this text into warm, tactful, solution-oriented American executive English."),
-            "c2": ("🏛️ C2 Academic & Analytical Prose", "Transform this text into authoritative C2 Academic/Analytical prose using Given-Before-New flow, End-Weight focus, and nominalization."),
+            "spoken": ("🎙️ Natural Spoken Delivery", "Rewrite this text into natural, spontaneous spoken American English (active verbs, contractions, spoken rhythm). Keep the speaker's exact perspective."),
+            "soften": ("💼 Crisp & Diplomatic Executive Written", "Rewrite this text into warm, tactful, solution-oriented American workplace/executive English. Keep the speaker's exact perspective."),
+            "c2": ("🏛️ C2 Formal & Analytical Prose", "Transform this text into elevated, natural C2 formal/analytical prose keeping the speaker's exact meaning and pronoun perspective (never turn a personal statement into a random medical/textbook claim!)."),
             "condense": ("⚡ Tightened High-Impact Version (-35%)", "Condense this text by 35-40% into razor-sharp English using precision verbs."),
         }
         sh_title, sh_prompt = shift_map.get(shift, shift_map["spoken"])
@@ -1421,7 +1433,7 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
             prev_m = already_mined.replace("SKEL_ONLY::", "")
             m_task = (
                 "Extract 3 reusable C2 Rhetorical Sentence Templates from this text as numbered blocks:\n"
-                "1. **Pattern:** `[Frame with [Slots]]`\n• الوظيفة البلاغية: [Arabic explanation]\n• Applied Example: \"[New sentence built with this skeleton]\""
+                "1. **Pattern:** `[Frame with [Slots]]`\n• الوظيفة البلاغية: [Eloquent Arabic explanation]\n• Applied Example: \"[New sentence built with this skeleton]\""
             )
             hdr_icon = "🏗️ Reusable C2 Sentence Templates"
         elif already_mined.startswith("RHET_ONLY::"):
@@ -1437,7 +1449,7 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
             prev_m = already_mined
             m_task = (
                 f"Previously extracted: [{prev_m}]. Mine 4 COMPLETELY NEW whole-chunk expressions or collocations from this text as numbered blocks:\n"
-                "1. **[Exact Expression]** — `[Grammar Frame]`\n• المعنى السياقي: [Arabic meaning]\n• New Example: \"[Fresh 10-14 word sentence]\""
+                "1. **[Exact Expression]** — `[Grammar Frame]`\n• المعنى السياقي: [Eloquent MSA meaning]\n• New Example: \"[Fresh 10-14 word sentence]\""
             )
             hdr_icon = "⛏️ Next 4 Extracted Chunks"
 
@@ -1454,16 +1466,16 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
     if route == "bridge":
         task = (
             "ARABIC-TO-ENGLISH THOUGHT ARCHITECT:\n"
-            "Express this Arabic thought natively across: 1) `spoken_american_en`, 2) `executive_written_en`, 3) `c2_academic_prose_en`, 4) `building_blocks_and_trap_en_ar` (2 **bolded chunks** + ❌ Literal Calque Trap), 5) `your_turn_prompt_en`."
+            "Express this Arabic thought natively while keeping the exact speaker perspective across: 1) `spoken_american_en`, 2) `executive_written_en`, 3) `c2_academic_prose_en`, 4) `building_blocks_and_trap_en_ar` (2 **bolded chunks** with pure MSA meaning + ❌ Literal Calque Trap), 5) `your_turn_prompt_en`."
         )
         b_res: ArabicBridgeSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Arabic Input:\n\"{user_input[:3000]}\"", ArabicBridgeSchema, temp=0.42)
-        _update_session(user_id, new_turn={"u": f"[STUDY AR->EN]: {user_input[:160]}", "b": b_res.c2_academic_prose_en[:200]})
+        _update_session(user_id, new_turn={"u": f"[STUDY AR->EN]: {user_input[:160]}", "b": f"{b_res.c2_academic_prose_en[:140]} | {b_res.building_blocks_and_trap_en_ar[:140]}"})
 
         html_b = (
             f"<b>🌉 AR ➔ EN Native Expression Bridge</b>\n\n"
             f"🎙️ <b>1. Natural Spoken American</b>\n<i>&quot;{_fmt_inline_md(b_res.spoken_american_en)}&quot;</i>\n\n"
             f"💼 <b>2. Crisp Executive Written</b>\n<i>&quot;{_fmt_inline_md(b_res.executive_written_en)}&quot;</i>\n\n"
-            f"🏛️ <b>3. C2 Academic &amp; Analytical Prose</b>\n<b>&quot;{_fmt_inline_md(b_res.c2_academic_prose_en)}&quot;</b>\n\n"
+            f"🏛️ <b>3. C2 Formal &amp; Analytical Prose</b>\n<b>&quot;{_fmt_inline_md(b_res.c2_academic_prose_en)}&quot;</b>\n\n"
             f"<b>🧱 Key Building Blocks &amp; Calque Trap</b>\n{_clean_multiline_bullets(b_res.building_blocks_and_trap_en_ar)}\n\n"
             f"🎯 <b>Your Turn:</b> <i>{_fmt_inline_md(b_res.your_turn_prompt_en)}</i>"
         )
@@ -1475,7 +1487,7 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
         return
 
     if route == "miner":
-        task = "MODULAR CORPUS MINER: Extract the Top 4 highest-value idioms, phrasal verbs, or C1/C2 collocations from this text as numbered blocks (Expression, Frame, Arabic meaning, New Example)."
+        task = "MODULAR CORPUS MINER: Extract the Top 4 highest-value idioms, phrasal verbs, or C1/C2 collocations from this text as numbered blocks (Expression, Frame, pure MSA meaning, New Example)."
         m_res: ModularMinerSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Text:\n\"{user_input[:5500]}\"", ModularMinerSchema, temp=0.4)
         _update_session(user_id, new_turn={"u": f"[STUDY MINER]: {user_input[:140]}", "b": m_res.top_chunks_en_ar[:260]})
 
@@ -1495,8 +1507,8 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
         recent_study = "\n".join([f"Prior: {h.get('u','')}\nCoaching: {h.get('b','')}" for h in s.get("history", [])[-2:] if isinstance(h, dict)])
         task = (
             "INTERACTIVE TUTOR & NUANCE CLINIC:\n"
-            "- If the user is replying with a practice sentence from the previous Study card, evaluate it warmly, show ❌ ➔ ✅ refinements, and give 3 register variations!\n"
-            "- If asking a linguistic question ('X vs Y', grammar/nuance), give the direct rule with 3 register examples (highlighting key expressions in **bold**) and Arabic notes."
+            "- If the user is testing a chunk from the previous card, evaluate their sentence warmly and show any ❌ ➔ ✅ fix.\n"
+            "- If asking a linguistic question, give the direct rule with 3 register examples (Casual Spoken, Executive Workplace, Formal C2 Prose) keeping the same speaker meaning, with pure MSA meanings (no street slang!)."
         )
         c_res: TutorLoopSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Recent Study Context:\n{recent_study}\n\nUser Input:\n\"{user_input[:2000]}\"", TutorLoopSchema, temp=0.45)
         _update_session(user_id, new_turn={"u": f"[STUDY PRACTICE/Q]: {user_input[:160]}", "b": c_res.direct_feedback_or_answer_en[:220]})
@@ -1514,16 +1526,31 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
         send_html_safe(chat_id, html_c, reply_markup=build_inline_kb(tok, "clinic", _extract_lookup_terms(v_items)))
         return
 
-    # المسار الافتراضي: المحرر الجراحي المركز (Precision Editor)
+    # المسار الأساسي للمسودات والجمل (Precision Editor — يتكيف بصرامة مع Casual أو Professional أو Formal!)
+    reg_rules = {
+        "Casual": (
+            "ACTIVE REGISTER: CASUAL (Spoken NYC).\n"
+            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be authentic everyday spoken American idioms/phrasal verbs (e.g. for 'I feel so tired': 'wiped out', 'running on fumes', 'dead on my feet', 'beat')."
+        ),
+        "Professional": (
+            "ACTIVE REGISTER: PROFESSIONAL (Diplomatic Workplace / Executive).\n"
+            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be workplace-appropriate, tactful executive expressions (e.g. for 'I feel so tired': 'stretched thin', 'running low on bandwidth', 'at capacity', 'completely drained from back-to-back sessions').\n"
+            "- NEVER suggest casual slang like 'wiped out' or 'dead on my feet' in Professional mode!"
+        ),
+        "Formal": (
+            "ACTIVE REGISTER: FORMAL (Elevated C1/C2 Formal & Analytical Prose).\n"
+            "- `polished_version_en` and all 3 `lexical_upgrades_en_ar` MUST be elevated, formal C1/C2 vocabulary and collocations (e.g. for 'I feel so tired': 'thoroughly fatigued', 'considerably depleted', 'experiencing pronounced fatigue').\n"
+            "- CRITICAL: Keep the user's exact 1st-person perspective and meaning! NEVER turn 'I feel so tired' into an impersonal textbook statement like 'Extreme cognitive fatigue impairs...' or robotic purple prose like 'reached its absolute threshold'! NEVER suggest casual phrasal slang like 'wiped out'!"
+        ),
+    }
     task = (
-        "PRECISION DRAFT & SPEECH EDITOR:\n"
-        "1. `polished_version_en`: Natural, idiomatic polish in the target register.\n"
-        "2. `surgical_diffs_en_ar`: '• ❌ [user phrase] ➔ ✅ **[native fix]** — [reason]'.\n"
-        "3. `lexical_upgrades_en_ar`: 3 upgrades formatted strictly as '• [simple word] ➔ **[C1/C2 expression]** (المعنى السياقي) — \"[short example]\"'.\n"
-        "4. `your_turn_prompt_en`: 1-sentence practice prompt."
+        f"PRECISION DRAFT & SPEECH EDITOR — {reg_rules.get(reg, reg_rules['Professional'])}\n"
+        "1. `surgical_diffs_en_ar`: ONLY flag genuine grammar, preposition, or collocation mistakes. If the sentence is grammatically valid (like 'I feel so tired'), write strictly: '• ✓ Grammatically solid—see register-specific upgrades below.'\n"
+        "2. `lexical_upgrades_en_ar`: 3 upgrades strictly matching the ACTIVE REGISTER formatted as '• [user word] ➔ **[Register-matched expression]** ([Pure Modern Standard Arabic meaning—الفصحى السياقية الرصينة, zero slang!]) — \"[Natural example sentence]\"'.\n"
+        "3. `your_turn_prompt_en`: 1-sentence prompt to practice one of the 3 upgrades."
     )
-    d_res: PrecisionEditorSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Target Register: {reg}\nUser's Draft:\n\"{user_input[:4000]}\"", PrecisionEditorSchema, temp=0.42)
-    _update_session(user_id, new_turn={"u": f"[STUDY DRAFT]: {user_input[:160]}", "b": d_res.polished_version_en[:200]})
+    d_res: PrecisionEditorSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Active Register: {reg}\nUser's Draft:\n\"{user_input[:4000]}\"", PrecisionEditorSchema, temp=0.4)
+    _update_session(user_id, new_turn={"u": f"[STUDY DRAFT]: {user_input[:160]}", "b": f"{d_res.polished_version_en[:140]} | {d_res.lexical_upgrades_en_ar[:180]}"})
 
     if d_res.surgical_diffs_en_ar and ("->" in d_res.surgical_diffs_en_ar or "➔" in d_res.surgical_diffs_en_ar):
         _log_dna(user_id, d_res.surgical_diffs_en_ar.replace("➔", "->"))
@@ -1533,13 +1560,13 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
         f"{v_prefix}<b>✍️ Polished Version ({_h(reg)})</b>\n"
         f"<i>&quot;{_fmt_inline_md(d_res.polished_version_en)}&quot;</i>\n\n"
         f"<b>🔧 Surgical Fixes (❌ ➔ ✅)</b>\n{_clean_multiline_bullets(d_res.surgical_diffs_en_ar)}\n\n"
-        f"<b>🚀 Vocabulary &amp; Collocation Upgrades</b>\n{_clean_multiline_bullets(d_res.lexical_upgrades_en_ar)}\n\n"
+        f"<b>🚀 {_h(reg)} Vocabulary &amp; Collocation Upgrades</b>\n{_clean_multiline_bullets(d_res.lexical_upgrades_en_ar)}\n\n"
         f"🎯 <b>Your Turn:</b> <i>{_fmt_inline_md(d_res.your_turn_prompt_en)}</i>"
     )
     tok = hashlib.md5(f"DRF:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    v_segs = [("Chloe", _clean_tts(d_res.polished_version_en))]
+    v_segs = [("Marcus" if reg == "Formal" else "Chloe", _clean_tts(d_res.polished_version_en))]
     v_items = _extract_clean_vault_items(d_res.lexical_upgrades_en_ar, d_res.polished_version_en)
-    store_card(tok, user_id, v_segs, {"title": "Precision Draft Surgery", "register": reg, "main_en": d_res.polished_version_en}, v_items, source_text=user_input[:3500])
+    store_card(tok, user_id, v_segs, {"title": f"Precision Editor ({reg})", "register": reg, "main_en": d_res.polished_version_en}, v_items, source_text=user_input[:3500])
     send_html_safe(chat_id, html_d, reply_markup=build_inline_kb(tok, "draft", _extract_lookup_terms(v_items)))
 
 # ------------------------------------------------------------------------------
