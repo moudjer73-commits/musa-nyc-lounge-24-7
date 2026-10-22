@@ -658,32 +658,33 @@ def generate_pdf_sheet(pdf_data: Dict[str, Any]) -> Optional[str]:
 # محرك الاتصال السريع بالنماذج اللغوية (LLM Structured Caller)
 # ------------------------------------------------------------------------------
 _PINNED_GROQ: Optional[Tuple[str, str]] = None
+# ------------------------------------------------------------------------------
+# محرك Gemini النصي الموثق (Pure Verified Text Models — Zero Image Models)
+# ------------------------------------------------------------------------------
 _PINNED_GEMINI: Optional[Tuple[str, str]] = None
+_DEAD_KEYS_UNTIL: Dict[str, float] = {}
+_UNAVAILABLE_MODELS_UNTIL: Dict[str, float] = {}
+_LIVE_MODELS_CACHE: List[str] = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite", "gemini-3.1-flash-live-preview"]
 
-def _discover_groq_models(client: Groq) -> List[str]:
-    cands = []
-    try:
-        for m in getattr(client.models.list(), "data", []):
-            mid = getattr(m, "id", "") or ""
-            low = mid.lower()
-            if not any(x in low for x in ("whisper", "guard", "tts", "playai", "orpheus", "embed", "vision", "allam", "deepseek")):
-                cands.append(mid)
-    except Exception:
-        pass
-    cands.sort(key=lambda x: 1 if "llama-3.3-70b" in x.lower() or "llama-4" in x.lower() else (2 if "70b" in x.lower() else 4))
-    return cands[:5] if cands else ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-
-def _discover_gemini_models(client: genai.Client) -> List[str]:
-    cands = []
+def _get_live_gemini_models(client: genai.Client) -> List[str]:
+    global _LIVE_MODELS_CACHE
+    now = time.time()
+    avail = [m for m in _LIVE_MODELS_CACHE if _UNAVAILABLE_MODELS_UNTIL.get(m, 0) < now]
+    if avail:
+        return avail
+    found = []
     try:
         for m in client.models.list():
             sn = (getattr(m, "name", "") or "").replace("models/", "")
-            if "gemini" in sn.lower() and not any(x in sn.lower() for x in ("embedding", "imagen", "veo", "aqa", "tts", "audio", "learnlm")):
-                cands.append(sn)
+            low = sn.lower()
+            bad_w = ("image", "imagen", "veo", "embedding", "aqa", "tts", "audio", "learnlm", "robotics", "computer-use", "gemma")
+            if "gemini" in low and not any(b in low for b in bad_w):
+                found.append(sn)
     except Exception:
         pass
-    cands.sort(key=lambda x: 1 if "2.5-flash" in x else (2 if "2.0-flash" in x else 4))
-    return cands[:5] if cands else ["gemini-2.5-flash", "gemini-2.0-flash"]
+    if found:
+        _LIVE_MODELS_CACHE = found[:8]
+    return _LIVE_MODELS_CACHE
 
 def _is_populated(obj: Any) -> bool:
     d = obj.model_dump() if hasattr(obj, "model_dump") else {}
@@ -717,81 +718,69 @@ def _parse_schema_safe(raw_txt: str, schema_cls: Any) -> Any:
         raise ValueError("Unpopulated schema")
     return res
 
-def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0.6) -> Any:
-    global _PINNED_GROQ, _PINNED_GEMINI
+def _try_single_gemini_call(api_key: str, model_id: str, sys_p: str, usr_p: str, schema_cls: Any, temp: float) -> Any:
+    mc = genai.Client(api_key=api_key, http_options={"timeout": 12000})
+    resp = mc.models.generate_content(
+        model=model_id,
+        contents=usr_p,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=sys_p,
+            response_mime_type="application/json",
+            response_schema=schema_cls,
+            temperature=temp,
+        ),
+    )
+    if resp and resp.text:
+        return _parse_schema_safe(resp.text, schema_cls)
+    raise ValueError("Empty Gemini response")
+
+def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0.55) -> Any:
+    global _PINNED_GEMINI
     f_names = list(schema_cls.model_fields.keys())
     f_desc = "\n".join([f'- "{k}": {v.description}' for k, v in schema_cls.model_fields.items()])
-    j_inst = (
-        f"\n\nReturn strictly a valid flat JSON object with ALL of these exact keys:\n{f_desc}\n"
-        f"Required keys: {json.dumps(f_names)}. Every string value must be a single string."
+    full_sys = (
+        f"{sys_p}\n\nReturn strictly a valid JSON object matching the schema with ALL of these exact keys:\n{f_desc}\n"
+        f"Required keys: {json.dumps(f_names)}. Every string field must be a single cohesive string."
     )
 
-    if _PINNED_GROQ:
-        gk, gm = _PINNED_GROQ
-        try:
-            cc = Groq(api_key=gk, timeout=16.0).chat.completions.create(
-                model=gm, messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
-                response_format={"type": "json_object"}, temperature=temp,
-            )
-            return _parse_schema_safe(cc.choices[0].message.content, schema_cls)
-        except Exception:
-            _PINNED_GROQ = None
-
+    now = time.time()
     if _PINNED_GEMINI:
-        mk, gm_id = _PINNED_GEMINI
-        try:
-            mc = genai.Client(api_key=mk)
-            resp = mc.models.generate_content(
-                model=gm_id, contents=usr_p,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=sys_p + j_inst,
-                    response_mime_type="application/json",
-                    temperature=temp,
-                ),
-            )
-            if resp and resp.text:
-                return _parse_schema_safe(resp.text, schema_cls)
-        except Exception:
-            _PINNED_GEMINI = None
+        pk, pm = _PINNED_GEMINI
+        if _DEAD_KEYS_UNTIL.get(pk, 0) < now and _UNAVAILABLE_MODELS_UNTIL.get(pm, 0) < now:
+            try:
+                return _try_single_gemini_call(pk, pm, full_sys, usr_p, schema_cls, temp)
+            except Exception:
+                _PINNED_GEMINI = None
 
-    for gk in _collect_groq_keys():
-        try:
-            gc = Groq(api_key=gk, timeout=16.0)
-            for gm in _discover_groq_models(gc):
-                try:
-                    cc = gc.chat.completions.create(
-                        model=gm, messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
-                        response_format={"type": "json_object"}, temperature=temp,
-                    )
-                    res = _parse_schema_safe(cc.choices[0].message.content, schema_cls)
-                    _PINNED_GROQ = (gk, gm)
-                    return res
-                except Exception:
-                    continue
-        except Exception:
-            continue
+    keys = _collect_gemini_keys()
+    active_keys = [k for k in keys if _DEAD_KEYS_UNTIL.get(k, 0) < now]
+    if not active_keys:
+        _DEAD_KEYS_UNTIL.clear()
+        active_keys = keys
 
-    for mk in _collect_gemini_keys():
-        try:
-            mc = genai.Client(api_key=mk)
-            for gm_id in _discover_gemini_models(mc):
-                try:
-                    resp = mc.models.generate_content(
-                        model=gm_id, contents=usr_p,
-                        config=genai_types.GenerateContentConfig(
-                            system_instruction=sys_p + j_inst,
-                            response_mime_type="application/json",
-                            temperature=temp,
-                        ),
-                    )
-                    if resp and resp.text:
-                        res = _parse_schema_safe(resp.text, schema_cls)
-                        _PINNED_GEMINI = (mk, gm_id)
-                        return res
-                except Exception:
+    models_list = [m for m in _LIVE_MODELS_CACHE if _UNAVAILABLE_MODELS_UNTIL.get(m, 0) < now]
+    if not models_list:
+        _UNAVAILABLE_MODELS_UNTIL.clear()
+        models_list = _LIVE_MODELS_CACHE
+
+    for gm_id in models_list:
+        for mk in active_keys:
+            try:
+                res = _try_single_gemini_call(mk, gm_id, full_sys, usr_p, schema_cls, temp)
+                _PINNED_GEMINI = (mk, gm_id)
+                return res
+            except Exception as e:
+                err_s = str(e).lower()
+                if "404" in err_s:
+                    _UNAVAILABLE_MODELS_UNTIL[gm_id] = time.time() + 3600
+                    break
+                if "503" in err_s or "504" in err_s or "overloaded" in err_s or "unavailable" in err_s:
+                    _UNAVAILABLE_MODELS_UNTIL[gm_id] = time.time() + 120
+                    break
+                if "429" in err_s or "quota" in err_s or "exhausted" in err_s:
+                    _DEAD_KEYS_UNTIL[mk] = time.time() + 60
                     continue
-        except Exception:
-            continue
+                continue
 
     return schema_cls()
 
