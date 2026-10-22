@@ -416,7 +416,8 @@ def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0
 STUDIO_VOICES = {"Jake": "en-US-AndrewMultilingualNeural", "Chloe": "en-US-AvaMultilingualNeural", "Marcus": "en-US-BrianMultilingualNeural"}
 
 def _h(v: Any) -> str:
-    return html.escape(str(v if v is not None else "")).strip()
+    raw = html.unescape(str(v if v is not None else "")).strip()
+    return html.escape(raw, quote=False)
 
 def _clean_tts(t: str) -> str:
     t = re.sub(r"<[^>]+>|\[[^\]]*\]|[\u0600-\u06FF]+", " ", str(t or ""))
@@ -600,12 +601,18 @@ def build_inline_kb(tok: str, ctype: str = "chat") -> types.InlineKeyboardMarkup
     return kb
 
 def send_html_safe(chat_id: int, html_text: str, reply_markup: Any = None):
-    if len(html_text) > 4050:
-        html_text = html_text[:3950] + "\n</i></b></blockquote>"
     try:
-        return bot.send_message(chat_id, html_text, parse_mode="HTML", reply_markup=reply_markup)
+        if len(html_text) <= 4090:
+            return bot.send_message(chat_id, html_text, parse_mode="HTML", reply_markup=reply_markup)
+        # إذا تجاوزت البطاقة 4090 حرفاً، نرسل القسم الرئيسي والمطوية الإنجليزية أولاً، ثم المطوية العربية كاملةً دون بتر!
+        if "<blockquote expandable><b>Translation" in html_text:
+            part1, part2 = html_text.split("<blockquote expandable><b>Translation", 1)
+            bot.send_message(chat_id, part1.strip()[:4050], parse_mode="HTML")
+            return bot.send_message(chat_id, "<blockquote expandable><b>Translation" + part2, parse_mode="HTML", reply_markup=reply_markup)
+        return bot.send_message(chat_id, html_text[:4050], parse_mode="HTML", reply_markup=reply_markup)
     except Exception:
-        return bot.send_message(chat_id, re.sub(r"<[^>]+>", "", html_text)[:4000], reply_markup=reply_markup)
+        clean_plain = html.unescape(re.sub(r"<[^>]+>", "", html_text))
+        return bot.send_message(chat_id, clean_plain[:4000], reply_markup=reply_markup)
 
 def _fmt_fixes(raw: str, strike: bool = True) -> str:
     out = []
@@ -626,10 +633,17 @@ SYS_PROMPT = """
 You are the linguistic engine of 'Musa's NYC Lounge'. Obey these 6 laws strictly:
 1. ANALYZE ONLY THE USER'S WORDS:
    - `error_corrections_list`, `better_alternatives_list`, `tone_and_why_en`, `recast_*`, and `spoken_flow_en` must evaluate ONLY what the USER wrote—NEVER analyze or quote the bot's own `dialogue_en`!
-2. NO PEDANTIC PUNCTUATION OR FAKE SWAPS:
-   - Never flag missing commas in casual texting (e.g. 'Hey is that you Marcus?' is NOT an error).
-   - Do catch real syntactic/idiomatic issues (e.g. 'thinking of why X is...' -> 'wondering why X is...' or 'trying to figure out why...').
-   - If the user's short phrase (like 'Hey guys, what's new?') is already 100% natural, leave `better_alternatives_list` empty instead of suggesting pointless lateral swaps.
+2. CATCH EVERY REAL GRAMMAR, PREPOSITION & COLLOCATION ERROR IN `error_corrections_list`:
+   - Never flag missing commas in casual texting (e.g. 'Hey Chloe I am...' is NOT an error).
+   - YOU MUST CATCH AND STRIKETHROUGH every verb-preposition trap and collocation calque in `error_corrections_list` (and set `has_actual_errors=True`)!
+   - Examples of MANDATORY `error_corrections_list` items:
+     * 'discuss with my boss about [X]' -> 'talk to my boss about [X]' (or 'discuss [X] with my boss' — 'discuss' NEVER takes 'about'!)
+     * 'take a fast decision' -> 'make a quick decision' (collocation error: we MAKE decisions, not take them!)
+     * 'explain me' -> 'explain to me', 'depend of' -> 'depend on', 'married with' -> 'married to'.
+   - Reserve `better_alternatives_list` ONLY for upgrading already-correct simple phrases into richer idioms.
+7. BAN HALLUCINATED PHONETICS:
+   - Never invent fake word truncations or acronyms (NEVER say 'paralysis' becomes 'pa-lis' or 'Don't get me started' becomes 'D-g-m-s'!).
+   - Only describe real American connected speech: linking consonants to vowels, Flap-T (water/better), dropping final /t/ or /d/ between consonants ('just_go'), and schwa /ə/ reduction.
 3. BAN ROBOTIC CARICATURES IN PROFESSIONAL/FORMAL RECASTS:
    - Never write stiff, inhuman sentences like 'I am analyzing the factors contributing to the bot's perceived annoyance' or 'May I verify whether you are Marcus?'.
    - Always write how real, articulate humans actually speak and write in workplace and executive contexts.
@@ -746,16 +760,28 @@ def execute_podcast(chat_id: int, user_id: int, topic: str = "", hosts: int = 3)
 
     raw_s = _h(data.script_en)
     for spk in ("Jake", "Chloe", "Marcus"):
-        raw_s = re.sub(rf"(?:^|\n)\s*{spk}\s*:\s*", f"\n\n<b>{spk}:</b> ", raw_s).strip()
+        raw_s = re.sub(rf"(?:^|\n|\s)+{spk}\s*:\s*", f"\n\n<b>{spk}:</b> ", raw_s)
+    raw_s = raw_s.strip()
 
+    clean_pod_exp = "\n".join([f"• {_h(ln.strip().lstrip('•-* '))}" for ln in data.key_expressions_and_rhythm_en.splitlines() if ln.strip()])
     html_out = (
         f"<b>NYC Podcast ({hosts} Hosts • {_h(reg)})</b>\n<i>{_h(data.episode_title_en)}</i>\n\n"
         f"{raw_s}\n\n<b>Your Turn:</b> <i>\"{_h(data.closing_question_to_user_en)}\"</i>\n\n"
-        f"<blockquote expandable><b>Episode Expressions &amp; Rhythm ▼</b>\n\n{_h(data.key_expressions_and_rhythm_en)}</blockquote>\n"
+        f"<blockquote expandable><b>Episode Expressions &amp; Rhythm ▼</b>\n\n{clean_pod_exp}</blockquote>\n"
         f"<blockquote expandable><b>Translation &amp; Arabic Notes ▼</b>\n\n{_h(data.arabic_episode_notes)}</blockquote>"
     )
     tok = hashlib.md5(f"POD:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    segs = [("Jake", data.script_en), ("Marcus", f"Key expressions: {data.audio_recap_script_en}")]
+    # تقسيم الحوار الصوتي جملةً بجملة بين أصوات Jake و Chloe و Marcus الحقيقية
+    segs = []
+    normalized_lines = re.sub(r"(?:^|\n|\s)+(Jake|Chloe|Marcus)\s*:\s*", r"\n\1: ", data.script_en).strip().splitlines()
+    for ln in normalized_lines:
+        m_spk = re.match(r"^\s*(Jake|Chloe|Marcus)\s*:\s*(.+)$", ln.strip())
+        if m_spk:
+            segs.append((m_spk.group(1), m_spk.group(2).strip()))
+    if not segs:
+        segs = [("Jake", data.script_en)]
+    if data.audio_recap_script_en.strip():
+        segs.append(("Marcus", f"Key expressions from this episode: {data.audio_recap_script_en}"))
     pdf_d = {"title": data.episode_title_en, "register": reg, "main_en": data.script_en, "instant_fix": data.closing_question_to_user_en, "diagnosis_en": data.key_expressions_and_rhythm_en, "ar_anchor": data.arabic_episode_notes}
     store_card(tok, user_id, segs, pdf_d, [(data.episode_title_en, data.arabic_episode_notes[:200], data.key_expressions_and_rhythm_en[:200])], data.arabic_episode_notes)
 
