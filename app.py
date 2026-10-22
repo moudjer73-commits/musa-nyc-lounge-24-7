@@ -799,17 +799,20 @@ class ChatSchema(BaseModel):
     expressions_from_reply_en: str = Field(default="", description="1 or 2 natural expressions or phrasal verbs actually used in the reply on separate lines: • **expression** — clear meaning. 'Natural example sentence.'")
 
 class LexiconSchema(BaseModel):
-    headword_or_query: str = Field(default="", description="The target English word/chunk OR Arabic query")
-    corpus_distribution_badge: str = Field(default="Spoken: High | Workplace: Very High | Academic: Moderate", description="Authentic usage distribution across Spoken, Workplace, and Academic registers")
-    syntactic_and_prosody_frame: str = Field(default="", description="Mandatory grammar frame (e.g. 'hold off on + [noun/-ing]') + Semantic Prosody & Polarity (Positive, Neutral, Negative, or Negative-Polarity only)")
-    core_senses_and_subtext_en: str = Field(default="", description="Put each numbered sense on a NEW line ('1. ...\n2. ...'), followed by pragmatic subtext and register boundaries")
-    contextual_arabic_and_activator: str = Field(default="", description="Put each numbered sense on a NEW line ('1. ...\n2. ...'). If query is English: eloquent contextual Arabic equivalents (الفصحى السياقية الرصينة). If query is Arabic: Lexical Activator grouping English equivalents into (1. Spoken/Idiomatic, 2. Workplace/Diplomatic, 3. C2 Analytical) + L1 Calque Trap warning.")
-    collocation_grid_and_frames_en: str = Field(default="", description="Collocation grid on separate lines: • Verbs + term: ...\n• Nouns/Adjectives + term: ...\n• Ready Spoken Frame: '...'")
-    authentic_examples_en: str = Field(default="", description="2 natural full-sentence examples on separate lines ('1. ...\n2. ...')")
+    headword_en_or_ar: str = Field(default="", description="The target English word/phrasal verb/idiom OR Arabic query")
+    ipa_and_spoken_prosody: str = Field(default="", description="American IPA transcription with primary stress mark (e.g. '/ˌθroʊ əˈraʊnd/') + brief connected-speech / linking note (e.g. 'stress falls on AROUND; w-linking between throw and around')")
+    grammar_valency_and_coca_badge: str = Field(default="", description="Explicit dictionary grammar code (e.g. 'Phrasal Verb [T, Separable: throw sth ↔ around]' or 'Noun [U]' or 'Verb [T + obj + into -ing]') + COCA frequency & register profile ('Spoken: ★★★ | Workplace: ★★☆ | Academic: ★☆☆')")
+    unified_senses_en_ar: str = Field(default="", description="Comprehensive breakdown of all core senses (or Register Activator tiers if query is Arabic). For EACH numbered sense, provide:\n1. **Precise English Definition & Tone**\n• المقابل الفصيح والاصطلاحي: [Eloquent contextual Arabic equivalent + idiomatic Arabic expression]\n• Valency Frame: `[exact syntactic pattern]`\n• Spoken Example: \"[Natural 10-14 word spoken NYC sentence]\"\n• Written/Workplace Example: \"[Natural 12-16 word professional/analytical sentence]\"")
+    oxford_collocation_box_en: str = Field(default="", description="Structured Oxford-style Collocation Box on separate lines (adapt to Part of Speech—zero generic filler verbs!):\n• **Object / Noun Partners:** (6 authentic nouns that collocate with it)\n• **Verb / Aux Triggers:** (verbs/modals that naturally precede it, e.g. 'tend to, hesitate to, casually...')\n• **Adverb / Adjective Modifiers:** (5 natural modifiers)\n• **Prepositions & Particles:** (exact prepositional links)")
+    lexical_priming_and_chunks_en: str = Field(default="", description="Hoey's Lexical Priming & Ready Chunks on separate lines:\n• **Colligation & Priming:** (preferred tense/aspect—e.g. progressive '-ing', passive vs active, negative polarity, or sentence position)\n• **Spoken Chunk 1:** \"[Ready-to-use conversational frame]\" (with brief Arabic meaning)\n• **Spoken/Written Chunk 2:** \"[Ready-to-use professional frame]\" (with brief Arabic meaning)")
+    prosody_and_subtext_en: str = Field(default="", description="Semantic Prosody (Positive, Neutral, or Disapproving/Negative aura) + Pragmatic Subtext (what attitude the speaker projects when choosing this expression)")
+    register_ladder_and_family_en: str = Field(default="", description="On separate lines:\n• **Casual Spoken:** [equivalent]\n• **Diplomatic Workplace:** [equivalent]\n• **C2 Academic Prose:** [equivalent]\n• **Word Family & Derivatives:** [Noun / Verb / Adj / Adv forms]\n• **Antonym / Opposite:** [exact idiomatic opposite]")
+    common_traps_and_cognitive_hook_en: str = Field(default="", description="On separate lines:\n• **Grammar/Pronoun Trap:** ❌ [wrong usage, e.g. 'throw around it'] → ✅ [correct usage, e.g. 'throw it around']\n• **Collocation/L1 Arabic Trap:** ❌ [literal/wrong collocation] → ✅ [natural native phrasing]\n• **Cognitive Metaphor Hook:** [1-sentence mental image explaining WHY this idiom/word means what it means]")
+    clean_audio_script_en: str = Field(default="", description="3-turn clean English pronunciation & example script for TTS audio: 'Marcus: [Headword]. [Written example].\nChloe: [Spoken example].\nJake: [Extra conversational chunk].' (100% English, no symbols or Arabic!)")
 
 class LexiconExtraSchema(BaseModel):
-    title_en: str = Field(default="Lexicon Deep Dive", description="Title ('Collocation Matrix', 'Synonym Contrast & Boundaries', or 'Word Family & Derivatives')")
-    content_bullets_en: str = Field(default="", description="4-5 rich bullet points, each on a SEPARATE line ('\n'), with accurate inflections (e.g. 'bandied about', never 'banded about'), examples, and concise Arabic nuances")
+    title_en: str = Field(default="Lexicon Deep Dive", description="Title of deep dive")
+    content_bullets_en: str = Field(default="", description="5-6 rich, detailed bullet blocks separated by newline ('\n'), with bold headings, full example sentences, ❌/✅ boundary checks, and concise Arabic nuances.")
 
 class StudyMinerSchema(BaseModel):
     dossier_title_en: str = Field(default="Linguistic Dossier", description="Sharp title")
@@ -990,13 +993,18 @@ def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[s
 
     if ctype == "lexicon":
         kb.row(
-            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("🌳 Collocations", callback_data=f"edlexext:colloc:{tok}"),
-            types.InlineKeyboardButton("⚖️ Synonyms", callback_data=f"edlexext:syn:{tok}"),
+            types.InlineKeyboardButton("🎧 Pronounce & Examples", callback_data=f"edtts:1x:{tok}"),
+            types.InlineKeyboardButton("🐢 Slow 0.85x", callback_data=f"edtts:slow:{tok}"),
+            types.InlineKeyboardButton("📄 PDF", callback_data=f"edpdf:{tok}"),
         )
         kb.row(
-            types.InlineKeyboardButton("🧬 Word Family", callback_data=f"edlexext:family:{tok}"),
-            types.InlineKeyboardButton("💾 Save to Vault", callback_data=f"edsave:{tok}"),
+            types.InlineKeyboardButton("📊 Full Collocations", callback_data=f"edlexext:colloc:{tok}"),
+            types.InlineKeyboardButton("⚖️ Synonym Thesaurus", callback_data=f"edlexext:syn:{tok}"),
+        )
+        kb.row(
+            types.InlineKeyboardButton("🔄 Register & Family", callback_data=f"edlexext:ladder:{tok}"),
+            types.InlineKeyboardButton("🎯 Practice Drill", callback_data=f"edqztext:{tok}"),
+            types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
         )
         return kb
 
@@ -1172,49 +1180,113 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
     return data
 
 # ------------------------------------------------------------------------------
-# محرك 2: المكنز التلازمي والمولّد السياقي ثلاثي العدسات (3-Lens Lexicon)
+# محرك 2: الموسوعة المعجمية الشاملة ذات الأركان العشرة (10-Pillar Master Lexicon)
 # ------------------------------------------------------------------------------
+def _format_unified_senses(raw_senses: str) -> str:
+    txt = html.unescape(str(raw_senses or "")).strip()
+    if not txt:
+        return ""
+    txt = re.sub(r"(?<!^)\s*(?=[1-9]\.\s+\*?\*?[A-Z\u0600-\u06FF])", "\n\n", txt)
+    txt = re.sub(r"\s*(•|\u2022)\s*", "\n• ", txt)
+    out_lines = []
+    for ln in txt.splitlines():
+        cl = ln.strip()
+        if not cl:
+            if out_lines and out_lines[-1] != "":
+                out_lines.append("")
+            continue
+        if re.match(r"^[1-9]\.", cl):
+            clean_hdr = re.sub(r"\*+", "", cl)
+            out_lines.append(f"<b>{_h(clean_hdr)}</b>")
+        else:
+            cl_b = cl.lstrip("•-* ").strip()
+            out_lines.append(f"• {_fmt_inline_md(cl_b)}")
+    return "\n".join(out_lines).strip()
+
 def execute_lexicon_lookup(chat_id: int, user_id: int, query_text: str):
     reg = _get_session(user_id)["register"]
     task = (
-        "3-LENS CONTEXTUAL LEXICON & ACTIVATOR:\n"
-        "- LENS 1 (English Word/Chunk): Show Corpus Distribution badge, mandatory Syntactic Frame & Semantic Prosody/Polarity, Polysemy/Core Senses (each sense on a NEW line!), eloquent contextual Arabic equivalents (الفصحى السياقية الرصينة) for each sense on a NEW line, Collocation Grid + Ready Spoken Frame, and 2 authentic examples.\n"
-        "- LENS 2 (Arabic Word/Idiom/Concept): Act as a Lexical Activator—group natural American English equivalents into (1. Spoken & Idiomatic NYC, 2. Workplace & Diplomatic, 3. C2 Analytical/Academic), warn against L1 Arabic-to-English calque traps, and give collocations & examples.\n"
-        "- LENS 3 (X vs Y or In-Context *word*): Contrast exact collocational, syntactic, and register boundaries."
+        "MASTER 10-PILLAR LEARNER'S DICTIONARY, COLLOCATION & PRIMING ENGINE (Longman DOCE + Oxford Collocations + Hoey's Lexical Priming + Activator):\n"
+        "Fill EVERY single field thoroughly with deep linguistic precision:\n"
+        "1. `ipa_and_spoken_prosody`: American IPA with stress marks + how it links/reduces in fast American speech.\n"
+        "2. `grammar_valency_and_coca_badge`: Exact grammar & separability code (e.g. 'Phrasal Verb [T, Separable: throw sth ↔ around]') + COCA frequency stars across Spoken, Workplace, Academic.\n"
+        "3. `unified_senses_en_ar`: Numbered sense blocks. Each block MUST contain: English definition & tone, المقابل الفصيح والاصطلاحي (MSA + idiomatic Arabic), Valency Frame, 1 Spoken Example, and 1 Written/Workplace Example. (If query is Arabic, make each numbered block a Register Activator tier: 1. Spoken/Idiomatic, 2. Diplomatic Workplace, 3. C2 Academic/Analytical).\n"
+        "4. `oxford_collocation_box_en`: 4 distinct lines: Object/Noun Partners, Verb/Modal Triggers, Adverb/Adjective Modifiers, and Prepositions.\n"
+        "5. `lexical_priming_and_chunks_en`: Hoey's Colligation (preferred tense/aspect/polarity/sentence position) + 2 ready-to-use conversational/professional frames with Arabic meanings.\n"
+        "6. `prosody_and_subtext_en`: Semantic Prosody (Positive/Neutral/Negative aura) + Pragmatic Subtext.\n"
+        "7. `register_ladder_and_family_en`: Casual Spoken -> Diplomatic Workplace -> C2 Academic Prose + Word Family derivatives + Antonym.\n"
+        "8. `common_traps_and_cognitive_hook_en`: ❌ Wrong vs ✅ Right grammar/pronoun/collocation traps + L1 Arabic calque warning + Cognitive Metaphor Hook (why the expression means what it means).\n"
+        "9. `clean_audio_script_en`: 3-turn English-only script ('Marcus: ...\\nChloe: ...\\nJake: ...') reading the headword and examples aloud."
     )
-    data: LexiconSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Lookup Query: \"{query_text.strip()}\"", LexiconSchema, temp=0.45)
+    data: LexiconSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Lookup Query: \"{query_text.strip()}\"", LexiconSchema, temp=0.38)
 
-    html_out = (
-        f"<b>Lexicon — {_h(data.headword_or_query or query_text)}</b>\n"
-        f"<code>[{_h(data.corpus_distribution_badge)}]</code>\n\n"
-        f"<b>Syntactic Frame &amp; Polarity</b>\n<code>{_h(data.syntactic_and_prosody_frame)}</code>\n\n"
-        f"<b>Core Senses &amp; Pragmatic Subtext</b>\n{_clean_multiline_bullets(data.core_senses_and_subtext_en)}\n\n"
-        f"<b>Contextual Arabic &amp; Activator (المقابلات السياقية الرصينة)</b>\n{_clean_multiline_bullets(data.contextual_arabic_and_activator)}\n\n"
-        f"<b>Collocation Grid &amp; Spoken Frame</b>\n{_clean_multiline_bullets(data.collocation_grid_and_frames_en)}\n\n"
-        f"<b>Authentic Examples</b>\n{_clean_multiline_bullets(data.authentic_examples_en)}"
+    senses_fmt = _format_unified_senses(data.unified_senses_en_ar)
+    colloc_fmt = _clean_multiline_bullets(data.oxford_collocation_box_en)
+    priming_fmt = _clean_multiline_bullets(data.lexical_priming_and_chunks_en)
+    ladder_fmt = _clean_multiline_bullets(data.register_ladder_and_family_en)
+    traps_fmt = _clean_multiline_bullets(data.common_traps_and_cognitive_hook_en)
+
+    top_card = (
+        f"<b>📖 {_h(data.headword_en_or_ar or query_text)}</b>  <code>{_h(data.ipa_and_spoken_prosody)}</code>\n"
+        f"<code>[{_h(data.grammar_valency_and_coca_badge)}]</code>\n\n"
+        f"{senses_fmt}\n\n"
+        f"<b>📊 Oxford Collocation Box</b>\n{colloc_fmt}\n\n"
+        f"<b>🧠 Lexical Priming &amp; Ready Frames</b>\n{priming_fmt}"
     )
+
+    deep_drawer = (
+        f"<b>🔬 Prosody, Register Ladder, Traps &amp; Origin ▼</b>\n\n"
+        f"<b>🎭 Semantic Prosody &amp; Subtext</b>\n{_fmt_inline_md(data.prosody_and_subtext_en)}\n\n"
+        f"<b>🔄 Register Escalation, Word Family &amp; Antonym</b>\n{ladder_fmt}\n\n"
+        f"<b>⚠️ Common Learner Traps &amp; Cognitive Hook</b>\n{traps_fmt}"
+    )
+
+    full_html = f"{top_card}\n\n<blockquote expandable>{deep_drawer}</blockquote>"
+
     tok = hashlib.md5(f"LEX:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    v_segs = [("Marcus", f"{data.headword_or_query}. {data.authentic_examples_en}")]
+    v_segs = _split_dialogue_segments(data.clean_audio_script_en, "Marcus")
     pdf_d = {
-        "title": f"Lexicon: {data.headword_or_query}",
-        "register": reg,
-        "main_en": f"{data.syntactic_and_prosody_frame}\n\n{data.core_senses_and_subtext_en}",
-        "instant_fix": data.collocation_grid_and_frames_en,
-        "diagnosis_en": data.authentic_examples_en,
-        "ar_anchor": data.contextual_arabic_and_activator,
+        "title": f"Master Lexicon: {data.headword_en_or_ar}",
+        "register": data.grammar_valency_and_coca_badge,
+        "main_en": f"{data.ipa_and_spoken_prosody}\n\n{data.unified_senses_en_ar}",
+        "instant_fix": f"{data.oxford_collocation_box_en}\n\n{data.lexical_priming_and_chunks_en}",
+        "diagnosis_en": f"{data.prosody_and_subtext_en}\n\n{data.register_ladder_and_family_en}\n\n{data.common_traps_and_cognitive_hook_en}",
     }
-    v_items = [(data.headword_or_query or query_text[:60], f"{data.core_senses_and_subtext_en} | {data.contextual_arabic_and_activator}", data.authentic_examples_en)]
-    store_card(tok, user_id, v_segs, pdf_d, v_items, ar_text=data.contextual_arabic_and_activator, source_text=data.headword_or_query or query_text)
-    send_html_safe(chat_id, html_out, reply_markup=build_inline_kb(tok, "lexicon"))
+    v_items = [(data.headword_en_or_ar or query_text[:60], data.unified_senses_en_ar[:320], data.lexical_priming_and_chunks_en[:320])]
+    store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=f"{data.headword_en_or_ar}\n{data.unified_senses_en_ar}")
+    send_html_safe(chat_id, full_html, reply_markup=build_inline_kb(tok, "lexicon"))
+    threading.Thread(target=build_audio, args=(v_segs, False), daemon=True).start()
 
 def execute_lexicon_extension(chat_id: int, user_id: int, term: str, ext_type: str):
+    clean_term = (term or "").splitlines()[0].strip()[:80]
     prompts = {
-        "colloc": f"Provide an expanded Collocation Matrix for '{term}' with each item on a SEPARATE line ('\\n'):\n• Verbs + {term}\n• Adjectives/Nouns + {term}\n• Prepositional frames\n• Complete spoken chunk\n• Complete written chunk (with concise Arabic meanings).",
-        "syn": f"Contrast '{term}' with its 3 closest English synonyms. Put each synonym on a SEPARATE line ('\\n') with **Bold Synonym Name**, exact nuance boundary, natural example, and concise Arabic note. Ensure 100% accurate verb inflections (e.g. 'bandied about', never 'banded about').",
-        "family": f"Provide the complete Word Family & Derivatives (Noun, Verb, Adjective, Adverb, Idiomatic Antonym) for '{term}', putting each part of speech on a SEPARATE line ('\\n') with example and concise Arabic meaning.",
+        "colloc": (
+            f"Build an exhaustive Oxford Collocation & Hoey Lexical Priming Matrix for '{clean_term}' on SEPARATE lines ('\\n'):\n"
+            f"• **1. High-Frequency Verb/Modal Triggers:** (verbs/modals that precede '{clean_term}' with full example + Arabic)\n"
+            f"• **2. Core Noun/Object Collocates:** (nouns paired with '{clean_term}' with full example + Arabic)\n"
+            f"• **3. Adverbial & Prepositional Patterns:** (modifiers and prepositions with full example + Arabic)\n"
+            f"• **4. Colligation & Sentence Position:** (how '{clean_term}' behaves grammatically in clauses—passive/progressive/negative polarity)\n"
+            f"• **5. Three Authentic C1/C2 Corpus Sentences:** (Spoken, Executive, Academic)"
+        ),
+        "syn": (
+            f"Build a Longman Activator / Macmillan Synonym Thesaurus for '{clean_term}' on SEPARATE lines ('\\n'):\n"
+            f"• **1. [Closest Synonym 1]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
+            f"• **2. [Closest Synonym 2]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
+            f"• **3. [C2 Formal/Academic Competitor]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
+            f"• **4. [Spoken/Idiomatic Competitor]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
+            f"• **5. Precision Boundary Test (❌ vs ✅):** sentence where '{clean_term}' works and the synonym fails (and vice versa)."
+        ),
+        "ladder": (
+            f"Build a Complete Morphological Word Family, Register Escalation & Antonym Guide for '{clean_term}' on SEPARATE lines ('\\n'):\n"
+            f"• **1. Casual NYC Spoken Equivalent:** phrasing + full sentence + Arabic.\n"
+            f"• **2. Diplomatic Workplace Equivalent:** phrasing + full sentence + Arabic.\n"
+            f"• **3. C2 Academic / Nominalized Equivalent:** phrasing + full sentence + Arabic.\n"
+            f"• **4. Complete Word Family (Derivatives):** Noun, Verb, Adjective, Adverb forms (or related phrasal/compound forms) with examples.\n"
+            f"• **5. Exact Idiomatic Antonyms:** 2 natural opposites across spoken and formal registers with examples."
+        ),
     }
-    res: LexiconExtraSchema = call_llm_structured(f"{SYS_PROMPT}\n{prompts.get(ext_type, prompts['colloc'])}", f"Target: {term}", LexiconExtraSchema, temp=0.45)
-    send_html_safe(chat_id, f"<b>{_h(res.title_en)} — {_h(term)}</b>\n\n{_clean_multiline_bullets(res.content_bullets_en)}")
+    res: LexiconExtraSchema = call_llm_structured(f"{SYS_PROMPT}\n{prompts.get(ext_type, prompts['colloc'])}", f"Target: {clean_term}", LexiconExtraSchema, temp=0.4)
+    send_html_safe(chat_id, f"<b>{_h(res.title_en)} — {_h(clean_term)}</b>\n\n{_clean_multiline_bullets(res.content_bullets_en)}")
 
 # ------------------------------------------------------------------------------
 # محرك 3: المختبر ثلاثي المسارات (Study: Article Miner / Draft Surgery / Nuance Clinic)
