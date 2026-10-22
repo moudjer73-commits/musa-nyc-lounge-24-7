@@ -14,7 +14,8 @@ import tempfile
 import subprocess
 import threading
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
+
 
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
