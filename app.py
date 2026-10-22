@@ -808,75 +808,158 @@ def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0
 # ------------------------------------------------------------------------------
 # القوالب الرشيقة المعزولة (Lean Modular Schemas)
 # ------------------------------------------------------------------------------
+# ==============================================================================
+# [V24 MASTER ENGINE] — UNIFIED SCHEMAS, ZERO-REDUNDANCY UI & PURE AUDIO/VAULT
+# ==============================================================================
+
+# ترقية منظف الصوت ليضمن عدم نطق أي حرف عربي أو رمز غريب بواسطة المذيعين الإنجليز
+def _clean_tts(raw_text: str) -> str:
+    t = html.unescape(str(raw_text or ""))
+    t = re.sub(r"<[^>]+>", " ", t)
+    # إزالة أي حروف عربية أو رموز تصحيح من النص المرسل لمحرك الصوت الإنجليزي
+    t = re.sub(r"[\u0600-\u06FF]+", " ", t)
+    t = re.sub(r"[❌✅➔→•▪▸🎉🔥💎🎙️🎧🐢📄💾🔍🌳⚖️🧬🔄⛏️🏗️🔬✍️🌉🎓📞🎬📜🏆]", " ", t)
+    t = re.sub(r"\([^)]*\)", " ", t)
+    t = re.sub(r"\[[^\]]*\]", " ", t)
+    t = re.sub(r"\*+|_+|`+|~+", "", t)
+    t = re.sub(r"\b(?:Jake|Chloe|Marcus)\s*:\s*", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+def _split_dialogue_segments(raw_script: str, default_speaker: str = "Chloe") -> List[Tuple[str, str]]:
+    clean = html.unescape(str(raw_script or "")).strip()
+    clean = re.sub(r"\*+\s*(Jake|Chloe|Marcus)\s*\*+\s*:", r"\1:", clean)
+    clean = re.sub(r"(?:^|\n|\s)+(Jake|Chloe|Marcus)\s*:\s*", r"\n\1: ", clean).strip()
+    segs: List[Tuple[str, str]] = []
+    for ln in clean.splitlines():
+        s_ln = ln.strip().lstrip("•-*🎙️ ").strip()
+        if not s_ln:
+            continue
+        m = re.match(r"^(Jake|Chloe|Marcus)\s*:\s*(.+)$", s_ln)
+        if m:
+            spk, spoken = m.group(1), _clean_tts(m.group(2))
+            if len(spoken) > 2:
+                segs.append((spk, spoken))
+        else:
+            spoken = _clean_tts(s_ln)
+            if len(spoken) > 2:
+                segs.append((default_speaker, spoken))
+    return segs if segs else [(default_speaker, _clean_tts(raw_script)[:600])]
+
+def _extract_clean_vault_items(raw_block: str, fallback_context: str = "") -> List[Tuple[str, str, str]]:
+    """فلتر صارم للخزنة: يستخرج فقط العبارات والمصطلحات الإنجليزية النظيفة (2-6 كلمات) مع شرحها ومثالها"""
+    items: List[Tuple[str, str, str]] = []
+    if not raw_block:
+        return items
+    lines = [ln.strip() for ln in str(raw_block).splitlines() if ln.strip()]
+    for idx, ln in enumerate(lines):
+        # التقاط العبارات الموضوعة بين **...** أو بعد ترقيم 1. / 2. أو بعد سهم الترقية ➔
+        cand_term = ""
+        if "➔" in ln or "->" in ln:
+            rhs = re.split(r"➔|->", ln, maxsplit=1)[1]
+            m_b = re.search(r"\*\*(.+?)\*\*", rhs)
+            cand_term = m_b.group(1).strip() if m_b else rhs.split("—")[0].split("(")[0].strip()
+        else:
+            m_b = re.search(r"\*\*(.+?)\*\*", ln)
+            if m_b:
+                cand_term = m_b.group(1).strip()
+            elif re.match(r"^[1-9]\.\s+", ln):
+                cand_term = re.sub(r"^[1-9]\.\s+", "", ln).split("—")[0].split("-")[0].split("[")[0].strip()
+
+        cand_term = re.sub(r"^[1-9]\.\s*", "", cand_term).strip(" •-*'\"`():")
+        # استبعاد العناوين الإدارية أو الجمل الطويلة أو الكلمات العربية
+        words = cand_term.split()
+        if not (1 <= len(words) <= 7) or len(cand_term) > 48:
+            continue
+        if re.search(r"[\u0600-\u06FF]", cand_term):
+            continue
+        if any(bad in cand_term.lower() for bad in ("pattern", "spoken", "written", "fix", "upgrade", "call-in", "sentence", "option", "synonym", "collocation", "literal")):
+            continue
+
+        # جمع المعنى والمثال من نفس السطر أو السطرين التاليين
+        detail_lines = [ln]
+        if idx + 1 < len(lines) and not re.match(r"^[1-9]\.", lines[idx + 1]):
+            detail_lines.append(lines[idx + 1])
+        if idx + 2 < len(lines) and not re.match(r"^[1-9]\.", lines[idx + 2]):
+            detail_lines.append(lines[idx + 2])
+        joined_detail = " | ".join([re.sub(r"\*+", "", x).strip() for x in detail_lines])
+        t_clean, m_clean, c_clean = _clean_vault_entry(cand_term, joined_detail[:240], fallback_context[:220])
+        if t_clean and all(t_clean.lower() != existing[0].lower() for existing in items):
+            items.append((t_clean, m_clean, c_clean))
+    return items[:5]
+
+# ------------------------------------------------------------------------------
+# القوالب اللغوية الموحدة (Pydantic Schemas)
+# ------------------------------------------------------------------------------
 class ChatSchema(BaseModel):
-    primary_speaker: str = Field(default="Chloe", description="MUST be one of the currently ACTIVE hosts in the room! Speak naturally in the first person ('I/me').")
-    primary_reply_en: str = Field(default="", description="Spontaneous, natural, human response (1-3 sentences) directly engaging with what the user said. Speak like a real friend texting—no robotic catchphrases, no forced idioms, no 'studio management/HR' jokes!")
-    second_speaker: str = Field(default="", description="If ONLY 1 host is active in the room, this MUST be ''! If 2 or 3 hosts are active, optionally pick a second ACTIVE host ONLY when a brief reaction or second perspective feels completely natural (otherwise leave '').")
-    second_reply_en: str = Field(default="", description="Leave '' if second_speaker is empty. Otherwise 1 natural sentence from second_speaker.")
-    has_actual_errors: bool = Field(default=False, description="Check ONLY `CURRENT_USER_MESSAGE`. True ONLY for genuine grammar, word-order, uncountable noun ('informations'), preposition ('discuss about', 'depend of', 'explain me'), or lexical ('dominate the language', 'one to one') errors. Note: 'discuss X with Y' is 100% CORRECT! Ignore casual abbreviations ('cuz', 'wanna', 'gonna') and capitalization!")
-    error_corrections_list: str = Field(default="", description="If has_actual_errors is True on `CURRENT_USER_MESSAGE`, write 'wrong phrase -> right phrase'. Leave '' if there are no real errors.")
-    user_line_natural_rephrase_en: str = Field(default="", description="Rewrite the USER'S own message (`CURRENT_USER_MESSAGE`) from the USER'S first-person perspective as a native American speaker would naturally say it. NEVER write the host's answer here! If the user's line is already completely natural, write '✓ Natural as is — or: \"[1 smooth alternative]\"'.")
-    expressions_from_reply_en: str = Field(default="", description="1 or 2 natural expressions or phrasal verbs actually used in the reply on separate lines: • **expression** — clear meaning. 'Natural example sentence.'")
+    primary_speaker: str = Field(default="Chloe", description="MUST be one of the currently ACTIVE hosts in `ACTIVE_HOSTS_IN_ROOM`. Speak naturally in first person ('I/me').")
+    primary_reply_en: str = Field(default="", description="Spontaneous, natural human response (1-3 sentences) directly engaging with what the user said. Speak like a real NYC friend—no sitcom catchphrases, no 'Truth be told / Fair enough', no 'management/HR' jokes!")
+    second_speaker: str = Field(default="", description="MUST be '' if only 1 host is active! If 2 or 3 hosts are active, leave '' on most turns unless a brief 1-sentence chime-in from another ACTIVE host genuinely adds value.")
+    second_reply_en: str = Field(default="", description="Leave '' if second_speaker is empty.")
+    has_actual_errors: bool = Field(default=False, description="Check ONLY `CURRENT_USER_MESSAGE`. True ONLY for genuine grammar, word-order, uncountable noun ('informations'), preposition ('discuss about', 'depend of', 'explain me'), or collocation ('dominate the language', 'one to one') errors. Note: 'discuss X with Y' is 100% CORRECT! Ignore casual texting ('cuz', 'wanna', 'gonna') and capitalization!")
+    error_corrections_list: str = Field(default="", description="If has_actual_errors is True on `CURRENT_USER_MESSAGE`, write 'wrong phrase -> right phrase'. Leave '' if error-free.")
+    user_line_natural_rephrase_en: str = Field(default="", description="How a native American naturally says `CURRENT_USER_MESSAGE` from the USER'S perspective. If already natural, write '✓ Natural as is — or: \"[1 smooth alternative]\"'.")
+    expressions_from_reply_en: str = Field(default="", description="1 or 2 natural expressions actually used in the reply on separate lines: • **expression** — concise meaning (المعنى بالعربية). 'Natural example sentence.'")
 
 class LexiconSchema(BaseModel):
     headword_en_or_ar: str = Field(default="", description="The target English word/phrasal verb/idiom OR Arabic query")
-    ipa_and_spoken_prosody: str = Field(default="", description="American IPA transcription with primary stress mark (e.g. '/ˌθroʊ əˈraʊnd/') + brief connected-speech / linking note (e.g. 'stress falls on AROUND; w-linking between throw and around')")
-    grammar_valency_and_coca_badge: str = Field(default="", description="Explicit dictionary grammar code (e.g. 'Phrasal Verb [T, Separable: throw sth ↔ around]' or 'Noun [U]' or 'Verb [T + obj + into -ing]') + COCA frequency & register profile ('Spoken: ★★★ | Workplace: ★★☆ | Academic: ★☆☆')")
-    unified_senses_en_ar: str = Field(default="", description="Comprehensive breakdown of all core senses (or Register Activator tiers if query is Arabic). For EACH numbered sense, provide:\n1. **Precise English Definition & Tone**\n• المقابل الفصيح والاصطلاحي: [Eloquent contextual Arabic equivalent + idiomatic Arabic expression]\n• Valency Frame: `[exact syntactic pattern]`\n• Spoken Example: \"[Natural 10-14 word spoken NYC sentence]\"\n• Written/Workplace Example: \"[Natural 12-16 word professional/analytical sentence]\"")
-    oxford_collocation_box_en: str = Field(default="", description="Structured Oxford-style Collocation Box on separate lines (adapt to Part of Speech—zero generic filler verbs!):\n• **Object / Noun Partners:** (6 authentic nouns that collocate with it)\n• **Verb / Aux Triggers:** (verbs/modals that naturally precede it, e.g. 'tend to, hesitate to, casually...')\n• **Adverb / Adjective Modifiers:** (5 natural modifiers)\n• **Prepositions & Particles:** (exact prepositional links)")
-    lexical_priming_and_chunks_en: str = Field(default="", description="Hoey's Lexical Priming & Ready Chunks on separate lines:\n• **Colligation & Priming:** (preferred tense/aspect—e.g. progressive '-ing', passive vs active, negative polarity, or sentence position)\n• **Spoken Chunk 1:** \"[Ready-to-use conversational frame]\" (with brief Arabic meaning)\n• **Spoken/Written Chunk 2:** \"[Ready-to-use professional frame]\" (with brief Arabic meaning)")
-    prosody_and_subtext_en: str = Field(default="", description="Semantic Prosody (Positive, Neutral, or Disapproving/Negative aura) + Pragmatic Subtext (what attitude the speaker projects when choosing this expression)")
-    register_ladder_and_family_en: str = Field(default="", description="On separate lines:\n• **Casual Spoken:** [equivalent]\n• **Diplomatic Workplace:** [equivalent]\n• **C2 Academic Prose:** [equivalent]\n• **Word Family & Derivatives:** [Noun / Verb / Adj / Adv forms]\n• **Antonym / Opposite:** [exact idiomatic opposite]")
-    common_traps_and_cognitive_hook_en: str = Field(default="", description="On separate lines:\n• **Grammar/Pronoun Trap:** ❌ [wrong usage, e.g. 'throw around it'] → ✅ [correct usage, e.g. 'throw it around']\n• **Collocation/L1 Arabic Trap:** ❌ [literal/wrong collocation] → ✅ [natural native phrasing]\n• **Cognitive Metaphor Hook:** [1-sentence mental image explaining WHY this idiom/word means what it means]")
-    clean_audio_script_en: str = Field(default="", description="3-turn clean English pronunciation & example script for TTS audio: 'Marcus: [Headword]. [Written example].\nChloe: [Spoken example].\nJake: [Extra conversational chunk].' (100% English, no symbols or Arabic!)")
+    ipa_and_spoken_prosody: str = Field(default="", description="American IPA with stress marks (e.g. '/ˌθroʊ əˈraʊnd/') + brief connected-speech note")
+    grammar_valency_and_coca_badge: str = Field(default="", description="Explicit grammar code (e.g. 'Phrasal Verb [T, Separable: throw sth ↔ around]' or 'Noun [U]') + COCA register frequency ('Spoken: ★★★ | Workplace: ★★☆ | Academic: ★☆☆')")
+    unified_senses_en_ar: str = Field(default="", description="Numbered sense blocks (or Register Activator tiers if query is Arabic). For EACH sense:\n1. **Precise English Definition & Tone**\n• المقابل الفصيح والاصطلاحي: [Eloquent contextual Arabic + idiomatic Arabic]\n• Valency Frame: `[exact syntactic pattern]`\n• Spoken Example: \"[Natural 10-14 word spoken sentence]\"\n• Written Example: \"[Natural 12-16 word executive/academic sentence]\"")
+    oxford_collocation_box_en: str = Field(default="", description="Oxford-style Collocation Box on separate lines:\n• **Object / Noun Partners:** ...\n• **Verb / Modal Triggers:** ...\n• **Adverb / Adjective Modifiers:** ...\n• **Prepositions & Particles:** ...")
+    lexical_priming_and_chunks_en: str = Field(default="", description="Hoey's Lexical Priming & Ready Chunks on separate lines:\n• **Colligation & Priming:** (preferred tense/aspect/polarity/position)\n• **Spoken Frame:** \"[Ready conversational chunk]\" (المعنى)\n• **Executive Frame:** \"[Ready written chunk]\" (المعنى)")
+    prosody_and_subtext_en: str = Field(default="", description="Semantic Prosody (Positive/Neutral/Negative aura) + Pragmatic Subtext")
+    register_ladder_and_family_en: str = Field(default="", description="On separate lines:\n• **Casual Spoken:** [equivalent]\n• **Diplomatic Workplace:** [equivalent]\n• **C2 Academic Prose:** [equivalent]\n• **Word Family:** [Noun/Verb/Adj/Adv forms]\n• **Antonym:** [exact opposite]")
+    common_traps_and_cognitive_hook_en: str = Field(default="", description="On separate lines:\n• **Grammar/Pronoun Trap:** ❌ [wrong] ➔ ✅ [right]\n• **Collocation/L1 Arabic Trap:** ❌ [wrong] ➔ ✅ [right]\n• **Cognitive Metaphor Hook:** [1-sentence mental image explaining why this expression means what it means]")
+    clean_audio_script_en: str = Field(default="", description="3-turn pure English script ('Marcus: ...\nChloe: ...\nJake: ...') pronouncing the headword and reading the examples aloud (NO Arabic or symbols!).")
 
 class LexiconExtraSchema(BaseModel):
-    title_en: str = Field(default="Lexicon Deep Dive", description="Title of deep dive")
-    content_bullets_en: str = Field(default="", description="5-6 rich, detailed bullet blocks separated by newline ('\n'), with bold headings, full example sentences, ❌/✅ boundary checks, and concise Arabic nuances.")
+    title_en: str = Field(default="Synonym Contrast & Nuance Boundaries", description="Title")
+    content_bullets_en: str = Field(default="", description="4-5 detailed blocks on separate lines ('\n') contrasting the term with its closest synonyms, including register, natural examples, Arabic nuances, and a ❌ vs ✅ boundary test.")
 
 class PrecisionEditorSchema(BaseModel):
-    polished_version_en: str = Field(default="", description="Clean, natural, idiomatic polish of the user's draft that preserves their core meaning and intended tone without robotic bloat.")
-    surgical_diffs_en_ar: str = Field(default="", description="Each fix on a separate line: '• ❌ [exact error/weak phrase] ➔ ✅ **[native fix]** — [concise reason + Arabic note if helpful]'. If error-free, write '• ✓ Grammatically solid—see vocabulary upgrades below.'")
-    lexical_upgrades_en_ar: str = Field(default="", description="3 high-impact vocabulary or collocation upgrades from the draft on separate lines: '• [simple word] ➔ **[C1/C2 native verb/chunk]** (المعنى السياقي) — \"[short example]\"'")
-    your_turn_prompt_en: str = Field(default="", description="1-sentence interactive prompt inviting the user to reply right now using one of the upgraded chunks or structures.")
+    polished_version_en: str = Field(default="", description="Clean, natural, idiomatic polish of the user's draft in the active register that keeps their personal voice.")
+    surgical_diffs_en_ar: str = Field(default="", description="Each fix on a separate line: '• ❌ [user phrase] ➔ ✅ **[native fix]** — [concise reason + Arabic note]'. If error-free, write '• ✓ Grammatically solid—see vocabulary upgrades below.'")
+    lexical_upgrades_en_ar: str = Field(default="", description="3 high-impact vocabulary or collocation upgrades on separate lines: '• [simple word] ➔ **[C1/C2 native verb/chunk]** (المعنى السياقي) — \"[short example]\"'")
+    your_turn_prompt_en: str = Field(default="", description="1-sentence challenge inviting the user to reply right now using one of the upgraded chunks.")
 
 class ArabicBridgeSchema(BaseModel):
-    spoken_american_en: str = Field(default="", description="How a native American naturally expresses this Arabic thought aloud in conversation or a meeting (active verbs, natural flow).")
-    executive_written_en: str = Field(default="", description="Crisp, diplomatic workplace/professional written version of this Arabic thought.")
+    spoken_american_en: str = Field(default="", description="How a native American naturally says this Arabic thought aloud in conversation (active verbs, contractions).")
+    executive_written_en: str = Field(default="", description="Crisp, diplomatic workplace written version.")
     c2_academic_prose_en: str = Field(default="", description="Authoritative C2 academic/analytical prose (nominalization, Given-Before-New flow, End-Weight focus).")
-    building_blocks_and_trap_en_ar: str = Field(default="", description="On separate lines:\n• **[Key English Chunk 1]:** [المعنى السياقي وكيفية توظيفه]\n• **[Key English Chunk 2]:** [المعنى السياقي وكيفية توظيفه]\n• ❌ **Literal Translation Trap:** [what Arabic speakers mistakenly write literally] ➔ ✅ **[Native phrasing]**")
-    your_turn_prompt_en: str = Field(default="", description="1-sentence prompt inviting the user to write a follow-up sentence in English using one of the building blocks above.")
+    building_blocks_and_trap_en_ar: str = Field(default="", description="On separate lines:\n• **[English Chunk 1]:** [المعنى السياقي وكيفية توظيفه]\n• **[English Chunk 2]:** [المعنى السياقي وكيفية توظيفه]\n• ❌ **Literal Arabic Calque Trap:** [wrong literal translation] ➔ ✅ **[Native phrasing]**")
+    your_turn_prompt_en: str = Field(default="", description="1-sentence prompt inviting the user to write a sentence in English using one of the building blocks.")
 
 class ModularMinerSchema(BaseModel):
     theme_title_en: str = Field(default="Close-Reading Harvest", description="Short 3-5 word title")
     top_chunks_en_ar: str = Field(default="", description="Top 4 standout idioms, phrasal verbs, or C1/C2 collocations from the text. Format EACH as a numbered block:\n1. **[Exact Expression]** — `[Grammar Frame]`\n• المعنى السياقي: [Eloquent Arabic equivalent]\n• New Example: \"[Fresh 10-14 word sentence on a different topic]\"")
-    your_turn_prompt_en: str = Field(default="", description="1-sentence challenge asking the user to reply with their own sentence using one of the 4 expressions above.")
+    your_turn_prompt_en: str = Field(default="", description="1-sentence challenge asking the user to reply with their own sentence using one of the 4 expressions.")
 
 class TutorLoopSchema(BaseModel):
-    title_en: str = Field(default="Interactive Studio Feedback", description="Short title")
-    direct_feedback_or_answer_en: str = Field(default="", description="If the user is practicing a sentence from the previous Study card: evaluate their sentence, praise what worked, fix any slip-up (❌ ➔ ✅), and show the polished version! If the user asked a linguistic/nuance question: give the direct, authoritative rule with Arabic conceptual anchor.")
-    register_or_nuance_examples_en_ar: str = Field(default="", description="3 sharp bullet points showing Spoken, Professional, and C2 Academic examples (or contrasting the synonyms/structures asked about) with concise Arabic notes.")
-    next_step_challenge_en: str = Field(default="", description="1-sentence follow-up challenge to keep the active learning loop going.")
+    title_en: str = Field(default="Interactive Coaching & Nuance Clinic", description="Short title")
+    direct_feedback_or_answer_en: str = Field(default="", description="If the user is practicing a sentence from the previous card: evaluate their sentence, fix any slip-up (❌ ➔ ✅), and show the polished version! If asking a linguistic question: give the direct rule with Arabic conceptual anchor.")
+    register_or_nuance_examples_en_ar: str = Field(default="", description="3 sharp bullets showing Spoken, Executive, and C2 Academic examples (or contrasting the synonyms/structures asked about) with concise Arabic notes.")
+    next_step_challenge_en: str = Field(default="", description="1-sentence follow-up challenge.")
 
 class DraftShiftSchema(BaseModel):
-    shift_title_en: str = Field(default="Style Transformation", description="Title of transformation")
+    shift_title_en: str = Field(default="Style Transformation", description="Title")
     transformed_text_en: str = Field(default="", description="The rewritten text")
-    key_refinements_en: str = Field(default="", description="3 concise bullets explaining the exact lexical, syntactic, or rhetorical upgrades made (with brief Arabic meanings).")
+    key_refinements_en: str = Field(default="", description="3 concise bullets explaining the lexical, syntactic, or rhetorical upgrades made (with brief Arabic meanings).")
 
 class MoreMinerSchema(BaseModel):
     supplement_title_en: str = Field(default="Deep Harvest", description="Title")
-    new_expressions_en: str = Field(default="", description="3-4 rich blocks separated by blank lines (either 4 brand-new chunks with Arabic & examples, OR 3 C2 sentence skeletons with [Slots] & applied examples, OR Rhetorical & Nominalization analysis).")
+    new_expressions_en: str = Field(default="", description="3-4 rich numbered blocks separated by blank lines.")
 
 class PodcastSchema(BaseModel):
-    episode_title_en: str = Field(default="NYC Studio Roundtable", description="Compelling, podcast-style episode title")
-    episode_summary_and_ear_cue_en: str = Field(default="", description="2 sharp sentences: Sentence 1 sets the scene/conflict of the episode; Sentence 2 tells the listener what specific argument or contrast to listen for in the audio.")
-    script_en: str = Field(default="", description="7-turn natural, unscripted NYC dialogue (Jake, Chloe, Marcus). Put EACH speaker turn on a NEW line starting strictly with 'Jake: ...', 'Chloe: ...', or 'Marcus: ...' (DO NOT put asterisks around speaker names!). Highlight 4 standout idioms/chunks inside the dialogue using **bold**. Zero stage directions in parentheses!")
-    fast_speech_and_chunks_en_ar: str = Field(default="", description="Break down the 4 bolded expressions from script_en as numbered blocks:\n1. **[Exact Expression]** — `[Connected Speech / Stress Guide, e.g. 'gonna hafta / stress on HINGE']`\n• المعنى السياقي: [Eloquent Arabic meaning]\n• Why it works here: [1-line pragmatic note]")
-    on_air_call_in_question_en: str = Field(default="", description="Direct, thought-provoking question from the hosts inviting the listener (by name) to call in with a voice note or text reply.")
+    episode_title_en: str = Field(default="NYC Studio Roundtable", description="Compelling podcast episode title")
+    episode_summary_and_ear_cue_en: str = Field(default="", description="2 sharp sentences setting up the core tension of the episode and what contrast to listen for.")
+    script_en: str = Field(default="", description="6-7 rich, natural NYC podcast turns. CRITICAL SPOKEN RULES:\n1) Each turn MUST be 2-3 natural spoken sentences.\n2) ALWAYS use natural spoken contractions ('it's', 'can't', 'don't', 'we've', 'there's', 'you're'—NEVER robotic 'it is not', 'you cannot'!).\n3) Match vocabulary to the active register.\n4) Ban cliché agreement openers ('Spot on', 'Exactly', 'True, but'). Have hosts challenge each other with concrete examples!\n5) Highlight 4 high-value idioms/phrasal verbs in **bold** inside the dialogue.")
+    fast_speech_and_chunks_en_ar: str = Field(default="", description="Break down the 4 bolded high-value idioms/phrasal verbs from script_en. Format EACH as a numbered block:\n1. **[Exact Expression]** — `[Real American Connected-Speech Guide: explain actual Flap-T, consonant linking, dropped 'g', or schwa /ə/ reduction—NEVER write hyphenated spelling like 'draw-the-line'!]`\n• المعنى السياقي: [Eloquent contextual Arabic meaning]\n• Pragmatic Subtext: [Why the speaker chose this exact chunk here]")
+    on_air_call_in_question_en: str = Field(default="", description="Direct question inviting Musa to share his own perspective from his real life/work (NEVER assume Musa lives in New York!).")
 
 class PodcastCallInSchema(BaseModel):
-    on_air_host_response_en: str = Field(default="", description="2-host live studio reaction to the user's call-in comment (e.g. 'Chloe: ...\nMarcus: ...'), welcoming their point on air, engaging with their idea, and asking a sharp follow-up.")
-    call_in_language_polish_en_ar: str = Field(default="", description="On separate lines:\n• **Your Call-In Polished (Broadcast-Ready):** '[Natural native upgrade of what the user said]'\n• **Fixes / Upgrades:** [Any ❌ ➔ ✅ grammar/collocation fix, or '✓ Spot-on delivery!']\n• **Power Chunk from Hosts:** **[expression]** — [Arabic meaning]")
+    on_air_host_response_en: str = Field(default="", description="2-host live studio reaction to Musa's call-in ('Chloe: ...\nMarcus: ...'), engaging deeply with his point using natural contractions and spoken rhythm.")
+    call_in_language_polish_en_ar: str = Field(default="", description="On separate lines:\n• **Your Call-In Polished:** '[Natural native upgrade of what Musa said]'\n• **Fixes / Upgrades:** [Any ❌ ➔ ✅ fix, or '✓ Spot-on delivery!']\n• **Host Power Chunk:** **[expression]** — [Arabic meaning]")
 
 class QuizSchema(BaseModel):
     quiz_mode_badge_en: str = Field(default="Collocation & Valency Precision", description="Exact badge for the drill mode")
@@ -887,42 +970,38 @@ class QuizSchema(BaseModel):
     option_d: str = Field(default="", description="Option D")
     correct_letter: str = Field(default="B", description="'A', 'B', 'C', or 'D'")
     winning_reason_en_ar: str = Field(default="", description="Why the correct option wins (exact collocation, syntactic frame, register fit, and eloquent Arabic meaning).")
-    distractor_anatomy_en: str = Field(default="", description="Explain briefly on separate lines why EACH of the other 3 options fails (e.g. '• Option A: fails because...\n• Option C: wrong preposition...').")
+    distractor_anatomy_en: str = Field(default="", description="Explain briefly on separate lines why EACH of the other 3 options fails.")
     complete_native_sentence_en: str = Field(default="", description="The complete, final winning sentence written out cleanly so it can be read aloud by TTS audio.")
     target_expression_en: str = Field(default="", description="The core 2-5 word winning expression or collocation to save/lookup.")
-    active_production_prompt_en: str = Field(default="", description="A 1-sentence challenge inviting the user to type or speak their OWN sentence using `target_expression_en`.")
 
 class ActiveQuizEvalSchema(BaseModel):
-    evaluation_and_score_en: str = Field(default="", description="Direct assessment of the user's sentence (e.g. '9/10 — Natural & accurate!' or '7/10 — Good idea, small preposition slip') + exact explanation.")
+    evaluation_and_score_en: str = Field(default="", description="Direct assessment of the user's sentence (e.g. '9/10 — Natural & accurate!') + concise explanation.")
     surgical_fix_and_model_en_ar: str = Field(default="", description="On separate lines:\n• **Your Sentence Polished:** '[100% natural native version]'\n• **Fix / Nuance:** [❌ ➔ ✅ or why it works + Arabic note]\n• **Bonus C2 Variation:** '[High-level executive/academic version]'")
 
+# ------------------------------------------------------------------------------
+# الدستور اللغوي العام (System Prompt)
+# ------------------------------------------------------------------------------
 SYS_PROMPT = """
-You are the engine of 'Musa’s NYC Lounge'. In Chat mode, you portray real, intelligent New York friends (Chloe, Jake, Marcus) chatting naturally with Musa:
+You are the linguistic engine of 'Musa’s NYC Lounge', an elite American English studio.
+In Chat and Podcast modes, you portray three sharp New York friends:
 - Chloe: perceptive, warm, articulate media strategist in Manhattan.
 - Jake: straightforward, witty, pragmatic product lead in Brooklyn.
 - Marcus: calm, thoughtful strategy & policy thinker.
 
-STRICT NATURALNESS LAWS:
-1. SPEAK LIKE REAL HUMANS, NOT SITCOM ACTORS OR AI BOTS:
-   - Use effortless, everyday American English. Do NOT try to force idioms into every sentence.
-   - BANNED PHRASES: Never say 'Truth be told', 'Fair enough', 'Management chose to', 'I hear you', 'That makes total sense', or 'Let's unpack that'.
-   - NEVER pretend you are 'employees on a shift' or talk about 'HR/Management/compliance'. You are simply friends hanging out in a chat!
-   - If the user asks a language, meaning, or life question in Chat, answer it directly, naturally, and insightfully like a sharp friend.
-
-2. STRICTLY OBEY THE ACTIVE ROOM ROSTER:
-   - You will be given `ACTIVE_HOSTS_IN_ROOM` (1, 2, or 3 names).
-   - ONLY characters listed in `ACTIVE_HOSTS_IN_ROOM` are present! Anyone not listed is NOT in the chat and must NEVER speak or be spoken for.
-
+STRICT LAWS:
+1. NATURAL HUMAN ENGLISH & ZERO CLICHÉS:
+   - Never use 'Truth be told', 'Fair enough', 'Management chose to', 'Spot on', 'I hear you', 'That makes total sense', or 'Let's unpack that'.
+   - Never pretend you are employees on a shift or mention HR/management.
+   - In Spoken dialogue (Chat & Podcast), always use natural spoken contractions ('it's', 'can't', 'don't', 'we've', 'there's').
+2. OBEY THE ACTIVE ROOM ROSTER:
+   - In Chat mode, ONLY characters listed in `ACTIVE_HOSTS_IN_ROOM` may speak.
 3. SURGICAL ERROR CHECK (CURRENT MESSAGE ONLY):
-   - Evaluate ONLY `CURRENT_USER_MESSAGE`. Never repeat corrections from earlier messages.
-   - Ignore casual texting ('cuz', 'wanna', 'gonna'), missing punctuation, or lowercase names ('chloe', 'jake').
+   - Evaluate ONLY `CURRENT_USER_MESSAGE`. Ignore casual texting ('cuz', 'wanna', 'gonna') and capitalization.
    - 'discuss [something] with [someone]' is 100% CORRECT—only flag 'discuss about'.
-
-4. 100% ENGLISH IN CHAT/STUDY/PODCAST/QUIZ, CONTEXTUAL ARABIC ONLY IN LEXICON.
 """
 
 # ------------------------------------------------------------------------------
-# إدارة الحضور الديناميكي في الغرفة (1 أو 2 أو 3 شخصيات بحرية كاملة)
+# إدارة الحضور الديناميكي في الشات (1 أو 2 أو 3 شخصيات)
 # ------------------------------------------------------------------------------
 ALL_HOSTS = ["Chloe", "Jake", "Marcus"]
 
@@ -932,10 +1011,6 @@ def _get_active_roster(user_id: int) -> List[str]:
         names = [x.strip() for x in sub.replace("ROSTER:", "").split(",") if x.strip() in ALL_HOSTS]
         if names:
             return names
-    elif sub.startswith("SOLO:"):
-        h = sub.replace("SOLO:", "").strip()
-        if h in ALL_HOSTS:
-            return [h]
     return ["Chloe", "Jake", "Marcus"]
 
 def _set_active_roster(user_id: int, hosts: List[str]) -> List[str]:
@@ -946,31 +1021,24 @@ def _set_active_roster(user_id: int, hosts: List[str]) -> List[str]:
     return valid
 
 def _update_roster_from_text(user_id: int, user_text: str) -> List[str]:
-    """فهم أوامر المستخدم النصية لإدخال أو إخراج أي شخصية (1 أو 2 أو 3) تلقائياً"""
     roster = list(_get_active_roster(user_id))
     low = user_text.lower()
     mentioned = [h for h in ALL_HOSTS if h.lower() in low]
 
-    # 1. طلب الانفراد بشخص أو شخصين ("only talk to Chloe", "leave us alone", "one-on-one with Chloe")
     if any(p in low for p in ("only wanna talk to", "only want to talk to", "just wanna talk to", "just want to talk to", "leave us alone", "one-on-one", "one to one", "talk to just one", "alone with")):
-        if mentioned:
-            return _set_active_roster(user_id, mentioned)
-        return _set_active_roster(user_id, [roster[0]])
+        return _set_active_roster(user_id, mentioned if mentioned else [roster[0]])
 
-    # 2. طرد أو إسكات شخص محدد ("shut up Marcus", "take Marcus away", "don't butt in Jake", "get out Jake")
     if any(p in low for p in ("shut up", "take him away", "take marcus away", "take jake away", "don't butt in", "dont butt in", "don't but in", "get out", "leave the chat", "go away", "kick out")):
         if mentioned:
             new_r = [h for h in roster if h not in mentioned]
             return _set_active_roster(user_id, new_r if new_r else ["Chloe"])
 
-    # 3. استدعاء شخص غائب إلى المحادثة ("bring Marcus", "where is Marcus", "Marcus come here", "Marcus are you there", "call Jake")
     if any(p in low for p in ("where is", "where's", "bring him", "bring marcus", "bring jake", "bring chloe", "come here", "are you there", "what about you", "join us", "call marcus", "call jake")):
         for m in mentioned:
             if m not in roster:
                 roster.append(m)
         return _set_active_roster(user_id, roster)
 
-    # 4. إذا خاطب المستخدم اسماً غير موجود حالياً في الغرفة بشكل مباشر وموجب، نضيفه تلقائياً
     if len(mentioned) == 1 and mentioned[0] not in roster and not any(x in low for x in ("not ", "don't", "dont", "without")):
         roster.append(mentioned[0])
         return _set_active_roster(user_id, roster)
@@ -978,7 +1046,7 @@ def _update_roster_from_text(user_id: int, user_text: str) -> List[str]:
     return roster
 
 # ------------------------------------------------------------------------------
-# بناء لوحات المفاتيح وأزرار الحضور المرنة (🟢 / ⚪) بدون Roleplay وبدون Spark
+# لوحات المفاتيح الرشيقة والخالية من أي تكرار (Zero-Redundancy Keyboards)
 # ------------------------------------------------------------------------------
 def build_reply_kb(user_id: int) -> types.ReplyKeyboardMarkup:
     s = _get_session(user_id)
@@ -988,6 +1056,8 @@ def build_reply_kb(user_id: int) -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("Casual •" if r == "Casual" else "Casual"),
         types.KeyboardButton("Professional •" if r == "Professional" else "Professional"),
         types.KeyboardButton("Formal •" if r == "Formal" else "Formal"),
+        types.KeyboardButton("💎 Vault"),
+        types.KeyboardButton("📡 Radar"),
     )
     kb.row(
         types.KeyboardButton("Chat •" if m == "CHAT" else "Chat"),
@@ -1002,48 +1072,35 @@ def _extract_lookup_terms(vault_items: List[Tuple[str, str, str]]) -> List[str]:
     terms = []
     for it in (vault_items or [])[:2]:
         if it and it[0]:
-            t, _, _ = _clean_vault_entry(it[0], "", "")
+            t = it[0].strip()
             if 2 <= len(t) <= 32 and t not in terms:
                 terms.append(t)
     return terms
 
 def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[str]] = None, roster: Optional[List[str]] = None) -> types.InlineKeyboardMarkup:
     kb = types.InlineKeyboardMarkup()
+    l_terms = (lookup_terms or [])[:2]
+
     if ctype == "chat":
         active_r = roster if roster else ["Chloe", "Jake", "Marcus"]
-        kb.row(
-            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("📖 Lexicon", callback_data=f"edlexcard:{tok}"),
+        # الصف الأول: اختيار حر لمن في الغرفة (1 أو 2 أو 3)
+        kb.row(*[types.InlineKeyboardButton(f"{'🟢' if h in active_r else '⚪'} {h}", callback_data=f"edroster:{h}:{tok}") for h in ALL_HOSTS])
+        # الصف الثاني: استماع + حفظ + فحص مباشر للعبارات المذكورة بدون أي أزرار مكررة
+        row2 = [
+            types.InlineKeyboardButton("🎧 Voice", callback_data=f"edtts:1x:{tok}"),
             types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-        )
-        # شريط التحكم الحر في الشخصيات (اضغط على أي شخصية لإدخالها 🟢 أو إخراجها ⚪، سواء 1 أو 2 أو 3)
-        kb.row(
-            *[
-                types.InlineKeyboardButton(
-                    f"{'🟢' if h in active_r else '⚪'} {h}",
-                    callback_data=f"edroster:{h}:{tok}",
-                )
-                for h in ALL_HOSTS
-            ]
-        )
-        if lookup_terms:
-            btns = [types.InlineKeyboardButton(f"🔍 {t[:22]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(lookup_terms[:2])]
-            kb.row(*btns)
+        ]
+        for i, t in enumerate(l_terms[:2]):
+            row2.append(types.InlineKeyboardButton(f"🔍 {t[:18]}", callback_data=f"edqlk:{i}:{tok}"))
+        kb.row(*row2)
         return kb
 
     if ctype == "lexicon":
+        # البطاقة تحتوي بالفعل على المتلازمات وسُلّم المستويات والمشتقات؛ لذا نضع 4 أزرار غير مكررة فقط!
         kb.row(
-            types.InlineKeyboardButton("🎧 Pronounce & Examples", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("🐢 Slow 0.85x", callback_data=f"edtts:slow:{tok}"),
-            types.InlineKeyboardButton("📄 PDF", callback_data=f"edpdf:{tok}"),
-        )
-        kb.row(
-            types.InlineKeyboardButton("📊 Full Collocations", callback_data=f"edlexext:colloc:{tok}"),
-            types.InlineKeyboardButton("⚖️ Synonym Thesaurus", callback_data=f"edlexext:syn:{tok}"),
-        )
-        kb.row(
-            types.InlineKeyboardButton("🔄 Register & Family", callback_data=f"edlexext:ladder:{tok}"),
-            types.InlineKeyboardButton("🎯 Practice Drill", callback_data=f"edqztext:{tok}"),
+            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
+            types.InlineKeyboardButton("⚖️ Synonym Contrast", callback_data=f"edlexext:syn:{tok}"),
+            types.InlineKeyboardButton("🎯 Drill Word", callback_data=f"edqztext:{tok}"),
             types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
         )
         return kb
@@ -1052,43 +1109,52 @@ def build_inline_kb(tok: str, ctype: str = "chat", lookup_terms: Optional[List[s
         kb.row(
             types.InlineKeyboardButton("🎙️ Spoken", callback_data=f"edshift:spoken:{tok}"),
             types.InlineKeyboardButton("💼 Executive", callback_data=f"edshift:soften:{tok}"),
-            types.InlineKeyboardButton("🏛️ C2 Academic", callback_data=f"edshift:c2:{tok}"),
+            types.InlineKeyboardButton("🏛️ C2 Prose", callback_data=f"edshift:c2:{tok}"),
             types.InlineKeyboardButton("⚡ Tighten", callback_data=f"edshift:condense:{tok}"),
         )
-        kb.row(
+        row2 = [
             types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("🎯 Quiz Fixes", callback_data=f"edqztext:{tok}"),
-            types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-            types.InlineKeyboardButton("⛏️ Mine Instead", callback_data=f"edrecast:miner:{tok}"),
-        )
-    elif ctype == "bridge":
-        kb.row(
+            types.InlineKeyboardButton("💾 Save Upgrades", callback_data=f"edsave:{tok}"),
+        ]
+        for i, t in enumerate(l_terms[:2]):
+            row2.append(types.InlineKeyboardButton(f"🔍 {t[:18]}", callback_data=f"edqlk:{i}:{tok}"))
+        kb.row(*row2)
+        return kb
+
+    if ctype == "bridge":
+        row1 = [
             types.InlineKeyboardButton("🎧 Listen All 3", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("🐢 Slow 0.85x", callback_data=f"edtts:slow:{tok}"),
-            types.InlineKeyboardButton("💾 Save Chunks", callback_data=f"edsave:{tok}"),
-        )
-    elif ctype == "miner":
+            types.InlineKeyboardButton("💾 Save Blocks", callback_data=f"edsave:{tok}"),
+        ]
+        for i, t in enumerate(l_terms[:2]):
+            row1.append(types.InlineKeyboardButton(f"🔍 {t[:18]}", callback_data=f"edqlk:{i}:{tok}"))
+        kb.row(*row1)
+        return kb
+
+    if ctype == "miner":
         kb.row(
             types.InlineKeyboardButton("🏗️ C2 Templates", callback_data=f"edmore:skel:{tok}"),
             types.InlineKeyboardButton("🔬 Rhetoric & Flow", callback_data=f"edmore:rhet:{tok}"),
             types.InlineKeyboardButton("⛏️ Next 4 Chunks", callback_data=f"edmore:chunks:{tok}"),
         )
-        kb.row(
-            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("🎯 Cloze Quiz", callback_data=f"edqztext:{tok}"),
+        row2 = [
+            types.InlineKeyboardButton("🎯 Quiz Text", callback_data=f"edqztext:{tok}"),
             types.InlineKeyboardButton("💾 Save All", callback_data=f"edsave:{tok}"),
-            types.InlineKeyboardButton("✍️ Edit as Draft", callback_data=f"edrecast:draft:{tok}"),
-        )
-    else:
-        kb.row(
-            types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
-            types.InlineKeyboardButton("🎯 Practice Quiz", callback_data=f"edqztext:{tok}"),
-            types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-        )
-    if lookup_terms and ctype in ("study", "miner", "draft", "bridge", "clinic"):
-        btns = [types.InlineKeyboardButton(f"🔍 {t[:24]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(lookup_terms[:2])]
-        if btns:
-            kb.row(*btns)
+        ]
+        for i, t in enumerate(l_terms[:2]):
+            row2.append(types.InlineKeyboardButton(f"🔍 {t[:18]}", callback_data=f"edqlk:{i}:{tok}"))
+        kb.row(*row2)
+        return kb
+
+    # clinic
+    row_c = [
+        types.InlineKeyboardButton("🎧 Listen", callback_data=f"edtts:1x:{tok}"),
+        types.InlineKeyboardButton("🎯 Quick Drill", callback_data=f"edqztext:{tok}"),
+        types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
+    ]
+    for i, t in enumerate(l_terms[:1]):
+        row_c.append(types.InlineKeyboardButton(f"🔍 {t[:18]}", callback_data=f"edqlk:{i}:{tok}"))
+    kb.row(*row_c)
     return kb
 
 def send_html_safe(chat_id: int, html_text: str, reply_markup: Any = None):
@@ -1112,8 +1178,8 @@ def _fmt_fixes(raw: str, strike: bool = True) -> str:
         cl = re.sub(r"\*+", "", ln).strip().lstrip("•-*").strip()
         if not cl:
             continue
-        if "->" in cl or "→" in cl:
-            pts = re.split(r"->|→", cl, maxsplit=1)
+        if "->" in cl or "→" in cl or "➔" in cl:
+            pts = re.split(r"->|→|➔", cl, maxsplit=1)
             l, r = _h(pts[0].strip("~❌ ")), _h(pts[1].strip("✅ "))
             if l.lower() == r.lower() or l.lower() in ("cuz", "wanna", "gonna") or ("discuss with" in l.lower() and "discuss" == r.lower()):
                 continue
@@ -1123,8 +1189,29 @@ def _fmt_fixes(raw: str, strike: bool = True) -> str:
             out.append(f"• {_h(cl)}")
     return "\n".join(out)
 
+def _format_unified_senses(raw_senses: str) -> str:
+    txt = html.unescape(str(raw_senses or "")).strip()
+    if not txt:
+        return ""
+    txt = re.sub(r"(?<!^)\s*(?=[1-9]\.\s+\*?\*?[A-Za-z\u0600-\u06FF\"\'\[])", "\n\n", txt)
+    txt = re.sub(r"\s*(•|\u2022)\s*", "\n• ", txt)
+    out_lines = []
+    for ln in txt.splitlines():
+        cl = ln.strip()
+        if not cl:
+            if out_lines and out_lines[-1] != "":
+                out_lines.append("")
+            continue
+        if re.match(r"^[1-9]\.", cl):
+            clean_hdr = re.sub(r"\*+", "", cl)
+            out_lines.append(f"<b>{_fmt_inline_md(clean_hdr)}</b>")
+        else:
+            cl_b = cl.lstrip("•-* ").strip()
+            out_lines.append(f"• {_fmt_inline_md(cl_b)}")
+    return "\n".join(out_lines).strip()
+
 # ------------------------------------------------------------------------------
-# محرك 1: الدردشة الحرة الطبيعية (1 أو 2 أو 3 شخصيات بعفوية كاملة)
+# محرك 1: الدردشة الحرة الطبيعية (Chat — 1, 2, or 3 Friends)
 # ------------------------------------------------------------------------------
 def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool = False, special_angle: str = "", user_first_name: str = "Musa") -> ChatSchema:
     s = _get_session(user_id)
@@ -1135,34 +1222,21 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
     for h in s["history"][-5:]:
         if isinstance(h, dict):
             b_clean = h.get("b", "")
-            if "management chose to" not in b_clean.lower():
+            if not str(h.get("u", "")).startswith("[STUDY"):
                 hist_lines.append(f"User: {h.get('u','')[:90]} | Reply: {b_clean[:150]}")
     hist_str = "\n".join(hist_lines)
 
     if len(active_roster) == 1:
-        roster_rule = (
-            f"ACTIVE_HOSTS_IN_ROOM: [{active_roster[0]}] (1-on-1 private chat).\n"
-            f"`primary_speaker` MUST be '{active_roster[0]}', and `second_speaker` MUST be '' (empty). Do NOT mention the other hosts unless asked!"
-        )
+        roster_rule = f"ACTIVE_HOSTS_IN_ROOM: [{active_roster[0]}] (1-on-1 private chat). `primary_speaker` MUST be '{active_roster[0]}', and `second_speaker` MUST be ''!"
     elif len(active_roster) == 2:
-        roster_rule = (
-            f"ACTIVE_HOSTS_IN_ROOM: [{active_roster[0]}, {active_roster[1]}] (2-person room; the third friend is NOT here).\n"
-            f"`primary_speaker` MUST be either '{active_roster[0]}' or '{active_roster[1]}'. `second_speaker` can be '' or the other active host from [{active_roster[0]}, {active_roster[1]}] ONLY."
-        )
+        roster_rule = f"ACTIVE_HOSTS_IN_ROOM: [{active_roster[0]}, {active_roster[1]}] (2-person room). Only '{active_roster[0]}' or '{active_roster[1]}' may speak."
     else:
-        roster_rule = (
-            "ACTIVE_HOSTS_IN_ROOM: [Chloe, Jake, Marcus] (all 3 friends are in the chat).\n"
-            "Pick the most relevant `primary_speaker`. Leave `second_speaker` as '' unless a brief 1-line reaction from another host genuinely adds to the conversation."
-        )
+        roster_rule = "ACTIVE_HOSTS_IN_ROOM: [Chloe, Jake, Marcus]. Pick the most relevant `primary_speaker`. Leave `second_speaker` as '' unless a brief 1-line reaction from another host genuinely adds value."
 
     sys_p = f"{SYS_PROMPT}\nActive Register: {reg}. User's name: {user_first_name}.\n{roster_rule}"
-    usr_p = (
-        f"Recent Context (for continuity only—do NOT re-correct old lines):\n{hist_str}\n\n"
-        f"CURRENT_USER_MESSAGE:\n\"{user_text}\""
-    )
+    usr_p = f"Recent Context (do NOT re-correct old lines):\n{hist_str}\n\nCURRENT_USER_MESSAGE:\n\"{user_text}\""
     data: ChatSchema = call_llm_structured(sys_p, usr_p, ChatSchema, temp=0.62)
 
-    # فرض صارم في الكود لقائمة الحضور النشطة (يستحيل أن يتحدث شخص خارج القائمة النشطة)
     p_spk = data.primary_speaker if data.primary_speaker in active_roster else active_roster[0]
     if len(active_roster) == 1:
         s_spk, s_bub = "", ""
@@ -1192,34 +1266,18 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
     clean_chunks = _clean_multiline_bullets(data.expressions_from_reply_en)
     echo_drawer = (
         f"<b>💡 Native Echo ▼</b>\n"
-        f"• <b>Your line, natural NYC:</b> <i>\"{_fmt_inline_md(data.user_line_natural_rephrase_en)}\"</i>"
+        f"• <b>Your line, natural NYC:</b> <i>&quot;{_fmt_inline_md(data.user_line_natural_rephrase_en)}&quot;</i>"
         + (f"\n{clean_chunks}" if clean_chunks else "")
     )
 
     tok = hashlib.md5(f"CHT:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    v_segs = [(p_spk, p_bub)] + ([(s_spk, s_bub)] if s_spk and s_bub else [])
-    pdf_d = {
-        "title": "NYC Lounge Conversation",
-        "register": reg,
-        "main_en": combined_diag,
-        "instant_fix": data.error_corrections_list,
-        "diagnosis_en": data.expressions_from_reply_en,
-        "spoken_inf": data.user_line_natural_rephrase_en,
-        "spoken_semi": p_bub,
-        "written_form": s_bub or p_bub,
-    }
-    v_items = []
-    for ln in data.expressions_from_reply_en.splitlines():
-        if len(ln.strip()) > 6:
-            t_c, d_c, _ = _clean_vault_entry(ln, "", combined_diag)
-            if t_c:
-                v_items.append((t_c, d_c, combined_diag))
+    v_segs = [(p_spk, _clean_tts(p_bub))] + ([(s_spk, _clean_tts(s_bub))] if s_spk and s_bub else [])
+    v_items = _extract_clean_vault_items(data.expressions_from_reply_en, combined_diag)
 
-    store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_text)
-    l_terms = _extract_lookup_terms(v_items)
-    kb_markup = build_inline_kb(tok, "chat", l_terms, roster=active_roster)
+    store_card(tok, user_id, v_segs, {"title": "NYC Lounge Chat", "register": reg, "main_en": combined_diag}, v_items, source_text=user_text)
+    kb_markup = build_inline_kb(tok, "chat", _extract_lookup_terms(v_items), roster=active_roster)
 
-    v_hdr = f"🎙️ <i>\"{_h(user_text)}\"</i>\n\n" if is_voice else ""
+    v_hdr = f"🎙️ <i>&quot;{_h(user_text)}&quot;</i>\n\n" if is_voice else ""
     body_dialogue = f"<b>{_h(p_spk)}</b>\n{_fmt_inline_md(p_bub)}"
     if s_spk and s_bub:
         body_dialogue += f"\n\n<b>{_h(s_spk)}</b>\n{_fmt_inline_md(s_bub)}"
@@ -1229,10 +1287,6 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
 
     if is_voice and os.environ.get("LIVE_SELF_TEST") != "1":
         def _auto_voice():
-            try:
-                bot.send_chat_action(chat_id, "record_voice")
-            except Exception:
-                pass
             mp3 = build_audio(v_segs, slow=False)
             if mp3 and os.path.exists(mp3):
                 with open(mp3, "rb") as af:
@@ -1245,43 +1299,20 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
     return data
 
 # ------------------------------------------------------------------------------
-# محرك 2: الموسوعة المعجمية الشاملة ذات الأركان العشرة (10-Pillar Master Lexicon)
+# محرك 2: الموسوعة المعجمية الشاملة (10-Pillar Master Lexicon)
 # ------------------------------------------------------------------------------
-def _format_unified_senses(raw_senses: str) -> str:
-    txt = html.unescape(str(raw_senses or "")).strip()
-    if not txt:
-        return ""
-    txt = re.sub(r"(?<!^)\s*(?=[1-9]\.\s+\*?\*?[A-Z\u0600-\u06FF])", "\n\n", txt)
-    txt = re.sub(r"\s*(•|\u2022)\s*", "\n• ", txt)
-    out_lines = []
-    for ln in txt.splitlines():
-        cl = ln.strip()
-        if not cl:
-            if out_lines and out_lines[-1] != "":
-                out_lines.append("")
-            continue
-        if re.match(r"^[1-9]\.", cl):
-            clean_hdr = re.sub(r"\*+", "", cl)
-            out_lines.append(f"<b>{_h(clean_hdr)}</b>")
-        else:
-            cl_b = cl.lstrip("•-* ").strip()
-            out_lines.append(f"• {_fmt_inline_md(cl_b)}")
-    return "\n".join(out_lines).strip()
-
 def execute_lexicon_lookup(chat_id: int, user_id: int, query_text: str):
     reg = _get_session(user_id)["register"]
     task = (
-        "MASTER 10-PILLAR LEARNER'S DICTIONARY, COLLOCATION & PRIMING ENGINE (Longman DOCE + Oxford Collocations + Hoey's Lexical Priming + Activator):\n"
-        "Fill EVERY single field thoroughly with deep linguistic precision:\n"
-        "1. `ipa_and_spoken_prosody`: American IPA with stress marks + how it links/reduces in fast American speech.\n"
-        "2. `grammar_valency_and_coca_badge`: Exact grammar & separability code (e.g. 'Phrasal Verb [T, Separable: throw sth ↔ around]') + COCA frequency stars across Spoken, Workplace, Academic.\n"
-        "3. `unified_senses_en_ar`: Numbered sense blocks. Each block MUST contain: English definition & tone, المقابل الفصيح والاصطلاحي (MSA + idiomatic Arabic), Valency Frame, 1 Spoken Example, and 1 Written/Workplace Example. (If query is Arabic, make each numbered block a Register Activator tier: 1. Spoken/Idiomatic, 2. Diplomatic Workplace, 3. C2 Academic/Analytical).\n"
-        "4. `oxford_collocation_box_en`: 4 distinct lines: Object/Noun Partners, Verb/Modal Triggers, Adverb/Adjective Modifiers, and Prepositions.\n"
-        "5. `lexical_priming_and_chunks_en`: Hoey's Colligation (preferred tense/aspect/polarity/sentence position) + 2 ready-to-use conversational/professional frames with Arabic meanings.\n"
-        "6. `prosody_and_subtext_en`: Semantic Prosody (Positive/Neutral/Negative aura) + Pragmatic Subtext.\n"
-        "7. `register_ladder_and_family_en`: Casual Spoken -> Diplomatic Workplace -> C2 Academic Prose + Word Family derivatives + Antonym.\n"
-        "8. `common_traps_and_cognitive_hook_en`: ❌ Wrong vs ✅ Right grammar/pronoun/collocation traps + L1 Arabic calque warning + Cognitive Metaphor Hook (why the expression means what it means).\n"
-        "9. `clean_audio_script_en`: 3-turn English-only script ('Marcus: ...\\nChloe: ...\\nJake: ...') reading the headword and examples aloud."
+        "MASTER 10-PILLAR LEARNER'S DICTIONARY, COLLOCATION & PRIMING ENGINE:\n"
+        "Fill every field thoroughly:\n"
+        "1. `ipa_and_spoken_prosody`: American IPA with stress marks + connected-speech linking.\n"
+        "2. `grammar_valency_and_coca_badge`: Exact grammar & separability code + COCA register stars.\n"
+        "3. `unified_senses_en_ar`: Numbered sense blocks (Definition, المقابل الفصيح والاصطلاحي, Valency Frame, Spoken Example, Written Example). If query is Arabic, provide 3 Register Activator blocks (1. Spoken NYC, 2. Workplace, 3. C2 Academic).\n"
+        "4. `oxford_collocation_box_en`: Object/Noun Partners, Verb/Modal Triggers, Adverb/Adjective Modifiers, Prepositions.\n"
+        "5. `lexical_priming_and_chunks_en`: Hoey's Colligation + 2 ready frames with Arabic.\n"
+        "6. `prosody_and_subtext_en` + `register_ladder_and_family_en` + `common_traps_and_cognitive_hook_en`.\n"
+        "7. `clean_audio_script_en`: 3-turn pure English script reading the headword and examples aloud."
     )
     data: LexiconSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Lookup Query: \"{query_text.strip()}\"", LexiconSchema, temp=0.38)
 
@@ -1298,83 +1329,48 @@ def execute_lexicon_lookup(chat_id: int, user_id: int, query_text: str):
         f"<b>📊 Oxford Collocation Box</b>\n{colloc_fmt}\n\n"
         f"<b>🧠 Lexical Priming &amp; Ready Frames</b>\n{priming_fmt}"
     )
-
     deep_drawer = (
-        f"<b>🔬 Prosody, Register Ladder, Traps &amp; Origin ▼</b>\n\n"
-        f"<b>🎭 Semantic Prosody &amp; Subtext</b>\n{_fmt_inline_md(data.prosody_and_subtext_en)}\n\n"
-        f"<b>🔄 Register Escalation, Word Family &amp; Antonym</b>\n{ladder_fmt}\n\n"
-        f"<b>⚠️ Common Learner Traps &amp; Cognitive Hook</b>\n{traps_fmt}"
+        f"<b>🔬 Prosody, Register Ladder, Family &amp; Traps ▼</b>\n"
+        f"<b>🎭 Semantic Prosody &amp; Subtext:</b> {_fmt_inline_md(data.prosody_and_subtext_en)}\n\n"
+        f"<b>🔄 Register Ladder, Family &amp; Antonym</b>\n{ladder_fmt}\n\n"
+        f"<b>⚠️ Learner Traps &amp; Cognitive Hook</b>\n{traps_fmt}"
     )
-
     full_html = f"{top_card}\n\n<blockquote expandable>{deep_drawer}</blockquote>"
 
     tok = hashlib.md5(f"LEX:{user_id}:{time.time()}".encode()).hexdigest()[:10]
     v_segs = _split_dialogue_segments(data.clean_audio_script_en, "Marcus")
-    pdf_d = {
-        "title": f"Master Lexicon: {data.headword_en_or_ar}",
-        "register": data.grammar_valency_and_coca_badge,
-        "main_en": f"{data.ipa_and_spoken_prosody}\n\n{data.unified_senses_en_ar}",
-        "instant_fix": f"{data.oxford_collocation_box_en}\n\n{data.lexical_priming_and_chunks_en}",
-        "diagnosis_en": f"{data.prosody_and_subtext_en}\n\n{data.register_ladder_and_family_en}\n\n{data.common_traps_and_cognitive_hook_en}",
-    }
-    v_items = [(data.headword_en_or_ar or query_text[:60], data.unified_senses_en_ar[:320], data.lexical_priming_and_chunks_en[:320])]
-    store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=f"{data.headword_en_or_ar}\n{data.unified_senses_en_ar}")
+    head_clean = (data.headword_en_or_ar or query_text).strip()[:45]
+    v_items = [(head_clean, data.unified_senses_en_ar[:240], data.lexical_priming_and_chunks_en[:240])]
+    store_card(tok, user_id, v_segs, {"title": f"Lexicon: {head_clean}", "register": reg, "main_en": data.unified_senses_en_ar}, v_items, source_text=head_clean)
     send_html_safe(chat_id, full_html, reply_markup=build_inline_kb(tok, "lexicon"))
     threading.Thread(target=build_audio, args=(v_segs, False), daemon=True).start()
 
 def execute_lexicon_extension(chat_id: int, user_id: int, term: str, ext_type: str):
-    clean_term = (term or "").splitlines()[0].strip()[:80]
-    prompts = {
-        "colloc": (
-            f"Build an exhaustive Oxford Collocation & Hoey Lexical Priming Matrix for '{clean_term}' on SEPARATE lines ('\\n'):\n"
-            f"• **1. High-Frequency Verb/Modal Triggers:** (verbs/modals that precede '{clean_term}' with full example + Arabic)\n"
-            f"• **2. Core Noun/Object Collocates:** (nouns paired with '{clean_term}' with full example + Arabic)\n"
-            f"• **3. Adverbial & Prepositional Patterns:** (modifiers and prepositions with full example + Arabic)\n"
-            f"• **4. Colligation & Sentence Position:** (how '{clean_term}' behaves grammatically in clauses—passive/progressive/negative polarity)\n"
-            f"• **5. Three Authentic C1/C2 Corpus Sentences:** (Spoken, Executive, Academic)"
-        ),
-        "syn": (
-            f"Build a Longman Activator / Macmillan Synonym Thesaurus for '{clean_term}' on SEPARATE lines ('\\n'):\n"
-            f"• **1. [Closest Synonym 1]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
-            f"• **2. [Closest Synonym 2]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
-            f"• **3. [C2 Formal/Academic Competitor]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
-            f"• **4. [Spoken/Idiomatic Competitor]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
-            f"• **5. Precision Boundary Test (❌ vs ✅):** sentence where '{clean_term}' works and the synonym fails (and vice versa)."
-        ),
-        "ladder": (
-            f"Build a Complete Morphological Word Family, Register Escalation & Antonym Guide for '{clean_term}' on SEPARATE lines ('\\n'):\n"
-            f"• **1. Casual NYC Spoken Equivalent:** phrasing + full sentence + Arabic.\n"
-            f"• **2. Diplomatic Workplace Equivalent:** phrasing + full sentence + Arabic.\n"
-            f"• **3. C2 Academic / Nominalized Equivalent:** phrasing + full sentence + Arabic.\n"
-            f"• **4. Complete Word Family (Derivatives):** Noun, Verb, Adjective, Adverb forms (or related phrasal/compound forms) with examples.\n"
-            f"• **5. Exact Idiomatic Antonyms:** 2 natural opposites across spoken and formal registers with examples."
-        ),
-    }
-    res: LexiconExtraSchema = call_llm_structured(f"{SYS_PROMPT}\n{prompts.get(ext_type, prompts['colloc'])}", f"Target: {clean_term}", LexiconExtraSchema, temp=0.4)
-    send_html_safe(chat_id, f"<b>{_h(res.title_en)} — {_h(clean_term)}</b>\n\n{_clean_multiline_bullets(res.content_bullets_en)}")
+    clean_term = (term or "").splitlines()[0].strip()[:60]
+    prompt = (
+        f"Build a Longman Activator / Macmillan Synonym Thesaurus for '{clean_term}' on SEPARATE lines ('\\n'):\n"
+        f"• **1. [Closest Synonym 1]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
+        f"• **2. [Closest Synonym 2]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
+        f"• **3. [C2 Formal/Academic Competitor]:** exact nuance difference, register, natural example, and Arabic meaning.\n"
+        f"• **4. Precision Boundary Test (❌ vs ✅):** sentence where '{clean_term}' works and the synonym fails (and vice versa)."
+    )
+    res: LexiconExtraSchema = call_llm_structured(f"{SYS_PROMPT}\n{prompt}", f"Target: {clean_term}", LexiconExtraSchema, temp=0.4)
+    send_html_safe(chat_id, f"<b>⚖️ {_h(res.title_en)} — {_h(clean_term)}</b>\n\n{_clean_multiline_bullets(res.content_bullets_en)}")
 
 # ------------------------------------------------------------------------------
-# محرك 3: ورشة الدراسة التفاعلية الرشيقة (V22 Interactive Study Workbench)
+# محرك 3: ورشة الدراسة التفاعلية الرشيقة (V24 Interactive Study Workbench)
 # ------------------------------------------------------------------------------
-def _detect_study_route(text: str, user_id: int, forced_lens: str = "") -> str:
-    if forced_lens in ("draft", "miner", "bridge", "clinic"):
-        return forced_lens
+def _detect_study_route(text: str, user_id: int) -> str:
     clean = text.strip()
     low = clean.lower()
     w_cnt = len(clean.split())
 
-    # 1. إذا كان النص يحتوي على حروف عربية (أكثر من كلمتين بالعربية) -> جسر الصياغة AR -> EN Bridge
-    ar_chars = len(re.findall(r"[\u0600-\u06FF]", clean))
-    if ar_chars > 8:
+    if len(re.findall(r"[\u0600-\u06FF]", clean)) > 8:
         return "bridge"
-
-    # 2. أوامر بادئة صريحة
     if low.startswith(("mine:", "extract:", "article:")):
         return "miner"
     if low.startswith(("edit:", "fix:", "draft:", "polish:")):
         return "draft"
-
-    # 3. أسئلة الفروق الدلالية والنحوية ("How do I...", "What is the difference...", "vs")
     if (
         low.startswith(("what ", "what'", "how ", "why ", "when ", "where ", "which ", "can i say", "is it correct", "difference"))
         or (" vs " in low and w_cnt < 35)
@@ -1382,13 +1378,11 @@ def _detect_study_route(text: str, user_id: int, forced_lens: str = "") -> str:
     ):
         return "clinic"
 
-    # 4. إذا كان المستخدم يرد بجملة قصيرة (أقل من 30 كلمة) بعد بطاقة Study سابقة -> المدرب التفاعلي يقيّم محاولته ويصححها!
     s = _get_session(user_id)
-    last_study_ctx = [h for h in s.get("history", []) if isinstance(h, dict) and str(h.get("u", "")).startswith("[STUDY")]
-    if last_study_ctx and w_cnt <= 28 and not any(x in low for x in ("http://", "https://")):
+    last_study_ctx = [h for h in s.get("history", [])[-2:] if isinstance(h, dict) and str(h.get("u", "")).startswith("[STUDY")]
+    if last_study_ctx and w_cnt <= 24:
         return "clinic"
 
-    # 5. التمييز بين مقال للتعدين وبين مسودة المستخدم
     first_person = len(re.findall(r"\b(i|my|me|we|our|us|i'm|i've|i'd)\b", low))
     learner_slips = any(x in low for x in ("discuss about", "depend of", "explain me", "informations", "feedbacks", "do a mistake", "cannot success", "in my opinion i think"))
     if learner_slips:
@@ -1397,136 +1391,91 @@ def _detect_study_route(text: str, user_id: int, forced_lens: str = "") -> str:
         return "miner"
     return "draft"
 
-def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voice: bool = False, already_mined: str = "", shift: str = "", forced_lens: str = ""):
+def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voice: bool = False, already_mined: str = "", shift: str = ""):
     s = _get_session(user_id)
     reg = s["register"]
-    sub_st = s.get("sub_state", "") or ""
-    if not forced_lens and sub_st.startswith("STUDY_LENS:"):
-        forced_lens = sub_st.replace("STUDY_LENS:", "").strip()
 
-    # 1. التحويل الأسلوبي عند الطلب بلمسة زر (Spoken / Executive / C2 Academic / Tighten)
     if shift:
         shift_map = {
-            "spoken": (
-                "🎙️ Natural Spoken Delivery",
-                "Rewrite this text into natural, spontaneous spoken American English suitable for saying aloud in a meeting or discussion (active verbs, contractions, spoken rhythm, zero stiffness).",
-            ),
-            "soften": (
-                "💼 Crisp & Diplomatic Executive Written",
-                "Rewrite this text into warm, tactful, solution-oriented American executive/workplace English (focus on shared goals and timelines, zero personal blame).",
-            ),
-            "c2": (
-                "🏛️ C2 Academic & Analytical Prose",
-                "Transform this text into authoritative C2 Academic/Analytical prose using Given-Before-New information flow, End-Weight focus, strategic nominalization, and organic demonstrative cohesion (no mechanical 'Furthermore/Moreover').",
-            ),
-            "condense": (
-                "⚡ Tightened High-Impact Version (-35%)",
-                "Condense this text by 35-40% into razor-sharp, high-impact English by eliminating clutter and using precision verbs.",
-            ),
+            "spoken": ("🎙️ Natural Spoken Delivery", "Rewrite this text into natural, spontaneous spoken American English (active verbs, contractions, spoken rhythm)."),
+            "soften": ("💼 Crisp & Diplomatic Executive Written", "Rewrite this text into warm, tactful, solution-oriented American executive English."),
+            "c2": ("🏛️ C2 Academic & Analytical Prose", "Transform this text into authoritative C2 Academic/Analytical prose using Given-Before-New flow, End-Weight focus, and nominalization."),
+            "condense": ("⚡ Tightened High-Impact Version (-35%)", "Condense this text by 35-40% into razor-sharp English using precision verbs."),
         }
         sh_title, sh_prompt = shift_map.get(shift, shift_map["spoken"])
-        sh_data: DraftShiftSchema = call_llm_structured(
-            f"{SYS_PROMPT}\n{sh_prompt}",
-            f"Original Text:\n\"{user_input[:3500]}\"",
-            DraftShiftSchema,
-            temp=0.42,
-        )
+        sh_data: DraftShiftSchema = call_llm_structured(f"{SYS_PROMPT}\n{sh_prompt}", f"Original Text:\n\"{user_input[:3500]}\"", DraftShiftSchema, temp=0.42)
         tok = hashlib.md5(f"SHF:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-        v_segs = [("Marcus" if shift == "c2" else "Chloe", sh_data.transformed_text_en)]
-        pdf_d = {"title": sh_title, "register": reg, "main_en": sh_data.transformed_text_en, "instant_fix": sh_data.key_refinements_en}
-        store_card(tok, user_id, v_segs, pdf_d, [(sh_data.transformed_text_en[:90], sh_data.key_refinements_en, user_input[:200])], source_text=user_input)
+        v_segs = [("Marcus" if shift == "c2" else "Chloe", _clean_tts(sh_data.transformed_text_en))]
+        v_items = _extract_clean_vault_items(sh_data.key_refinements_en, sh_data.transformed_text_en)
+        store_card(tok, user_id, v_segs, {"title": sh_title, "register": reg, "main_en": sh_data.transformed_text_en}, v_items, source_text=user_input)
         sh_html = (
             f"<b>{sh_title}</b>\n\n"
-            f"<i>\"{_fmt_inline_md(sh_data.transformed_text_en)}\"</i>\n\n"
+            f"<i>&quot;{_fmt_inline_md(sh_data.transformed_text_en)}&quot;</i>\n\n"
             f"<b>🔬 What Changed &amp; Why</b>\n{_clean_multiline_bullets(sh_data.key_refinements_en)}"
         )
-        send_html_safe(chat_id, sh_html, reply_markup=build_inline_kb(tok, "draft"))
+        send_html_safe(chat_id, sh_html, reply_markup=build_inline_kb(tok, "draft", _extract_lookup_terms(v_items)))
         return
 
-    # 2. الاستخراج الإضافي عند الطلب في وضع التعدين (C2 Templates / Rhetoric & Flow / Next 4 Chunks)
     if already_mined:
         if already_mined.startswith("SKEL_ONLY::"):
             prev_m = already_mined.replace("SKEL_ONLY::", "")
             m_task = (
-                "Extract 3 reusable C2 Rhetorical Sentence Templates from this text. Format each as a numbered block:\n"
-                "1. **Pattern:** `[Frame with [Slots], e.g. Far from [V-ing X], [Subj] merely [Verb Y]...]`\n"
-                "• الوظيفة البلاغية: [Arabic explanation of rhetorical effect]\n"
-                "• Applied Example: \"[Brand-new sentence built with this exact skeleton]\""
+                "Extract 3 reusable C2 Rhetorical Sentence Templates from this text as numbered blocks:\n"
+                "1. **Pattern:** `[Frame with [Slots]]`\n• الوظيفة البلاغية: [Arabic explanation]\n• Applied Example: \"[New sentence built with this skeleton]\""
             )
             hdr_icon = "🏗️ Reusable C2 Sentence Templates"
         elif already_mined.startswith("RHET_ONLY::"):
             prev_m = already_mined.replace("RHET_ONLY::", "")
             m_task = (
-                "Analyze the Author's Prose Architecture & Nominalization in 3 numbered blocks:\n"
-                "1. **Argument & Cohesion Flow:** How the author links ideas (Given-to-New, End-Weight, transitions).\n"
-                "2. **Hedging & Epistemic Stance:** Exact words/structures used to qualify claims.\n"
-                "3. **Spoken Verb-Driven ➔ C2 Nominalization Map:** Show 2 sentences from the text contrasted with their everyday spoken equivalents (with Arabic notes)."
+                "Analyze the Author's Prose Architecture in 3 numbered blocks:\n"
+                "1. **Argument & Cohesion Flow:** (Given-to-New, End-Weight, transitions).\n"
+                "2. **Hedging & Stance:** (how claims are qualified).\n"
+                "3. **Verb-Driven ➔ C2 Nominalization Map:** (2 sentences contrasted with spoken equivalents + Arabic)."
             )
             hdr_icon = "🔬 Rhetoric, Cohesion & Nominalization Breakdown"
         else:
             prev_m = already_mined
             m_task = (
-                f"Previously extracted: [{prev_m}]. Mine 4 COMPLETELY NEW whole-chunk expressions, phrasal verbs, or academic collocations from this text (zero overlap!). Format each as:\n"
-                "1. **[Exact Expression]** — `[Grammar Frame]`\n"
-                "• المعنى السياقي: [Eloquent Arabic meaning]\n"
-                "• New Example: \"[Fresh 10-14 word sentence on a different topic]\""
+                f"Previously extracted: [{prev_m}]. Mine 4 COMPLETELY NEW whole-chunk expressions or collocations from this text as numbered blocks:\n"
+                "1. **[Exact Expression]** — `[Grammar Frame]`\n• المعنى السياقي: [Arabic meaning]\n• New Example: \"[Fresh 10-14 word sentence]\""
             )
             hdr_icon = "⛏️ Next 4 Extracted Chunks"
 
         m_data: MoreMinerSchema = call_llm_structured(f"{SYS_PROMPT}\n{m_task}", f"Text:\n\"{user_input[:4500]}\"", MoreMinerSchema, temp=0.42)
         tok = hashlib.md5(f"MOR:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-        v_items = []
-        for ln in m_data.new_expressions_en.splitlines():
-            if re.match(r"^[1-9]\.", ln.strip()):
-                t_c, d_c, _ = _clean_vault_entry(re.sub(r"^[1-9]\.\s*", "", ln.strip()), "", user_input[:160])
-                if t_c:
-                    v_items.append((t_c, d_c, ln))
+        v_items = _extract_clean_vault_items(m_data.new_expressions_en, user_input[:200])
         new_mined = f"{prev_m}, {', '.join([x[0] for x in v_items])}".strip(", ")
-        store_card(tok, user_id, [("Marcus", m_data.new_expressions_en)], {"title": hdr_icon, "main_en": m_data.new_expressions_en}, v_items, source_text=user_input, mined_so_far=new_mined)
-        m_html = f"<b>{hdr_icon}</b>\n\n{_format_unified_senses(m_data.new_expressions_en)}"
-        send_html_safe(chat_id, m_html, reply_markup=build_inline_kb(tok, "miner", _extract_lookup_terms(v_items)))
+        store_card(tok, user_id, [("Marcus", _clean_tts(m_data.new_expressions_en))], {"title": hdr_icon, "main_en": m_data.new_expressions_en}, v_items, source_text=user_input, mined_so_far=new_mined)
+        send_html_safe(chat_id, f"<b>{hdr_icon}</b>\n\n{_format_unified_senses(m_data.new_expressions_en)}", reply_markup=build_inline_kb(tok, "miner", _extract_lookup_terms(v_items)))
         return
 
-    # 3. تحديد المسار الذكي
-    route = _detect_study_route(user_input, user_id, forced_lens=("draft" if is_voice and not forced_lens else forced_lens))
+    route = "draft" if is_voice else _detect_study_route(user_input, user_id)
 
-    # المسار أ: جسر الصياغة من الفكرة العربية إلى الإنجليزية الأصيلة (AR -> EN Thought Architect)
     if route == "bridge":
         task = (
             "ARABIC-TO-ENGLISH THOUGHT ARCHITECT:\n"
-            "The user wrote an idea or paragraph in Arabic (or mixed AR/EN). Show how to express this exact meaning natively in American English without literal translation stiffness:\n"
-            "1. `spoken_american_en`: natural, effortless spoken NYC phrasing.\n"
-            "2. `executive_written_en`: crisp, diplomatic workplace phrasing.\n"
-            "3. `c2_academic_prose_en`: high-level C2 analytical/academic prose (nominalization & Given-to-New flow).\n"
-            "4. `building_blocks_and_trap_en_ar`: 2 key native chunks used + the ❌ Literal Arabic Calque Trap to avoid.\n"
-            "5. `your_turn_prompt_en`: invite the user to write 1 sentence using one of these chunks."
+            "Express this Arabic thought natively across: 1) `spoken_american_en`, 2) `executive_written_en`, 3) `c2_academic_prose_en`, 4) `building_blocks_and_trap_en_ar` (2 **bolded chunks** + ❌ Literal Calque Trap), 5) `your_turn_prompt_en`."
         )
-        b_res: ArabicBridgeSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Arabic/Mixed Input:\n\"{user_input[:3000]}\"", ArabicBridgeSchema, temp=0.42)
-        _update_session(user_id, new_turn={"u": f"[STUDY AR->EN]: {user_input[:160]}", "b": f"C2: {b_res.c2_academic_prose_en[:180]} | Blocks: {b_res.building_blocks_and_trap_en_ar[:180]}"})
+        b_res: ArabicBridgeSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Arabic Input:\n\"{user_input[:3000]}\"", ArabicBridgeSchema, temp=0.42)
+        _update_session(user_id, new_turn={"u": f"[STUDY AR->EN]: {user_input[:160]}", "b": b_res.c2_academic_prose_en[:200]})
 
         html_b = (
             f"<b>🌉 AR ➔ EN Native Expression Bridge</b>\n\n"
-            f"🎙️ <b>1. Natural Spoken American</b>\n<i>\"{_fmt_inline_md(b_res.spoken_american_en)}\"</i>\n\n"
-            f"💼 <b>2. Crisp Executive Written</b>\n<i>\"{_fmt_inline_md(b_res.executive_written_en)}\"</i>\n\n"
-            f"🏛️ <b>3. C2 Academic &amp; Analytical Prose</b>\n<b>\"{_fmt_inline_md(b_res.c2_academic_prose_en)}\"</b>\n\n"
+            f"🎙️ <b>1. Natural Spoken American</b>\n<i>&quot;{_fmt_inline_md(b_res.spoken_american_en)}&quot;</i>\n\n"
+            f"💼 <b>2. Crisp Executive Written</b>\n<i>&quot;{_fmt_inline_md(b_res.executive_written_en)}&quot;</i>\n\n"
+            f"🏛️ <b>3. C2 Academic &amp; Analytical Prose</b>\n<b>&quot;{_fmt_inline_md(b_res.c2_academic_prose_en)}&quot;</b>\n\n"
             f"<b>🧱 Key Building Blocks &amp; Calque Trap</b>\n{_clean_multiline_bullets(b_res.building_blocks_and_trap_en_ar)}\n\n"
             f"🎯 <b>Your Turn:</b> <i>{_fmt_inline_md(b_res.your_turn_prompt_en)}</i>"
         )
         tok = hashlib.md5(f"BRG:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-        v_segs = [("Jake", b_res.spoken_american_en), ("Chloe", b_res.executive_written_en), ("Marcus", b_res.c2_academic_prose_en)]
-        pdf_d = {"title": "AR to EN Expression Bridge", "register": reg, "main_en": b_res.executive_written_en, "spoken_inf": b_res.spoken_american_en, "written_form": b_res.c2_academic_prose_en, "diagnosis_en": b_res.building_blocks_and_trap_en_ar}
-        v_items = [(b_res.executive_written_en[:80], user_input[:200], b_res.c2_academic_prose_en)]
-        store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=b_res.executive_written_en)
-        send_html_safe(chat_id, html_b, reply_markup=build_inline_kb(tok, "bridge"))
+        v_segs = [("Jake", _clean_tts(b_res.spoken_american_en)), ("Chloe", _clean_tts(b_res.executive_written_en)), ("Marcus", _clean_tts(b_res.c2_academic_prose_en))]
+        v_items = _extract_clean_vault_items(b_res.building_blocks_and_trap_en_ar, b_res.executive_written_en)
+        store_card(tok, user_id, v_segs, {"title": "AR to EN Bridge", "main_en": b_res.executive_written_en}, v_items, source_text=b_res.executive_written_en)
+        send_html_safe(chat_id, html_b, reply_markup=build_inline_kb(tok, "bridge", _extract_lookup_terms(v_items)))
         return
 
-    # المسار ب: التعدين الرشيق للمقالات والنصوص (Modular Corpus Miner)
     if route == "miner":
-        task = (
-            "MODULAR CLOSE-READING & CHUNK MINER:\n"
-            "Extract the Top 4 highest-value idioms, phrasal verbs, or C1/C2 collocations from this text. Do NOT invent grammar errors on the text!\n"
-            "For each of the 4 items, show: Exact Expression, Grammar Frame, eloquent contextual Arabic meaning, and a brand-new example sentence."
-        )
+        task = "MODULAR CORPUS MINER: Extract the Top 4 highest-value idioms, phrasal verbs, or C1/C2 collocations from this text as numbered blocks (Expression, Frame, Arabic meaning, New Example)."
         m_res: ModularMinerSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Text:\n\"{user_input[:5500]}\"", ModularMinerSchema, temp=0.4)
         _update_session(user_id, new_turn={"u": f"[STUDY MINER]: {user_input[:140]}", "b": m_res.top_chunks_en_ar[:260]})
 
@@ -1536,32 +1485,20 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
             f"🎯 <b>Active Practice:</b> <i>{_fmt_inline_md(m_res.your_turn_prompt_en)}</i>"
         )
         tok = hashlib.md5(f"MIN:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-        v_items = []
-        for ln in m_res.top_chunks_en_ar.splitlines():
-            if re.match(r"^[1-9]\.", ln.strip()):
-                t_c, d_c, _ = _clean_vault_entry(re.sub(r"^[1-9]\.\s*", "", ln.strip()), "", m_res.theme_title_en)
-                if t_c:
-                    v_items.append((t_c, d_c, ln))
-        v_segs = [("Marcus", m_res.top_chunks_en_ar)]
-        pdf_d = {"title": m_res.theme_title_en, "register": "C1/C2 Corpus Harvest", "main_en": m_res.top_chunks_en_ar}
-        store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_input[:4500], mined_so_far=", ".join([x[0] for x in v_items]))
+        v_items = _extract_clean_vault_items(m_res.top_chunks_en_ar, m_res.theme_title_en)
+        v_segs = [("Marcus", _clean_tts(m_res.top_chunks_en_ar))]
+        store_card(tok, user_id, v_segs, {"title": m_res.theme_title_en, "main_en": m_res.top_chunks_en_ar}, v_items, source_text=user_input[:4500], mined_so_far=", ".join([x[0] for x in v_items]))
         send_html_safe(chat_id, html_m, reply_markup=build_inline_kb(tok, "miner", _extract_lookup_terms(v_items)))
         return
 
-    # المسار ج: المدرب التفاعلي وعيادة الفروق الدقيقة (Interactive Tutor Loop & Nuance Clinic)
     if route == "clinic":
-        recent_study = "\n".join([f"Prior Input: {h.get('u','')}\nPrior Coaching: {h.get('b','')}" for h in s.get("history", [])[-3:] if isinstance(h, dict)])
+        recent_study = "\n".join([f"Prior: {h.get('u','')}\nCoaching: {h.get('b','')}" for h in s.get("history", [])[-2:] if isinstance(h, dict)])
         task = (
-            "INTERACTIVE STUDY TUTOR & NUANCE CLINIC:\n"
-            "- Check `Recent Study Context`. If the user is replying with a practice sentence or testing a chunk from the previous card, evaluate their attempt warmly, show any ❌ ➔ ✅ refinements, and give 3 register variations!\n"
-            "- If the user is asking a linguistic question ('X vs Y', 'How do I say...', grammar rule), answer it with razor-sharp clarity, 3 register examples (Spoken, Executive, C2 Academic), and Arabic nuances."
+            "INTERACTIVE TUTOR & NUANCE CLINIC:\n"
+            "- If the user is replying with a practice sentence from the previous Study card, evaluate it warmly, show ❌ ➔ ✅ refinements, and give 3 register variations!\n"
+            "- If asking a linguistic question ('X vs Y', grammar/nuance), give the direct rule with 3 register examples (highlighting key expressions in **bold**) and Arabic notes."
         )
-        c_res: TutorLoopSchema = call_llm_structured(
-            f"{SYS_PROMPT}\n{task}",
-            f"Recent Study Context:\n{recent_study}\n\nUser's Current Input:\n\"{user_input[:2000]}\"",
-            TutorLoopSchema,
-            temp=0.45,
-        )
+        c_res: TutorLoopSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Recent Study Context:\n{recent_study}\n\nUser Input:\n\"{user_input[:2000]}\"", TutorLoopSchema, temp=0.45)
         _update_session(user_id, new_turn={"u": f"[STUDY PRACTICE/Q]: {user_input[:160]}", "b": c_res.direct_feedback_or_answer_en[:220]})
 
         html_c = (
@@ -1571,69 +1508,84 @@ def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voic
             f"🎯 <b>Next Step:</b> <i>{_fmt_inline_md(c_res.next_step_challenge_en)}</i>"
         )
         tok = hashlib.md5(f"CLN:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-        v_segs = [("Chloe", c_res.direct_feedback_or_answer_en), ("Marcus", c_res.register_or_nuance_examples_en_ar)]
-        pdf_d = {"title": c_res.title_en, "register": reg, "main_en": c_res.direct_feedback_or_answer_en, "diagnosis_en": c_res.register_or_nuance_examples_en_ar}
-        v_items = [(c_res.title_en[:70], c_res.direct_feedback_or_answer_en[:240], c_res.register_or_nuance_examples_en_ar[:240])]
-        store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_input)
-        send_html_safe(chat_id, html_c, reply_markup=build_inline_kb(tok, "clinic"))
+        v_segs = [("Chloe", _clean_tts(c_res.direct_feedback_or_answer_en)), ("Marcus", _clean_tts(c_res.register_or_nuance_examples_en_ar))]
+        v_items = _extract_clean_vault_items(c_res.register_or_nuance_examples_en_ar, c_res.direct_feedback_or_answer_en)
+        store_card(tok, user_id, v_segs, {"title": c_res.title_en, "main_en": c_res.direct_feedback_or_answer_en}, v_items, source_text=user_input)
+        send_html_safe(chat_id, html_c, reply_markup=build_inline_kb(tok, "clinic", _extract_lookup_terms(v_items)))
         return
 
-    # المسار د (الافتراضي للمسودات والصوتيات): المحرر الجراحي المركز (Precision Editor)
+    # المسار الافتراضي: المحرر الجراحي المركز (Precision Editor)
     task = (
         "PRECISION DRAFT & SPEECH EDITOR:\n"
-        "1. `polished_version_en`: Polish the user's text so it sounds 100% natural, clear, and idiomatic in the target register while keeping their personal voice.\n"
-        "2. `surgical_diffs_en_ar`: List every grammar, preposition, collocation, or L1 Arabic calque fix as '• ❌ [user phrase] ➔ ✅ **[native fix]** — [concise reason]'.\n"
-        "3. `lexical_upgrades_en_ar`: 3 specific word/collocation upgrades from their draft with Arabic meanings.\n"
-        "4. `your_turn_prompt_en`: 1-sentence challenge inviting them to reply using one of the upgrades."
+        "1. `polished_version_en`: Natural, idiomatic polish in the target register.\n"
+        "2. `surgical_diffs_en_ar`: '• ❌ [user phrase] ➔ ✅ **[native fix]** — [reason]'.\n"
+        "3. `lexical_upgrades_en_ar`: 3 upgrades formatted strictly as '• [simple word] ➔ **[C1/C2 expression]** (المعنى السياقي) — \"[short example]\"'.\n"
+        "4. `your_turn_prompt_en`: 1-sentence practice prompt."
     )
-    d_res: PrecisionEditorSchema = call_llm_structured(
-        f"{SYS_PROMPT}\n{task}",
-        f"Target Register: {reg}\nUser's Draft:\n\"{user_input[:4000]}\"",
-        PrecisionEditorSchema,
-        temp=0.42,
-    )
-    _update_session(user_id, new_turn={"u": f"[STUDY DRAFT]: {user_input[:160]}", "b": f"Polished: {d_res.polished_version_en[:180]} | Upgrades: {d_res.lexical_upgrades_en_ar[:180]}"})
+    d_res: PrecisionEditorSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Target Register: {reg}\nUser's Draft:\n\"{user_input[:4000]}\"", PrecisionEditorSchema, temp=0.42)
+    _update_session(user_id, new_turn={"u": f"[STUDY DRAFT]: {user_input[:160]}", "b": d_res.polished_version_en[:200]})
 
     if d_res.surgical_diffs_en_ar and ("->" in d_res.surgical_diffs_en_ar or "➔" in d_res.surgical_diffs_en_ar):
         _log_dna(user_id, d_res.surgical_diffs_en_ar.replace("➔", "->"))
 
-    v_prefix = f"🎙️ <b>Voice Draft:</b> <i>\"{_h(user_input[:240])}\"</i>\n\n" if is_voice else ""
+    v_prefix = f"🎙️ <b>Voice Draft:</b> <i>&quot;{_h(user_input[:240])}&quot;</i>\n\n" if is_voice else ""
     html_d = (
         f"{v_prefix}<b>✍️ Polished Version ({_h(reg)})</b>\n"
-        f"<i>\"{_fmt_inline_md(d_res.polished_version_en)}\"</i>\n\n"
+        f"<i>&quot;{_fmt_inline_md(d_res.polished_version_en)}&quot;</i>\n\n"
         f"<b>🔧 Surgical Fixes (❌ ➔ ✅)</b>\n{_clean_multiline_bullets(d_res.surgical_diffs_en_ar)}\n\n"
         f"<b>🚀 Vocabulary &amp; Collocation Upgrades</b>\n{_clean_multiline_bullets(d_res.lexical_upgrades_en_ar)}\n\n"
         f"🎯 <b>Your Turn:</b> <i>{_fmt_inline_md(d_res.your_turn_prompt_en)}</i>"
     )
     tok = hashlib.md5(f"DRF:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    v_segs = [("Chloe", d_res.polished_version_en)]
-    pdf_d = {
-        "title": "Precision Draft Surgery",
-        "register": reg,
-        "main_en": d_res.polished_version_en,
-        "instant_fix": d_res.surgical_diffs_en_ar,
-        "diagnosis_en": d_res.lexical_upgrades_en_ar,
-    }
-    v_items = []
-    for ln in d_res.lexical_upgrades_en_ar.splitlines():
-        if "➔" in ln or "->" in ln:
-            pts = re.split(r"➔|->", ln, maxsplit=1)
-            t_c, d_c, _ = _clean_vault_entry(pts[1], pts[0], d_res.polished_version_en)
-            if t_c:
-                v_items.append((t_c, d_c, d_res.polished_version_en))
-    store_card(tok, user_id, v_segs, pdf_d, v_items, source_text=user_input[:3500])
+    v_segs = [("Chloe", _clean_tts(d_res.polished_version_en))]
+    v_items = _extract_clean_vault_items(d_res.lexical_upgrades_en_ar, d_res.polished_version_en)
+    store_card(tok, user_id, v_segs, {"title": "Precision Draft Surgery", "register": reg, "main_en": d_res.polished_version_en}, v_items, source_text=user_input[:3500])
     send_html_safe(chat_id, html_d, reply_markup=build_inline_kb(tok, "draft", _extract_lookup_terms(v_items)))
 
 # ------------------------------------------------------------------------------
-# محرك 4: استوديو البودكاست الإذاعي المتكامل (V23 — مطويات مضمونة + مفكك النطق + مداخلة على الهواء)
+# محرك 4: استوديو البودكاست الإذاعي الرشيق (V24 — بدون أزرار مكررة + كشف ذكي للمواضيع الجديدة)
 # ------------------------------------------------------------------------------
-def _format_podcast_script_safe(raw_script: str) -> str:
-    """تنسيق نص البودكاست بأمان تام دون أي تداخل لوسوم <b> داخل المطوية القابلة للطي"""
+def _enforce_spoken_contractions(text: str) -> str:
+    if not text:
+        return ""
+    repls = [
+        (r"\bIt is not\b", "It's not"), (r"\bit is not\b", "it's not"),
+        (r"\bIt is\b", "It's"), (r"\bit is\b", "it's"),
+        (r"\bThere is\b", "There's"), (r"\bthere is\b", "there's"),
+        (r"\bThat is\b", "That's"), (r"\bthat is\b", "that's"),
+        (r"\bWhat is\b", "What's"), (r"\bwhat is\b", "what's"),
+        (r"\bI am\b", "I'm"),
+        (r"\bYou are\b", "You're"), (r"\byou are\b", "you're"),
+        (r"\bWe are\b", "We're"), (r"\bwe are\b", "we're"),
+        (r"\bThey are\b", "They're"), (r"\bthey are\b", "they're"),
+        (r"\bWe have\b", "We've"), (r"\bwe have\b", "we've"),
+        (r"\bYou have\b", "You've"), (r"\byou have\b", "you've"),
+        (r"\bcannot\b", "can't"), (r"\bCannot\b", "Can't"),
+        (r"\bdo not\b", "don't"), (r"\bDo not\b", "Don't"),
+        (r"\bdoes not\b", "doesn't"), (r"\bDoes not\b", "Doesn't"),
+        (r"\bdid not\b", "didn't"), (r"\bDid not\b", "Didn't"),
+        (r"\bwill not\b", "won't"), (r"\bWill not\b", "Won't"),
+        (r"\bwould not\b", "wouldn't"), (r"\bcould not\b", "couldn't"), (r"\bshould not\b", "shouldn't"),
+    ]
+    out = text
+    for pat, sub in repls:
+        out = re.sub(pat, sub, out)
+    return out
+
+def _format_podcast_script_safe(raw_script: str, highlight_terms: Optional[List[str]] = None) -> str:
     clean = html.unescape(str(raw_script or "")).strip()
+    clean = _enforce_spoken_contractions(clean)
     clean = re.sub(r"\([^)]*\)", "", clean)
     clean = re.sub(r"\*+\s*(Jake|Chloe|Marcus)\s*\*+\s*:", r"\1:", clean)
     clean = re.sub(r"(Jake|Chloe|Marcus)\s*:\s*\*+", r"\1: ", clean)
     norm = re.sub(r"(?:^|\n|\s)+(Jake|Chloe|Marcus)\s*:\s*", r"\n\1: ", clean).strip()
+
+    if highlight_terms:
+        for term in highlight_terms:
+            t_clean = re.sub(r"\*+", "", term).strip()
+            if len(t_clean) > 3 and f"**{t_clean}**" not in norm.lower():
+                norm = re.sub(rf"(?<!\*)\b({re.escape(t_clean)})\b(?!\*)", r"**\1**", norm, count=1, flags=re.I)
+
     out_turns = []
     for ln in norm.splitlines():
         ln_s = ln.strip()
@@ -1654,25 +1606,33 @@ def execute_podcast(chat_id: int, user_id: int, topic: str = "", hosts: int = 3,
 
     vault_terms = _get_recent_vault_terms(user_id, 5)
     style_prompts = {
-        "roundtable": f"FORMAT: 3-Host NYC Roundtable ({reg}). Jake, Chloe, and Marcus trade sharp, unscripted perspectives, interrupting and building on each other's points like a real NY podcast.",
-        "clash": f"FORMAT: 2-Host Clash of Views Debate ({reg}) between Jake (fast, pragmatic, anti-bureaucracy) and Marcus (strategic, structural, cautious). Use authentic agreement/pushback markers.",
-        "case": f"FORMAT: 2-Host Deep Case Breakdown ({reg}) with Chloe and Marcus dissecting human psychology, leadership blind spots, and decision-making.",
+        "roundtable": f"FORMAT: 3-Host NYC Roundtable ({reg}). Jake, Chloe, and Marcus have a realistic, unscripted debate (2-3 sentences per turn) with genuine friction, personal anecdotes, and natural spoken contractions.",
+        "clash": f"FORMAT: 2-Host Clash Debate ({reg}) between Jake (pragmatic execution) and Marcus (deep structural strategy). Have them push back directly on each other's assumptions.",
+        "case": f"FORMAT: 2-Host Deep Case Breakdown ({reg}) with Chloe and Marcus dissecting real-world leadership, psychology, and organizational habits.",
         "vault": (
             f"FORMAT: Personalized 'Vault Mastery' Episode ({reg}) with Chloe, Jake & Marcus.\n"
             f"Naturally weave these saved expressions into the hosts' dialogue (bolding them with **): {', '.join(vault_terms) if vault_terms else 'hold off on, throw around, come down to, pan out'}."
         ),
     }
     chosen_inst = style_prompts.get(fmt_style, style_prompts["roundtable"])
-    t_p = topic.strip() if len(topic.strip()) > 2 else f"Compelling {reg} NYC discussion on work culture, ambition, and modern habits"
+    t_p = topic.strip() if len(topic.strip()) > 2 else f"Unfiltered {reg} NYC discussion on work culture, ambition, and modern habits"
 
     data: PodcastSchema = call_llm_structured(
-        f"{SYS_PROMPT}\n{chosen_inst}\nAddress {user_first_name} in `on_air_call_in_question_en`. Highlight 4 key idioms in **bold** inside `script_en` (NEVER bold speaker names!).",
+        f"{SYS_PROMPT}\n{chosen_inst}\n"
+        f"CRITICAL: Use natural spoken contractions ('it's', 'can't', 'we've', 'there's'). Each turn must be 2-3 sentences. "
+        f"In `fast_speech_and_chunks_en_ar`, explain REAL American phonetic linking/reduction (Flap-T, dropped 'g', schwa /ə/), NEVER hyphenated spelling like 'draw-the-line'! "
+        f"In `on_air_call_in_question_en`, address {user_first_name} directly without assuming he lives in NYC.",
         f"Episode Topic: {t_p}",
         PodcastSchema,
-        temp=0.65,
+        temp=0.62,
     )
 
-    script_html = _format_podcast_script_safe(data.script_en)
+    spoken_script = _enforce_spoken_contractions(data.script_en)
+    v_items = _extract_clean_vault_items(data.fast_speech_and_chunks_en_ar, data.episode_title_en)
+    l_terms = _extract_lookup_terms(v_items)
+    all_chunk_names = [x[0] for x in v_items if x and x[0]]
+
+    script_html = _format_podcast_script_safe(spoken_script, highlight_terms=all_chunk_names)
     chunks_html = _format_unified_senses(data.fast_speech_and_chunks_en_ar)
 
     badge_map = {
@@ -1689,71 +1649,52 @@ def execute_podcast(chat_id: int, user_id: int, topic: str = "", hosts: int = 3,
         f"🎧 <b>Listening Focus:</b> {_fmt_inline_md(data.episode_summary_and_ear_cue_en)}\n\n"
         f"📞 <b>Live Call-In ({_h(user_first_name)}):</b>\n"
         f"<i>&quot;{_fmt_inline_md(data.on_air_call_in_question_en)}&quot;</i>\n"
-        f"<i>(Reply by voice or text right now to join the hosts on air!)</i>\n\n"
-        f"<blockquote expandable>📜 <b>Tap to Open Full Episode Transcript ▼</b>\n\n{script_html}\n\n───\n<i>End of Transcript</i></blockquote>\n\n"
-        f"<blockquote expandable>💎 <b>Tap to Open Chunks &amp; Fast-Speech Decoder ▼</b>\n\n{chunks_html}\n\n───\n<i>Tap Save below to add these to your Vault</i></blockquote>"
+        f"<i>(Reply by voice or text to join the hosts on air, or send <code>topic: ...</code> for a custom episode)</i>\n\n"
+        f"<blockquote expandable>📜 <b>Episode Transcript (Tap to Expand/Collapse) ▼</b>\n{script_html}</blockquote>\n\n"
+        f"<blockquote expandable>💎 <b>Key Chunks &amp; Connected-Speech Decoder ▼</b>\n{chunks_html}</blockquote>"
     )
 
     tok = hashlib.md5(f"POD:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    segs = _split_dialogue_segments(data.script_en, "Jake")
-
-    v_items = []
-    for ln in data.fast_speech_and_chunks_en_ar.splitlines():
-        if re.match(r"^[1-9]\.", ln.strip()):
-            t_c, d_c, _ = _clean_vault_entry(re.sub(r"^[1-9]\.\s*", "", ln.strip()), "", data.episode_title_en)
-            if t_c:
-                v_items.append((t_c, d_c, data.episode_title_en))
-
-    pdf_d = {
-        "title": data.episode_title_en,
-        "register": f"{fmt_badge} ({reg})",
-        "main_en": data.script_en,
-        "instant_fix": data.on_air_call_in_question_en,
-        "diagnosis_en": data.fast_speech_and_chunks_en_ar,
-    }
-    store_card(tok, user_id, segs, pdf_d, v_items, source_text=f"{data.episode_title_en}\n{data.script_en}")
+    segs = _split_dialogue_segments(spoken_script, "Jake")
+    store_card(tok, user_id, segs, {"title": data.episode_title_en, "register": reg, "main_en": spoken_script}, v_items, source_text=f"{data.episode_title_en}\n{spoken_script}")
     _update_session(
         user_id,
         mode="PODCAST",
         sub_state=f"PODCAST_ACTIVE:{fmt_style}",
-        new_turn={"u": f"[Podcast: {data.episode_title_en}]", "b": f"{data.script_en[:320]} | Question: {data.on_air_call_in_question_en}"},
+        new_turn={"u": f"[Podcast: {data.episode_title_en}]", "b": f"{spoken_script[:320]} | Question: {data.on_air_call_in_question_en}"},
     )
 
+    # صفّان نظيفان فقط بدون تكرار أزرار الصوت 1.0x أو النص المنفصل
     kb = types.InlineKeyboardMarkup()
-    kb.row(
-        types.InlineKeyboardButton("🎧 Audio 1.0x", callback_data=f"edtts:1x:{tok}"),
+    row1 = [
         types.InlineKeyboardButton("🐢 Slow 0.85x", callback_data=f"edtts:slow:{tok}"),
         types.InlineKeyboardButton("🎯 Quiz Episode", callback_data=f"edqztext:{tok}"),
-        types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-    )
-    kb.row(
-        types.InlineKeyboardButton("📜 Separate Transcript", callback_data=f"edpodview:tr:{tok}"),
-        types.InlineKeyboardButton("💎 Separate Chunks", callback_data=f"edpodview:ch:{tok}"),
-        types.InlineKeyboardButton("📄 PDF", callback_data=f"edpdf:{tok}"),
-    )
+        types.InlineKeyboardButton("💾 Save Chunks", callback_data=f"edsave:{tok}"),
+    ]
+    for i, t in enumerate(l_terms[:1]):
+        row1.append(types.InlineKeyboardButton(f"🔍 {t[:18]}", callback_data=f"edqlk:{i}:{tok}"))
+    kb.row(*row1)
     kb.row(
         types.InlineKeyboardButton("🎙️ Roundtable", callback_data="edpod:roundtable"),
         types.InlineKeyboardButton("⚡ Clash", callback_data="edpod:clash"),
         types.InlineKeyboardButton("🔍 Case", callback_data="edpod:case"),
         types.InlineKeyboardButton("💎 Vault Ep", callback_data="edpod:vault"),
     )
-    l_terms = _extract_lookup_terms(v_items)
-    if l_terms:
-        kb.row(*[types.InlineKeyboardButton(f"🔍 {t[:22]}", callback_data=f"edqlk:{i}:{tok}") for i, t in enumerate(l_terms[:2])])
 
     send_html_safe(chat_id, html_out, reply_markup=kb)
 
+    def _send_pod_voice():
+        try:
+            bot.send_chat_action(chat_id, "record_voice")
+        except Exception:
+            pass
+        mp3 = build_audio(segs, slow=False)
+        if mp3 and os.path.exists(mp3):
+            with open(mp3, "rb") as af:
+                bot.send_voice(chat_id, af, caption=f"🎧 <b>{_h(data.episode_title_en)}</b>", parse_mode="HTML")
+            os.remove(mp3)
+
     if os.environ.get("LIVE_SELF_TEST") != "1":
-        def _send_pod_voice():
-            try:
-                bot.send_chat_action(chat_id, "record_voice")
-            except Exception:
-                pass
-            mp3 = build_audio(segs, slow=False)
-            if mp3 and os.path.exists(mp3):
-                with open(mp3, "rb") as af:
-                    bot.send_voice(chat_id, af, caption=f"🎧 <b>{_h(data.episode_title_en)}</b>", parse_mode="HTML")
-                os.remove(mp3)
         threading.Thread(target=_send_pod_voice, daemon=True).start()
 
 def execute_podcast_call_in(chat_id: int, user_id: int, user_text: str, is_voice: bool = False, user_first_name: str = "Musa"):
@@ -1763,33 +1704,27 @@ def execute_podcast_call_in(chat_id: int, user_id: int, user_text: str, is_voice
 
     task = (
         f"LIVE ON-AIR CALL-IN RESPONSE ({reg}):\n"
-        f"The listener ({user_first_name}) just called into the podcast to answer the hosts' question.\n"
-        "1. In `on_air_host_response_en`, write a lively 2-turn studio response ('Chloe: ...\nMarcus: ...' or 'Jake: ...') welcoming Musa's point on air, reacting to his perspective, and asking a follow-up.\n"
-        "2. In `call_in_language_polish_en_ar`, show a broadcast-ready polish of what Musa said, any ❌ ➔ ✅ fix, and 1 power chunk used by the hosts."
+        f"The listener ({user_first_name}) just called into the podcast.\n"
+        "1. In `on_air_host_response_en`, write a lively 2-turn studio response ('Chloe: ...\nMarcus: ...' or 'Jake: ...') welcoming Musa's point on air using natural spoken contractions, reacting to his perspective, and asking a follow-up.\n"
+        "2. In `call_in_language_polish_en_ar`, show a broadcast-ready polish of what Musa said, any ❌ ➔ ✅ fix, and 1 **bolded power chunk** used by the hosts with Arabic meaning."
     )
-    res: PodcastCallInSchema = call_llm_structured(
-        f"{SYS_PROMPT}\n{task}",
-        f"Episode Context:\n{last_ep}\n\nListener ({user_first_name}) Call-In:\n\"{user_text}\"",
-        PodcastCallInSchema,
-        temp=0.6,
-    )
-    _update_session(user_id, new_turn={"u": f"[Call-In]: {user_text[:180]}", "b": res.on_air_host_response_en[:240]})
+    res: PodcastCallInSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Episode Context:\n{last_ep}\n\nListener ({user_first_name}) Call-In:\n\"{user_text}\"", PodcastCallInSchema, temp=0.6)
+    spoken_resp = _enforce_spoken_contractions(res.on_air_host_response_en)
+    _update_session(user_id, new_turn={"u": f"[Call-In]: {user_text[:180]}", "b": spoken_resp[:240]})
 
-    dialogue_fmt = _format_podcast_script_safe(res.on_air_host_response_en)
+    dialogue_fmt = _format_podcast_script_safe(spoken_resp)
     polish_fmt = _clean_multiline_bullets(res.call_in_language_polish_en_ar)
     v_hdr = f"📞 <b>Your On-Air Voice Call-In:</b> <i>&quot;{_h(user_text)}&quot;</i>\n\n" if is_voice else f"📞 <b>On-Air Response to {_h(user_first_name)}:</b>\n\n"
 
-    html_call = (
-        f"{v_hdr}{dialogue_fmt}\n\n"
-        f"<blockquote expandable>💡 <b>Broadcast Polish &amp; Notes ▼</b>\n\n{polish_fmt}</blockquote>"
-    )
+    html_call = f"{v_hdr}{dialogue_fmt}\n\n<blockquote expandable>💡 <b>Broadcast Polish &amp; Notes ▼</b>\n{polish_fmt}</blockquote>"
     tok = hashlib.md5(f"CAL:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    segs = _split_dialogue_segments(res.on_air_host_response_en, "Chloe")
-    store_card(tok, user_id, segs, {"title": "On-Air Call-In", "main_en": res.on_air_host_response_en, "diagnosis_en": res.call_in_language_polish_en_ar}, [], source_text=user_text)
+    segs = _split_dialogue_segments(spoken_resp, "Chloe")
+    v_items = _extract_clean_vault_items(res.call_in_language_polish_en_ar, spoken_resp)
+    store_card(tok, user_id, segs, {"title": "On-Air Call-In", "main_en": spoken_resp}, v_items, source_text=user_text)
 
     kb = types.InlineKeyboardMarkup()
     kb.row(
-        types.InlineKeyboardButton("🎧 Hear Hosts", callback_data=f"edtts:1x:{tok}"),
+        types.InlineKeyboardButton("💾 Save Chunk", callback_data=f"edsave:{tok}"),
         types.InlineKeyboardButton("🎙️ New Roundtable", callback_data="edpod:roundtable"),
         types.InlineKeyboardButton("⚡ New Clash", callback_data="edpod:clash"),
     )
@@ -1805,31 +1740,9 @@ def execute_podcast_call_in(chat_id: int, user_id: int, user_text: str, is_voice
         threading.Thread(target=_auto_call_audio, daemon=True).start()
 
 # ------------------------------------------------------------------------------
-# محرك 5: ساحة الكويز والإنتاج اللغوي لـ C1/C2 (5 Modes + Distractor Anatomy + Streak)
+# محرك 5: ساحة الكويز والإنتاج اللغوي لـ C1/C2 (بطاقة واحدة موحدة بدون رسائل مكررة)
 # ------------------------------------------------------------------------------
 _QUIZ_STREAK: Dict[int, int] = {}
-
-def send_quiz_hub(chat_id: int, user_id: int):
-    streak = _QUIZ_STREAK.get(user_id, 0)
-    s_badge = f" • 🔥 <b>Streak: {streak}</b>" if streak > 0 else ""
-    kb = types.InlineKeyboardMarkup()
-    kb.row(
-        types.InlineKeyboardButton("🔗 Collocations & Preps", callback_data="edqznext:colloc"),
-        types.InlineKeyboardButton("🏛️ C2 Transformations", callback_data="edqznext:c2"),
-    )
-    kb.row(
-        types.InlineKeyboardButton("🎭 Pragmatic Subtext", callback_data="edqznext:prag"),
-        types.InlineKeyboardButton("💎 My Vault & Mistakes", callback_data="edqznext:vault"),
-    )
-    kb.row(
-        types.InlineKeyboardButton("✍️ Active Production Challenge (Type/Speak)", callback_data="edqznext:produce"),
-    )
-    send_html_safe(
-        chat_id,
-        f"<b>🎯 C1/C2 Active Mastery Arena</b>{s_badge}\n\n"
-        f"Choose your training mode below, or jump straight into the question:",
-        reply_markup=kb,
-    )
 
 def send_quiz(chat_id: int, user_id: int, q_mode: str = "colloc", custom_context: str = ""):
     reg = _get_session(user_id)["register"]
@@ -1844,16 +1757,13 @@ def send_quiz(chat_id: int, user_id: int, q_mode: str = "colloc", custom_context
         kb.row(
             types.InlineKeyboardButton(f"🔍 Lookup '{target_ch[:18]}'", callback_data=f"edqlk_direct:{target_ch}"),
             types.InlineKeyboardButton("🎲 Different Expression", callback_data="edqznext:produce"),
-        )
-        kb.row(
-            types.InlineKeyboardButton("🔗 Switch to Multiple-Choice", callback_data="edqznext:colloc"),
+            types.InlineKeyboardButton("🔗 Multiple-Choice", callback_data="edqznext:colloc"),
         )
         send_html_safe(
             chat_id,
             f"<b>✍️ Active Production Challenge ({_h(reg)})</b>\n\n"
             f"🎯 <b>Target Expression:</b> <code>{_h(target_ch)}</code>\n\n"
-            f"Write (or record a voice note with) <b>one complete, natural sentence</b> in a <i>{_h(reg)}</i> context using <b>{_h(target_ch)}</b>.\n"
-            f"<i>(Send your sentence now and I'll score it and show you the native C1/C2 polish!)</i>",
+            f"Write (or record a voice note with) <b>one complete, natural sentence</b> in a <i>{_h(reg)}</i> context using <b>{_h(target_ch)}</b>:",
             reply_markup=kb,
         )
         return
@@ -1861,22 +1771,9 @@ def send_quiz(chat_id: int, user_id: int, q_mode: str = "colloc", custom_context
     _update_session(user_id, mode="QUIZ", sub_state=f"QUIZ_MC:{q_mode}")
 
     mode_instructions = {
-        "colloc": (
-            "MODE 1 — C1/C2 COLLOCATION & PREPOSITION VALENCY DRILL:\n"
-            "Create a high-precision sentence with a ____ blank testing an advanced verb+noun collocation, phrasal verb, or tricky verb+preposition frame. Make the 3 distractors realistic near-misses (e.g. L1 calques or close synonyms that clash collocationally)."
-        ),
-        "c2": (
-            "MODE 2 — CAMBRIDGE C2 KEY-WORD TRANSFORMATION:\n"
-            "In `scenario_or_stem_en`, provide:\n"
-            "Base Sentence: '[A complete sentence]'\n"
-            "KEY WORD: **[WORD IN CAPS]**\n"
-            "Lead-in with blank: '[Beginning of transformed sentence] ____ [end of sentence].'\n"
-            "Test C2 structures: Negative Inversion ('Little did...', 'Seldom have...'), Cleft structures, Nominalization, or Advanced Phrasal/Prepositional frames."
-        ),
-        "prag": (
-            "MODE 3 — PRAGMATIC SUBTEXT & DIPLOMATIC REGISTER FIT:\n"
-            "In `scenario_or_stem_en`, describe a delicate NYC workplace, negotiation, or academic scenario and ask: 'Which response strikes the exact diplomatic/idiomatic tone without sounding passive-aggressive, overly blunt, or unnatural?'"
-        ),
+        "colloc": "MODE 1 — C1/C2 COLLOCATION & PREPOSITION VALENCY DRILL: Create a sentence with a ____ blank testing an advanced verb+noun collocation, phrasal verb, or verb+preposition frame. Make the 3 distractors realistic near-misses.",
+        "c2": "MODE 2 — CAMBRIDGE C2 KEY-WORD TRANSFORMATION: In `scenario_or_stem_en`, provide Base Sentence, KEY WORD in caps, and Lead-in with ____ blank testing Negative Inversion, Cleft structures, or Nominalization.",
+        "prag": "MODE 3 — PRAGMATIC SUBTEXT & DIPLOMATIC REGISTER FIT: Describe a delicate workplace or academic scenario and ask which response strikes the exact diplomatic/idiomatic tone.",
     }
 
     if custom_context:
@@ -1907,13 +1804,11 @@ def send_quiz(chat_id: int, user_id: int, q_mode: str = "colloc", custom_context
     kb = types.InlineKeyboardMarkup()
     kb.row(*[types.InlineKeyboardButton(f"{x}", callback_data=f"edqz:{x}:{q_mode}:{qid}") for x in ("A", "B", "C", "D")])
     kb.row(
-        types.InlineKeyboardButton("🔗 Collocations", callback_data="edqznext:colloc"),
-        types.InlineKeyboardButton("🏛️ C2 Transform", callback_data="edqznext:c2"),
-        types.InlineKeyboardButton("🎭 Pragmatics", callback_data="edqznext:prag"),
-    )
-    kb.row(
-        types.InlineKeyboardButton("💎 Vault/Radar", callback_data="edqznext:vault"),
-        types.InlineKeyboardButton("✍️ Active Write", callback_data="edqznext:produce"),
+        types.InlineKeyboardButton("🔗 Colloc •" if q_mode == "colloc" else "🔗 Colloc", callback_data="edqznext:colloc"),
+        types.InlineKeyboardButton("🏛️ C2 •" if q_mode == "c2" else "🏛️ C2", callback_data="edqznext:c2"),
+        types.InlineKeyboardButton("🎭 Pragmatic •" if q_mode == "prag" else "🎭 Pragmatic", callback_data="edqznext:prag"),
+        types.InlineKeyboardButton("💎 Vault •" if q_mode == "vault" else "💎 Vault", callback_data="edqznext:vault"),
+        types.InlineKeyboardButton("✍️ Write", callback_data="edqznext:produce"),
     )
 
     stem_fmt = _fmt_inline_md(q.scenario_or_stem_en).replace("\n", "\n\n")
@@ -1932,28 +1827,22 @@ def evaluate_active_quiz_production(chat_id: int, user_id: int, user_text: str, 
     reg = _get_session(user_id)["register"]
     task = (
         f"ACTIVE PRODUCTION EVALUATION ({reg}):\n"
-        f"The user was challenged to write/speak a natural sentence using the target expression: '{target_chunk}'.\n"
-        "Evaluate their attempt accurately, give a score out of 10, fix any grammar/collocation slip (❌ ➔ ✅), and provide both a polished natural version and a C2 analytical variation."
+        f"The user was challenged to write/speak a natural sentence using: '{target_chunk}'.\n"
+        "Give a score out of 10, fix any slip (❌ ➔ ✅), and provide both a polished natural version and a C2 analytical variation."
     )
-    ev: ActiveQuizEvalSchema = call_llm_structured(
-        f"{SYS_PROMPT}\n{task}",
-        f"Target Expression: '{target_chunk}'\nUser's Sentence: \"{user_text}\"",
-        ActiveQuizEvalSchema,
-        temp=0.45,
-    )
+    ev: ActiveQuizEvalSchema = call_llm_structured(f"{SYS_PROMPT}\n{task}", f"Target: '{target_chunk}'\nUser's Sentence: \"{user_text}\"", ActiveQuizEvalSchema, temp=0.45)
     _QUIZ_STREAK[user_id] = _QUIZ_STREAK.get(user_id, 0) + 1
     tok = hashlib.md5(f"QEV:{user_id}:{time.time()}".encode()).hexdigest()[:10]
-    v_segs = [("Chloe", ev.surgical_fix_and_model_en_ar)]
-    store_card(tok, user_id, v_segs, {"title": f"Production Check: {target_chunk}", "main_en": user_text, "diagnosis_en": ev.surgical_fix_and_model_en_ar}, [(target_chunk, ev.evaluation_and_score_en, user_text)], source_text=target_chunk)
+    v_segs = [("Chloe", _clean_tts(ev.surgical_fix_and_model_en_ar))]
+    t_clean, m_clean, c_clean = _clean_vault_entry(target_chunk, ev.evaluation_and_score_en, user_text)
+    store_card(tok, user_id, v_segs, {"title": f"Production: {t_clean}", "main_en": user_text}, [(t_clean, m_clean, c_clean)], source_text=t_clean)
 
     kb = types.InlineKeyboardMarkup()
     kb.row(
-        types.InlineKeyboardButton("✍️ Next Production Prompt", callback_data="edqznext:produce"),
-        types.InlineKeyboardButton("🔗 Multiple-Choice Quiz", callback_data="edqznext:colloc"),
-    )
-    kb.row(
-        types.InlineKeyboardButton(f"🔍 {target_chunk[:20]}", callback_data=f"edlexcard:{tok}"),
-        types.InlineKeyboardButton("💾 Save to Vault", callback_data=f"edsave:{tok}"),
+        types.InlineKeyboardButton("✍️ Next Write Prompt", callback_data="edqznext:produce"),
+        types.InlineKeyboardButton("🔗 Multiple-Choice", callback_data="edqznext:colloc"),
+        types.InlineKeyboardButton(f"🔍 {t_clean[:18]}", callback_data=f"edqlk_direct:{t_clean}"),
+        types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
     )
     v_hdr = f"🎙️ <b>Your Spoken Sentence:</b> <i>&quot;{_h(user_text)}&quot;</i>\n\n" if is_voice else ""
     send_html_safe(
@@ -1967,17 +1856,18 @@ def show_vault(chat_id: int, user_id: int):
     with db_connect() as conn:
         rows = conn.execute("SELECT id, chunk, meaning_ar, context_sentence FROM vault_v15 WHERE user_id=? ORDER BY id DESC LIMIT 12", (user_id,)).fetchall()
     if not rows:
-        send_html_safe(chat_id, "<b>Your Vault is empty.</b>\nTap <b>💾 Save</b> under any card to store expressions for active recall.", reply_markup=build_reply_kb(user_id))
+        send_html_safe(chat_id, "<b>💎 Your Vault is empty.</b>\nTap <b>💾 Save</b> under any card to store expressions for active recall.", reply_markup=build_reply_kb(user_id))
         return
-    blocks = ["<b>Saved Expressions — Active Recall Vault</b>\n<i>(Tap the hidden spoiler bar to test your recall)</i>"]
+    blocks = ["<b>💎 Saved Expressions — Active Recall Vault</b>\n<i>(Tap any spoiler bar to test your memory)</i>"]
     for i, r in enumerate(rows, 1):
         term, m_note, ctx = r[1], r[2], r[3]
         clue = _fmt_inline_md(m_note[:160]) if m_note else _fmt_inline_md(ctx[:160])
-        blocks.append(f"<b>{i}.</b> <tg-spoiler><b>{_h(term)}</b></tg-spoiler>\n• <i>Clue/Context:</i> {clue}")
+        blocks.append(f"<b>{i}.</b> <tg-spoiler><b>{_h(term)}</b></tg-spoiler>\n• <i>Clue:</i> {clue}")
     kb = types.InlineKeyboardMarkup()
     kb.row(
         types.InlineKeyboardButton("🎯 Quiz My Vault", callback_data="edqznext:vault"),
-        types.InlineKeyboardButton("🎙️ Podcast with My Vault", callback_data="edpod:vault"),
+        types.InlineKeyboardButton("🎙️ Podcast with Vault", callback_data="edpod:vault"),
+        types.InlineKeyboardButton("✍️ Write with Vault", callback_data="edqznext:produce"),
     )
     kb.row(
         types.InlineKeyboardButton("📄 PDF Glossary", callback_data="edvault:pdf"),
@@ -1990,93 +1880,75 @@ def show_radar(chat_id: int, user_id: int):
     with db_connect() as conn:
         rows = conn.execute("SELECT error_pattern, native_fix FROM dna_v15 WHERE user_id=? ORDER BY id DESC LIMIT 10", (user_id,)).fetchall()
     if not rows:
-        send_html_safe(chat_id, "<b>Linguistic Radar</b>\nNo recurring error patterns logged yet. Keep chatting and practicing!", reply_markup=build_reply_kb(user_id))
+        send_html_safe(chat_id, "<b>📡 Linguistic Radar</b>\nNo recurring error patterns logged yet. Keep chatting and practicing!", reply_markup=build_reply_kb(user_id))
         return
     lines = [f"• <s>{_h(r[0])}</s> → <b>{_h(r[1])}</b>" for r in rows]
     kb = types.InlineKeyboardMarkup()
     kb.row(types.InlineKeyboardButton("🎯 Drill My Mistake Patterns", callback_data="edqznext:vault"))
-    send_html_safe(chat_id, "<b>Your Personal Linguistic Radar</b>\n<i>Recent adjustments &amp; collocation upgrades:</i>\n\n" + "\n".join(lines), reply_markup=kb)
+    send_html_safe(chat_id, "<b>📡 Your Personal Linguistic Radar</b>\n<i>Recent adjustments &amp; collocation upgrades:</i>\n\n" + "\n".join(lines), reply_markup=kb)
 
 def send_guide(chat_id: int, user_id: int):
     g = (
-        "<b>Musa’s NYC Lounge — Studio Guide</b>\n\n"
-        "• <b>Register Bar (Top):</b> Switch anytime between <b>Casual</b> (everyday spoken NYC), <b>Professional</b> (diplomatic workplace), and <b>Formal</b> (C2 analytical prose).\n\n"
-        "• <b>5 Studio Modes (Bottom):</b>\n"
-        "1. <b>Chat:</b> Spontaneous NYC conversation with 1, 2, or all 3 friends (toggle 🟢/⚪ anytime).\n"
+        "<b>Musa’s NYC Lounge — V24 Studio Guide</b>\n\n"
+        "• <b>Top Bar:</b> Switch register (<b>Casual / Professional / Formal</b>) or open your <b>💎 Vault</b> and <b>📡 Radar</b> in 1 tap.\n"
+        "• <b>Bottom Bar (5 Core Modes):</b>\n"
+        "1. <b>Chat:</b> Spontaneous NYC conversation with 1, 2, or all 3 hosts (toggle 🟢/⚪ anytime).\n"
         "2. <b>Lexicon:</b> 10-pillar dictionary &amp; activator (EN ⇄ AR) with IPA, Oxford Collocations, Hoey Priming &amp; Learner Traps.\n"
-        "3. <b>Study:</b> Precision Draft Editor, AR➔EN Thought Bridge, Modular Text Miner &amp; Live Tutor.\n"
-        "4. <b>Podcast:</b> Roundtable, Clash Debate, Case Study &amp; <i>My Vault Episode</i> with expandable transcripts, fast-speech decoder &amp; live on-air call-ins.\n"
-        "5. <b>Quiz:</b> 5-mode C1/C2 arena (Collocations, C2 Key-Word Transformations, Pragmatics, Vault/Radar &amp; Active Production)."
+        "3. <b>Study:</b> Auto-detects English Drafts, Arabic-to-English thoughts, Articles/PDFs, or Nuance questions.\n"
+        "4. <b>Podcast:</b> 4 formats with expandable transcripts, phonetic decoder &amp; live on-air call-ins.\n"
+        "5. <b>Quiz:</b> 5-mode C1/C2 arena (Collocations, C2 Transformations, Pragmatics, Vault/Radar &amp; Active Writing)."
     )
     send_html_safe(chat_id, g, reply_markup=build_reply_kb(user_id))
 
+# ------------------------------------------------------------------------------
+# لوحة تحكم المالك للأعضاء والحصص اليومية (Admin Panel)
+# ------------------------------------------------------------------------------
 def send_admin_panel(chat_id: int):
-    if int(chat_id) != PRIMARY_OWNER_ID:
-        return
     with db_connect() as conn:
-        rows = conn.execute(
-            "SELECT user_id, full_name, username, status, daily_limit, used_today, total_used FROM members_v17 WHERE user_id != ? ORDER BY total_used DESC",
-            (PRIMARY_OWNER_ID,),
-        ).fetchall()
-
-    lines = ["<b>🔐 Studio Access &amp; Quota Control</b>"]
+        rows = conn.execute("SELECT user_id, name, username, status, daily_limit, used_today FROM members_v17 ORDER BY joined_at DESC LIMIT 20").fetchall()
+    lines = ["<b>👑 Studio Host Admin Panel</b>\n"]
     kb = types.InlineKeyboardMarkup()
-    if not rows:
-        lines.append("\n<i>No friends registered yet. Create a one-click invite link below or forward a message from a friend here.</i>")
-    else:
-        lines.append("\n<b>Members &amp; Today's Usage:</b>")
-        for r in rows[:15]:
-            uid, name, uname, st, lim, used, tot = r
-            lim_str = "∞" if lim < 0 else str(lim)
-            badge = "🟢" if st == "approved" else ("🟡" if st == "pending" else "🔴")
-            u_tag = f" (@{_h(uname)})" if uname else ""
-            lines.append(f"{badge} <b>{_h(name)}</b>{u_tag} — <code>{used}/{lim_str}</code> today (Total: {tot})")
-            kb.row(types.InlineKeyboardButton(f"⚙️ {name[:18]} ({used}/{lim_str})", callback_data=f"adm:view:{uid}"))
-
     kb.row(
-        types.InlineKeyboardButton("🔗 Invite Link (15/day)", callback_data="adm:inv:15"),
-        types.InlineKeyboardButton("🔗 Invite Link (30/day)", callback_data="adm:inv:30"),
+        types.InlineKeyboardButton("🔗 Invite (15/day)", callback_data="adm:inv:15"),
+        types.InlineKeyboardButton("🔗 Invite (30/day)", callback_data="adm:inv:30"),
+        types.InlineKeyboardButton("🔗 Invite (∞)", callback_data="adm:inv:-1"),
     )
+    for r in rows:
+        u_id, nm, un, st, lim, used = r
+        lim_s = "∞" if lim < 0 else str(lim)
+        lines.append(f"• <b>{_h(nm)}</b> (<code>{u_id}</code>) — {st} [{used}/{lim_s}]")
+        if u_id != PRIMARY_OWNER_ID:
+            kb.row(types.InlineKeyboardButton(f"⚙️ {nm[:18]} ({used}/{lim_s})", callback_data=f"adm:view:{u_id}"))
     send_html_safe(chat_id, "\n".join(lines), reply_markup=kb)
 
 def send_member_control_card(chat_id: int, target_uid: int):
-    if int(chat_id) != PRIMARY_OWNER_ID:
-        return
     with db_connect() as conn:
-        r = conn.execute(
-            "SELECT user_id, full_name, username, status, daily_limit, used_today, total_used FROM members_v17 WHERE user_id=?",
-            (target_uid,),
-        ).fetchone()
+        r = conn.execute("SELECT user_id, name, username, status, daily_limit, used_today FROM members_v17 WHERE user_id=?", (target_uid,)).fetchone()
     if not r:
+        send_html_safe(chat_id, "Member not found.")
         return
-    uid, name, uname, st, lim, used, tot = r
-    lim_str = "Unlimited" if lim < 0 else f"{lim} msgs/day"
-    u_tag = f"@{_h(uname)}" if uname else "No username"
-    txt = (
-        f"<b>👤 Member Control — {_h(name)}</b>\n"
-        f"• <b>ID:</b> <code>{uid}</code> ({u_tag})\n"
-        f"• <b>Status:</b> <b>{st.upper()}</b>\n"
-        f"• <b>Daily Quota:</b> <b>{lim_str}</b>\n"
-        f"• <b>Used Today:</b> <code>{used}</code> (Total: <code>{tot}</code>)"
-    )
+    u_id, nm, un, st, lim, used = r
+    lim_s = "Unlimited" if lim < 0 else f"{lim}/day"
     kb = types.InlineKeyboardMarkup()
     kb.row(
-        types.InlineKeyboardButton("5/day", callback_data=f"adm:set:{uid}:5"),
-        types.InlineKeyboardButton("15/day", callback_data=f"adm:set:{uid}:15"),
-        types.InlineKeyboardButton("30/day", callback_data=f"adm:set:{uid}:30"),
-        types.InlineKeyboardButton("50/day", callback_data=f"adm:set:{uid}:50"),
-        types.InlineKeyboardButton("∞", callback_data=f"adm:set:{uid}:-1"),
+        types.InlineKeyboardButton("10/d", callback_data=f"adm:set:{u_id}:10"),
+        types.InlineKeyboardButton("25/d", callback_data=f"adm:set:{u_id}:25"),
+        types.InlineKeyboardButton("50/d", callback_data=f"adm:set:{u_id}:50"),
+        types.InlineKeyboardButton("∞", callback_data=f"adm:set:{u_id}:-1"),
     )
     kb.row(
-        types.InlineKeyboardButton("Reset Today (0)", callback_data=f"adm:rst:{uid}"),
-        types.InlineKeyboardButton("Pause Access" if st == "approved" else "Approve Access", callback_data=f"adm:tog:{uid}"),
+        types.InlineKeyboardButton("🔄 Reset Today", callback_data=f"adm:rst:{u_id}"),
+        types.InlineKeyboardButton("⏯️ Pause/Resume", callback_data=f"adm:tog:{u_id}"),
+        types.InlineKeyboardButton("🔙 All Members", callback_data="adm:list"),
     )
-    kb.row(types.InlineKeyboardButton("← Back to Members List", callback_data="adm:list"))
-    send_html_safe(chat_id, txt, reply_markup=kb)
-
+    send_html_safe(
+        chat_id,
+        f"<b>⚙️ Member Settings</b>\n• <b>Name:</b> {_h(nm)}\n• <b>ID:</b> <code>{u_id}</code>\n• <b>Status:</b> {st}\n• <b>Quota:</b> {used} / {lim_s}",
+        reply_markup=kb,
+    )
 
 # ------------------------------------------------------------------------------
-# معالج الرسائل الرئيسي (Incoming Messages Router)
+# الموجه الرئيسي للرسائل (Incoming Message Router)
 # ------------------------------------------------------------------------------
 def handle_incoming_message(message: types.Message):
     chat_id = message.chat.id
@@ -2093,22 +1965,17 @@ def handle_incoming_message(message: types.Message):
     txt = (message.text or message.caption or "").strip()
     low = txt.lower()
 
-    # 1. تفعيل العضوية عبر رابط الدعوة المباشر (/start inv_xxxx)
     if low.startswith("/start inv_"):
         inv_code = txt.split(maxsplit=1)[1].strip()
         redeemed_lim = redeem_invite_code(inv_code, user_obj)
         if redeemed_lim is not None:
             send_html_safe(
                 chat_id,
-                f"<b>Welcome to Musa’s NYC Lounge, {_h(en_name)}!</b>\n"
-                f"Your private membership is active (<b>{redeemed_lim} sessions/day</b>). Choose a mode below to begin:",
+                f"<b>Welcome to Musa’s NYC Lounge, {_h(en_name)}!</b>\nYour membership is active (<b>{redeemed_lim} sessions/day</b>).",
                 reply_markup=build_reply_kb(uid),
             )
-            if uid != PRIMARY_OWNER_ID:
-                send_html_safe(PRIMARY_OWNER_ID, f"🟢 <b>{_h(en_name)}</b> (<code>{uid}</code>) joined via your invite link ({redeemed_lim}/day).")
             return
 
-    # 2. أوامر المالك لإدارة الأصدقاء والحصص اليومية (/admin)
     if uid == PRIMARY_OWNER_ID:
         if getattr(message, "forward_from", None) and getattr(message.forward_from, "id", None):
             f_user = message.forward_from
@@ -2119,44 +1986,30 @@ def handle_incoming_message(message: types.Message):
         if low in ("/admin", "admin"):
             send_admin_panel(chat_id)
             return
-        if low.startswith("/allow "):
-            pts = txt.split()
-            if len(pts) >= 2 and pts[1].isdigit():
-                t_id = int(pts[1])
-                lim_v = int(pts[2]) if len(pts) >= 3 and pts[2].lstrip("-").isdigit() else 15
-                set_member_quota(t_id, status="approved", daily_limit=lim_v)
-                send_member_control_card(chat_id, t_id)
-                return
 
-    # 3. التحقق من عضوية المستخدم قبل السماح بالدخول
     member = get_or_register_member(user_obj)
     if uid != PRIMARY_OWNER_ID and member["status"] != "approved":
         kb = types.InlineKeyboardMarkup()
         kb.row(types.InlineKeyboardButton("Request Membership Access", callback_data=f"reqacc:{uid}"))
-        send_html_safe(
-            chat_id,
-            "<b>Musa’s NYC Lounge — Private Studio</b>\n\n"
-            "This studio is available by invitation only. Tap below to request access from the host.",
-            reply_markup=kb,
-        )
+        send_html_safe(chat_id, "<b>Musa’s NYC Lounge — Private Studio</b>\nTap below to request access from the host.", reply_markup=kb)
         return
 
-    # 4. أوامر التنقل وتغيير المستوى (لا تستهلك من حصة الرسائل)
-    if low in ("/guide", "guide", "user guide"):
+    # أوامر التنقل العلوية والسفلية
+    if low in ("/guide", "guide"):
         send_guide(chat_id, uid)
         return
-    if low in ("/vault",) or txt.startswith(("Vault", "💎")):
+    if low in ("/vault", "vault") or txt.startswith(("Vault", "💎")):
         show_vault(chat_id, uid)
         return
-    if low in ("/radar", "radar"):
+    if low in ("/radar", "radar") or txt.startswith(("Radar", "📡")):
         show_radar(chat_id, uid)
         return
-    if low in ("/casual", "/informal", "/professional", "/semiformal", "/formal") or txt.startswith(("Casual", "Professional", "Formal")):
-        r_target = "Casual" if "casual" in low else ("Formal" if ("formal" in low and "semi" not in low) else "Professional")
+    if low in ("/casual", "/professional", "/formal") or txt.startswith(("Casual", "Professional", "Formal")):
+        r_target = "Casual" if "casual" in low else ("Formal" if "formal" in low else "Professional")
         _update_session(uid, register=r_target)
         send_html_safe(chat_id, f"<b>Register set to: {r_target}</b>", reply_markup=build_reply_kb(uid))
         return
-    if low in ("/start", "/help", "/new", "new topic") or low in ("/chat", "/lounge") or txt.startswith(("Chat", "💬")):
+    if low in ("/start", "/help", "/new", "/chat", "/lounge") or txt.startswith(("Chat", "💬")):
         reg_now = _get_session(uid)["register"]
         openers = {
             "Casual": [
@@ -2164,8 +2017,8 @@ def handle_incoming_message(message: types.Message):
                 ("Chloe", f"Hey {en_name}! Good to see you in the lounge. What are we getting into today?"),
             ],
             "Professional": [
-                ("Chloe", f"Hi {en_name}. Whether you want to talk through a workplace situation or test an idea with us, the floor is yours."),
-                ("Marcus", f"Hello {en_name}. Good to catch you—what topic or scenario shall we unpack today?"),
+                ("Chloe", f"Hi {en_name}. Whether you want to talk through a workplace situation or test an idea, the floor is yours."),
+                ("Marcus", f"Hello {en_name}. What topic or scenario shall we unpack today?"),
             ],
             "Formal": [
                 ("Marcus", f"Welcome, {en_name}. Share any policy question, theoretical argument, or thesis point you would like to examine."),
@@ -2181,43 +2034,32 @@ def handle_incoming_message(message: types.Message):
         )
         send_html_safe(chat_id, f"<b>{spk_op}</b>\n{_h(line_op)}", reply_markup=build_reply_kb(uid))
         return
-    if low in ("/lexicon", "/dict", "/dictionary") or txt.startswith(("Lexicon", "📖")):
+    if low in ("/lexicon", "/dict") or txt.startswith(("Lexicon", "📖")):
         _update_session(uid, mode="LEXICON", sub_state="")
         send_html_safe(
             chat_id,
-            "<b>Contextual Lexicon &amp; Activator (EN ⇄ AR)</b>\n"
-            "Send any English word/chunk, Arabic phrase/concept, or <i>X vs Y</i> comparison:",
+            "<b>📖 10-Pillar Lexicon &amp; Activator (EN ⇄ AR)</b>\nSend any English word/idiom, Arabic concept, or <i>X vs Y</i> comparison:",
             reply_markup=build_reply_kb(uid),
         )
         return
     if low == "/study" or txt.startswith(("Study", "📚")):
         _update_session(uid, mode="STUDY", sub_state="")
-        s_kb = types.InlineKeyboardMarkup()
-        s_kb.row(
-            types.InlineKeyboardButton("🤖 Smart Auto •", callback_data="edstudylens:auto"),
-            types.InlineKeyboardButton("✍️ Draft Editor", callback_data="edstudylens:draft"),
-            types.InlineKeyboardButton("🌉 AR ➔ EN Bridge", callback_data="edstudylens:bridge"),
-        )
-        s_kb.row(
-            types.InlineKeyboardButton("⛏️ Text Miner", callback_data="edstudylens:miner"),
-            types.InlineKeyboardButton("🎓 Nuance Tutor", callback_data="edstudylens:clinic"),
-        )
         send_html_safe(
             chat_id,
-            "<b>📚 Interactive Study Workbench</b>\n\n"
-            "• <b>✍️ Send an English Draft / Voice Note:</b> Get a clean polished version, surgical ❌➔✅ fixes, and 1-tap buttons for <i>Spoken, Executive, C2 Academic, or Tightened</i> rewrites.\n"
-            "• <b>🌉 Send an Idea in Arabic:</b> Build it natively across Spoken, Executive, and C2 Academic English.\n"
-            "• <b>⛏️ Send an Article / PDF:</b> Harvest the Top 4 chunks first, then tap <i>C2 Templates</i> or <i>Rhetoric &amp; Flow</i> on demand.\n"
-            "• <b>🎯 Reply to Practice:</b> Try using any upgraded chunk right here and I'll coach your sentence!",
-            reply_markup=s_kb,
+            "<b>📚 Interactive Study Workbench</b>\n"
+            "• <b>English Draft / Voice Note</b> ➔ Polished version + ❌➔✅ fixes + vocabulary upgrades.\n"
+            "• <b>Arabic Thought / Paragraph</b> ➔ Spoken, Executive &amp; C2 Academic English bridge.\n"
+            "• <b>Article / PDF</b> ➔ Top 4 chunks + on-demand C2 templates &amp; rhetoric.\n"
+            "• <b>Question or Practice Sentence</b> ➔ Instant coaching &amp; register examples.",
+            reply_markup=build_reply_kb(uid),
         )
         return
     if low == "/podcast" or txt.startswith(("Podcast", "🎙️")):
         _update_session(uid, mode="PODCAST", sub_state="")
         kb = types.InlineKeyboardMarkup()
         kb.row(
-            types.InlineKeyboardButton("🎙️ Roundtable (3 Hosts)", callback_data="edpod:roundtable"),
-            types.InlineKeyboardButton("⚡ Clash Debate (2 Hosts)", callback_data="edpod:clash"),
+            types.InlineKeyboardButton("🎙️ Roundtable (3)", callback_data="edpod:roundtable"),
+            types.InlineKeyboardButton("⚡ Clash Debate (2)", callback_data="edpod:clash"),
         )
         kb.row(
             types.InlineKeyboardButton("🔍 Deep Case Study", callback_data="edpod:case"),
@@ -2225,9 +2067,7 @@ def handle_incoming_message(message: types.Message):
         )
         send_html_safe(
             chat_id,
-            "<b>🎙️ NYC Podcast Studio</b>\n\n"
-            "• <b>4 Episode Formats:</b> Choose <i>Roundtable</i>, <i>Clash Debate</i>, <i>Case Study</i>, or generate an episode using your saved <i>Vault Expressions</i>!\n"
-            "• <b>Custom Topic:</b> Or simply type any topic right now and the hosts will go live on air.",
+            "<b>🎙️ NYC Podcast Studio</b>\nPick an episode format below, or type any topic right now and the hosts will go live on air:",
             reply_markup=kb,
         )
         return
@@ -2235,22 +2075,17 @@ def handle_incoming_message(message: types.Message):
         ok_q, reason_q = check_and_consume_quota(user_obj)
         if not ok_q:
             lim_n = reason_q.split(":")[-1]
-            send_html_safe(chat_id, f"<b>Daily Studio Limit Reached ({lim_n} sessions/day)</b>\nYour quota resets automatically tomorrow. You can review your /vault anytime.")
+            send_html_safe(chat_id, f"<b>Daily Studio Limit Reached ({lim_n} sessions/day)</b>")
             return
         _update_session(uid, mode="QUIZ", sub_state="QUIZ_MC:colloc")
-        send_quiz_hub(chat_id, uid)
+        # إرسال بطاقة السؤال الموحدة مباشرة بدون رسالة ثانية مكررة!
         send_quiz(chat_id, uid, "colloc")
         return
 
-    # 5. فحص الحصة اليومية قبل تشغيل محركات الذكاء الاصطناعي
     ok_quota, q_reason = check_and_consume_quota(user_obj)
     if not ok_quota:
         lim_num = q_reason.split(":")[-1]
-        send_html_safe(
-            chat_id,
-            f"<b>Daily Studio Limit Reached</b>\n"
-            f"You have completed your <b>{lim_num}</b> daily sessions for today. Your quota resets automatically tomorrow, or you can review your saved expressions in /vault anytime.",
-        )
+        send_html_safe(chat_id, f"<b>Daily Studio Limit Reached ({lim_num}/day)</b>\nYour quota resets tomorrow.")
         return
 
     try:
@@ -2272,7 +2107,7 @@ def handle_incoming_message(message: types.Message):
             fid = message.voice.file_id if message.content_type == "voice" else message.audio.file_id
             tr = transcribe_voice(bot.download_file(bot.get_file(fid).file_path))
             if not tr:
-                send_html_safe(chat_id, "Could not catch the audio clearly—please try speaking a bit closer to the microphone.")
+                send_html_safe(chat_id, "Could not catch the audio clearly—please try speaking closer to the microphone.")
             elif _get_session(uid)["mode"] == "QUIZ" and _get_session(uid).get("sub_state", "").startswith("QUIZ_PRODUCE:"):
                 t_ch = _get_session(uid)["sub_state"].split(":", 1)[1]
                 evaluate_active_quiz_production(chat_id, uid, tr, t_ch, is_voice=True)
@@ -2293,10 +2128,12 @@ def handle_incoming_message(message: types.Message):
                 t_ch = sub_st.split(":", 1)[1]
                 evaluate_active_quiz_production(chat_id, uid, txt, t_ch, is_voice=False)
             elif mode == "PODCAST":
-                if sub_st.startswith("PODCAST_ACTIVE") and not low.startswith(("new:", "topic:")):
+                is_new_topic_req = low.startswith(("new:", "topic:", "episode:", "talk about", "discuss ", "debate "))
+                if sub_st.startswith("PODCAST_ACTIVE") and not is_new_topic_req:
                     execute_podcast_call_in(chat_id, uid, txt, is_voice=False, user_first_name=en_name)
                 else:
-                    execute_podcast(chat_id, uid, topic=re.sub(r"^(new|topic)\s*:\s*", "", txt, flags=re.I), fmt_style="roundtable", user_first_name=en_name)
+                    clean_t = re.sub(r"^(new|topic|episode|talk about)\s*:?\s*", "", txt, flags=re.I)
+                    execute_podcast(chat_id, uid, topic=clean_t, fmt_style="roundtable", user_first_name=en_name)
             else:
                 execute_chat_turn(chat_id, uid, txt, is_voice=False, user_first_name=en_name)
     except Exception:
@@ -2308,7 +2145,7 @@ def on_message(message: types.Message):
     threading.Thread(target=handle_incoming_message, args=(message,), daemon=True).start()
 
 # ------------------------------------------------------------------------------
-# معالج الأزرار التفاعلية (Inline Callbacks Router)
+# الموجه الرئيسي للأزرار التفاعلية (Inline Callback Router — Zero Dead/Duplicate Branches)
 # ------------------------------------------------------------------------------
 @bot.callback_query_handler(func=lambda c: True)
 def on_callback(call: types.CallbackQuery):
@@ -2319,35 +2156,18 @@ def on_callback(call: types.CallbackQuery):
     d = (call.data or "").strip()
     fb_txt = (call.message.text or call.message.caption or "").strip()
 
-    # 1. طلب عضوية من صديق جديد
     if d.startswith("reqacc:"):
         m = get_or_register_member(user_obj)
         bot.answer_callback_query(call.id, "Request sent to the host!")
-        bot.edit_message_text(
-            "<b>Request Sent</b>\nYour membership request has been forwarded to the host. You will be notified here as soon as it is approved.",
-            chat_id,
-            call.message.message_id,
-            parse_mode="HTML",
-        )
-        u_tag = f" (@{_h(m['username'])})" if m["username"] else ""
         adm_kb = types.InlineKeyboardMarkup()
         adm_kb.row(
-            types.InlineKeyboardButton("Approve (10/d)", callback_data=f"adm:set:{uid}:10"),
-            types.InlineKeyboardButton("Approve (25/d)", callback_data=f"adm:set:{uid}:25"),
-            types.InlineKeyboardButton("Approve (50/d)", callback_data=f"adm:set:{uid}:50"),
-        )
-        adm_kb.row(
+            types.InlineKeyboardButton("Approve (15/d)", callback_data=f"adm:set:{uid}:15"),
+            types.InlineKeyboardButton("Approve (30/d)", callback_data=f"adm:set:{uid}:30"),
             types.InlineKeyboardButton("Unlimited (∞)", callback_data=f"adm:set:{uid}:-1"),
-            types.InlineKeyboardButton("Decline", callback_data=f"adm:dec:{uid}"),
         )
-        send_html_safe(
-            PRIMARY_OWNER_ID,
-            f"🔔 <b>New Studio Access Request</b>\n• <b>Name:</b> {_h(m['name'])}{u_tag}\n• <b>ID:</b> <code>{uid}</code>\n\nSelect their daily message limit to approve:",
-            reply_markup=adm_kb,
-        )
+        send_html_safe(PRIMARY_OWNER_ID, f"🔔 <b>New Studio Access Request:</b> {_h(m['name'])} (<code>{uid}</code>)", reply_markup=adm_kb)
         return
 
-    # 2. أزرار لوحة تحكم المالك (Admin Callbacks)
     if d.startswith("adm:"):
         if uid != PRIMARY_OWNER_ID:
             bot.answer_callback_query(call.id, "Host access only.")
@@ -2363,21 +2183,12 @@ def on_callback(call: types.CallbackQuery):
         elif act == "set":
             t_uid, lim_v = int(pts[2]), int(pts[3])
             set_member_quota(t_uid, status="approved", daily_limit=lim_v)
-            lim_label = "Unlimited" if lim_v < 0 else f"{lim_v}/day"
-            bot.answer_callback_query(call.id, f"Approved: {lim_label}")
+            bot.answer_callback_query(call.id, "Approved!")
             send_member_control_card(chat_id, t_uid)
-            try:
-                send_html_safe(
-                    t_uid,
-                    f"<b>Welcome to Musa’s NYC Lounge!</b>\nYour membership is active (Daily limit: <b>{lim_label}</b>). Tap any mode below to begin:",
-                    reply_markup=build_reply_kb(t_uid),
-                )
-            except Exception:
-                pass
         elif act == "rst":
             t_uid = int(pts[2])
             set_member_quota(t_uid, reset_today=True)
-            bot.answer_callback_query(call.id, "Today's counter reset to 0!")
+            bot.answer_callback_query(call.id, "Counter reset!")
             send_member_control_card(chat_id, t_uid)
         elif act == "tog":
             t_uid = int(pts[2])
@@ -2387,25 +2198,13 @@ def on_callback(call: types.CallbackQuery):
             set_member_quota(t_uid, status=new_st)
             bot.answer_callback_query(call.id, f"Status: {new_st}")
             send_member_control_card(chat_id, t_uid)
-        elif act == "dec":
-            t_uid = int(pts[2])
-            set_member_quota(t_uid, status="paused", daily_limit=0)
-            bot.answer_callback_query(call.id, "Declined.")
         elif act == "inv":
             lim_v = int(pts[2])
             code = create_invite_code(lim_v)
             b_user = _BOT_USERNAME or bot.get_me().username
-            link = f"https://t.me/{b_user}?start={code}"
-            bot.answer_callback_query(call.id, "Invite link created!")
-            send_html_safe(
-                chat_id,
-                f"🔗 <b>One-Click Friend Invite Link ({lim_v} msgs/day)</b>\n\n"
-                f"Forward this link to your friend. As soon as they tap it, their account activates automatically with <b>{lim_v} sessions/day</b>:\n\n"
-                f"{link}",
-            )
+            send_html_safe(chat_id, f"🔗 <b>Friend Invite Link ({lim_v}/day):</b>\nhttps://t.me/{b_user}?start={code}")
         return
 
-    # 3. التحقق من صلاحية العضو للأزرار العامة
     m_chk = get_or_register_member(user_obj)
     if uid != PRIMARY_OWNER_ID and m_chk["status"] != "approved":
         bot.answer_callback_query(call.id, "Private studio.")
@@ -2414,7 +2213,7 @@ def on_callback(call: types.CallbackQuery):
     if d.startswith("edtts:"):
         tok = d.split(":")[-1]
         c = load_card(tok)
-        segs = c["voice_segs"] if c and c.get("voice_segs") else [("Jake", fb_txt[:800])]
+        segs = c["voice_segs"] if c and c.get("voice_segs") else [("Jake", _clean_tts(fb_txt[:700]))]
         bot.answer_callback_query(call.id, "Preparing studio audio...")
         def _job():
             p = build_audio(segs, slow=("slow" in d))
@@ -2423,48 +2222,40 @@ def on_callback(call: types.CallbackQuery):
                     bot.send_voice(chat_id, af)
                 os.remove(p)
         threading.Thread(target=_job, daemon=True).start()
-    elif d.startswith("edpdf:"):
-        tok = d.split(":")[-1]
-        c = load_card(tok)
-        pdf_d = c["pdf_dict"] if c and c.get("pdf_dict") else {"title": "Study Dossier", "register": "Professional", "main_en": fb_txt[:1500]}
-        bot.answer_callback_query(call.id, "Generating PDF dossier...")
-        def _pjob():
-            p = generate_pdf_sheet(pdf_d)
-            if p and os.path.exists(p):
-                with open(p, "rb") as pf:
-                    bot.send_document(chat_id, pf, caption="<b>NYC Lounge Dossier (PDF)</b>", parse_mode="HTML")
-                os.remove(p)
-        threading.Thread(target=_pjob, daemon=True).start()
     elif d.startswith("edsave:"):
         tok = d.split(":")[-1]
         c = load_card(tok)
-        items = c["vault_items"] if c and c.get("vault_items") else [(fb_txt.splitlines()[0][:80], "", fb_txt[:200])]
+        items = c["vault_items"] if c and c.get("vault_items") else _extract_clean_vault_items(fb_txt, fb_txt[:180])
         saved_cnt = 0
         for it in items:
             if len(it) >= 3 and _save_vault_item(uid, it[0], it[1], it[2]):
                 saved_cnt += 1
         sync_db_async(force=True)
-        bot.answer_callback_query(call.id, f"Saved to your Vault! ({saved_cnt} new)" if saved_cnt else "Updated in your Vault!")
-    elif d.startswith("edlexcard:"):
-        tok = d.split(":")[-1]
-        c = load_card(tok)
-        terms = _extract_lookup_terms(c["vault_items"]) if c and c.get("vault_items") else []
-        target_q = terms[0] if terms else (c["source_text"][:90] if c and c.get("source_text") else fb_txt.splitlines()[0][:80])
-        bot.answer_callback_query(call.id, f"Opening Lexicon: {target_q[:24]}...")
-        threading.Thread(target=execute_lexicon_lookup, args=(chat_id, uid, target_q), daemon=True).start()
+        bot.answer_callback_query(call.id, f"Saved {saved_cnt} expression(s) to Vault!" if saved_cnt else "Saved/Updated in your Vault!")
     elif d.startswith("edqlk:"):
         _, idx_s, tok = d.split(":", 2)
         c = load_card(tok)
         terms = _extract_lookup_terms(c["vault_items"]) if c and c.get("vault_items") else []
         idx = int(idx_s) if idx_s.isdigit() else 0
-        target_q = terms[idx] if idx < len(terms) else (terms[0] if terms else fb_txt[:60])
-        bot.answer_callback_query(call.id, f"Looking up: {target_q[:24]}...")
+        target_q = terms[idx] if idx < len(terms) else (terms[0] if terms else fb_txt.splitlines()[0][:40])
+        bot.answer_callback_query(call.id, f"Lexicon: {target_q[:22]}...")
+        threading.Thread(target=execute_lexicon_lookup, args=(chat_id, uid, target_q), daemon=True).start()
+    elif d.startswith("edqlk_direct:"):
+        term_d = d.split(":", 1)[1]
+        bot.answer_callback_query(call.id, f"Lexicon: {term_d[:22]}...")
+        threading.Thread(target=execute_lexicon_lookup, args=(chat_id, uid, term_d), daemon=True).start()
+    elif d.startswith("edlexcard:"):
+        tok = d.split(":")[-1]
+        c = load_card(tok)
+        terms = _extract_lookup_terms(c["vault_items"]) if c and c.get("vault_items") else []
+        target_q = terms[0] if terms else (c["source_text"].splitlines()[0][:45] if c and c.get("source_text") else fb_txt.splitlines()[0][:40])
+        bot.answer_callback_query(call.id, f"Lexicon: {target_q[:22]}...")
         threading.Thread(target=execute_lexicon_lookup, args=(chat_id, uid, target_q), daemon=True).start()
     elif d.startswith("edlexext:"):
         _, ext_type, tok = d.split(":", 2)
         c = load_card(tok)
-        term = c["source_text"] if c and c.get("source_text") else fb_txt.splitlines()[0]
-        bot.answer_callback_query(call.id, "Loading deep dive...")
+        term = c["source_text"].splitlines()[0] if c and c.get("source_text") else fb_txt.splitlines()[0]
+        bot.answer_callback_query(call.id, "Contrasting synonyms...")
         threading.Thread(target=execute_lexicon_extension, args=(chat_id, uid, term, ext_type), daemon=True).start()
     elif d.startswith("edroster:"):
         _, h_toggle, tok = d.split(":", 2)
@@ -2474,10 +2265,10 @@ def on_callback(call: types.CallbackQuery):
                 bot.answer_callback_query(call.id, f"At least one friend ({h_toggle}) must stay in the chat!")
                 return
             cur_r.remove(h_toggle)
-            action_note = f"{h_toggle} stepped out. Active now: {', '.join(cur_r)}"
+            action_note = f"{h_toggle} stepped out. Active: {', '.join(cur_r)}"
         else:
             cur_r.append(h_toggle)
-            action_note = f"{h_toggle} joined! Active now: {', '.join(cur_r)}"
+            action_note = f"{h_toggle} joined! Active: {', '.join(cur_r)}"
         updated_r = _set_active_roster(uid, cur_r)
         bot.answer_callback_query(call.id, action_note)
         c = load_card(tok)
@@ -2486,39 +2277,28 @@ def on_callback(call: types.CallbackQuery):
             bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=build_inline_kb(tok, "chat", l_terms, roster=updated_r))
         except Exception:
             pass
-
-    elif d.startswith("edmore:"):
-        tok = d.split(":", 1)[1]
-        c = load_card(tok)
-        bot.answer_callback_query(call.id, "Mining next batch...")
-        threading.Thread(target=execute_study_and_miner, args=(chat_id, uid, c["source_text"] if c else fb_txt, False, c["mined_so_far"] if c else "previous batch", ""), daemon=True).start()
-    elif d.startswith("edqztext:"):
-        tok = d.split(":", 1)[1]
-        c = load_card(tok)
-        bot.answer_callback_query(call.id, "Building quiz from text...")
-        threading.Thread(target=send_quiz, args=(chat_id, uid, "standard", c["source_text"] if c else fb_txt), daemon=True).start()
     elif d.startswith("edshift:"):
         _, sh, tok = d.split(":", 2)
         c = load_card(tok)
         bot.answer_callback_query(call.id, "Transforming style...")
         threading.Thread(target=execute_study_and_miner, args=(chat_id, uid, c["source_text"] if c else fb_txt, False, "", sh), daemon=True).start()
-    elif d.startswith("edqlk_direct:"):
-        term_d = d.split(":", 1)[1]
-        bot.answer_callback_query(call.id, f"Looking up: {term_d[:22]}...")
-        threading.Thread(target=execute_lexicon_lookup, args=(chat_id, uid, term_d), daemon=True).start()
-    elif d.startswith("edpodview:"):
-        _, v_type, tok = d.split(":", 2)
+    elif d.startswith("edmore:"):
+        pts = d.split(":")
+        sub_m = pts[1] if len(pts) == 3 else "chunks"
+        tok = pts[-1]
         c = load_card(tok)
-        if not c:
-            bot.answer_callback_query(call.id, "Episode data not found.")
-            return
-        bot.answer_callback_query(call.id, "Opening full view...")
-        if v_type == "tr":
-            scr_fmt = _format_podcast_script_safe(c["pdf_dict"].get("main_en", ""))
-            send_html_safe(chat_id, f"<b>📜 Full Episode Transcript — {_h(c['pdf_dict'].get('title', ''))}</b>\n\n{scr_fmt}")
-        else:
-            ch_fmt = _format_unified_senses(c["pdf_dict"].get("diagnosis_en", ""))
-            send_html_safe(chat_id, f"<b>💎 Episode Chunks &amp; Fast-Speech Decoder</b>\n\n{ch_fmt}")
+        prev_str = c["mined_so_far"] if c and c.get("mined_so_far") else "previous batch"
+        if sub_m == "skel":
+            prev_str = f"SKEL_ONLY::{prev_str}"
+        elif sub_m == "rhet":
+            prev_str = f"RHET_ONLY::{prev_str}"
+        bot.answer_callback_query(call.id, "Mining deep patterns...")
+        threading.Thread(target=execute_study_and_miner, args=(chat_id, uid, c["source_text"] if c else fb_txt, False, prev_str, ""), daemon=True).start()
+    elif d.startswith("edqztext:"):
+        tok = d.split(":", 1)[1]
+        c = load_card(tok)
+        bot.answer_callback_query(call.id, "Building targeted drill...")
+        threading.Thread(target=send_quiz, args=(chat_id, uid, "colloc", c["source_text"] if c else fb_txt), daemon=True).start()
     elif d.startswith("edpod:"):
         fmt_s = d.split(":", 1)[1]
         h_n = 3 if fmt_s in ("roundtable", "vault", "3") else 2
@@ -2545,24 +2325,17 @@ def on_callback(call: types.CallbackQuery):
 
             bot.answer_callback_query(call.id, f"✓ Spot on! (Streak: {_QUIZ_STREAK[uid]})" if is_right else f"Best choice: {corr}")
             tok = hashlib.md5(f"QZR:{uid}:{time.time()}".encode()).hexdigest()[:10]
-            v_segs = [("Marcus", q.complete_native_sentence_en or q.scenario_or_stem_en)]
-            store_card(
-                tok,
-                uid,
-                v_segs,
-                {"title": q.quiz_mode_badge_en, "main_en": q.complete_native_sentence_en, "diagnosis_en": f"{q.winning_reason_en_ar}\n\n{q.distractor_anatomy_en}"},
-                [(q.target_expression_en, q.winning_reason_en_ar, q.complete_native_sentence_en)],
-                source_text=q.target_expression_en,
-            )
+            v_segs = [("Marcus", _clean_tts(q.complete_native_sentence_en or q.scenario_or_stem_en))]
+            t_clean, m_clean, c_clean = _clean_vault_entry(q.target_expression_en, q.winning_reason_en_ar, q.complete_native_sentence_en)
+            store_card(tok, uid, v_segs, {"title": q.quiz_mode_badge_en, "main_en": q.complete_native_sentence_en}, [(t_clean, m_clean, c_clean)], source_text=t_clean)
+
             kb = types.InlineKeyboardMarkup()
             kb.row(
                 types.InlineKeyboardButton(f"➡️ Next ({q_mode_origin.upper()})", callback_data=f"edqznext:{q_mode_origin}"),
-                types.InlineKeyboardButton("🎧 Hear Sentence", callback_data=f"edtts:1x:{tok}"),
+                types.InlineKeyboardButton("🎧 Hear", callback_data=f"edtts:1x:{tok}"),
+                types.InlineKeyboardButton(f"🔍 {t_clean[:16]}", callback_data=f"edlexcard:{tok}"),
+                types.InlineKeyboardButton("✍️ Use It", callback_data=f"edqztry:{tok}"),
                 types.InlineKeyboardButton("💾 Save", callback_data=f"edsave:{tok}"),
-            )
-            kb.row(
-                types.InlineKeyboardButton(f"🔍 {q.target_expression_en[:20]}", callback_data=f"edlexcard:{tok}"),
-                types.InlineKeyboardButton("✍️ Try Using It Yourself", callback_data=f"edqztry:{tok}"),
             )
             verdict_hdr = (
                 f"<b>✅ Correct ({corr})! • 🔥 Streak: {_QUIZ_STREAK[uid]}</b>"
@@ -2573,7 +2346,7 @@ def on_callback(call: types.CallbackQuery):
                 f"{verdict_hdr}\n\n"
                 f"🗣️ <b>Complete Sentence:</b>\n<i>&quot;{_fmt_inline_md(q.complete_native_sentence_en)}&quot;</i>\n\n"
                 f"<b>🎯 Why ({corr}) Wins:</b>\n{_fmt_inline_md(q.winning_reason_en_ar)}\n\n"
-                f"<blockquote expandable>🔬 <b>Why the Other Options Fail (Distractor Anatomy) ▼</b>\n\n{_clean_multiline_bullets(q.distractor_anatomy_en)}</blockquote>"
+                f"<blockquote expandable>🔬 <b>Why the Other Options Fail ▼</b>\n{_clean_multiline_bullets(q.distractor_anatomy_en)}</blockquote>"
             )
             send_html_safe(chat_id, res_html, reply_markup=kb)
     elif d.startswith("edqztry:"):
@@ -2582,10 +2355,7 @@ def on_callback(call: types.CallbackQuery):
         target_ch = c["source_text"] if c and c.get("source_text") else "hold off on"
         _update_session(uid, mode="QUIZ", sub_state=f"QUIZ_PRODUCE:{target_ch}")
         bot.answer_callback_query(call.id, "Your turn! Type or speak a sentence.")
-        send_html_safe(
-            chat_id,
-            f"✍️ <b>Active Production Turn:</b>\nWrite or record a sentence right now using <code>{_h(target_ch)}</code> and I'll score and polish it!",
-        )
+        send_html_safe(chat_id, f"✍️ <b>Active Production Turn:</b>\nWrite or record a sentence right now using <code>{_h(target_ch)}</code> and I'll score and polish it!")
     elif d.startswith("edqznext:"):
         qm = d.split(":", 1)[1]
         bot.answer_callback_query(call.id, f"Loading {qm.upper()} drill...")
@@ -2624,45 +2394,24 @@ if os.environ.get("LIVE_SELF_TEST") == "1":
     except Exception:
         pass
     sync_telegram_identity()
+    # اختبار فلاتر الصوت والخزنة وتوليد رد سريع للتأكد من سلامة كافة الوحدات
+    assert "المعنى" not in _clean_tts("hold off on — المعنى السياقي: تأجيل ❌ ➔ ✅")
+    v_test = _extract_clean_vault_items("• simple word ➔ **iron out** (يذلل العقبات) — \"We need to iron out the details.\"", "context")
+    assert v_test and v_test[0][0] == "iron out"
     oid = PRIMARY_OWNER_ID
-    _update_session(oid, mode="CHAT", register="Casual", clear_hist=True, new_turn={"u": "[Joined]", "b": "Chloe: Hey Musa! What are we getting into today?"})
-    res_c = execute_chat_turn(
-        oid,
-        oid,
-        "Nothing interesting to be honest, just relaxing in bed",
-        is_voice=False,
-        user_first_name="Musa",
-    )
+    res_c = execute_chat_turn(oid, oid, "Hey Chloe, quick check on the new clean layout!", is_voice=False, user_first_name="Musa")
     if not res_c.primary_reply_en.strip():
-        raise RuntimeError("Self-test failed: Empty primary_bubble_en")
-    print("   🎯 Verified Primary Speaker Continuity:", res_c.primary_speaker, "->", res_c.primary_reply_en[:80])
-    print("   🎯 Verified Zero Fake Fixes on Correct Line:", "has_actual_errors =", res_c.has_actual_errors)
+        raise RuntimeError("Self-test failed: Empty primary_reply_en")
     print("✅ STUDIO_V18_VERIFIED_OK", flush=True)
     os._exit(0)
 
 if __name__ == "__main__":
-    print("🚀 Musa's NYC Lounge Polling Active (Single-Instance Lock)...", flush=True)
+    print("🚀 Musa's NYC Lounge V24 Master Edition Polling Active...", flush=True)
     try:
         bot.remove_webhook()
     except Exception:
         pass
     sync_telegram_identity()
-    try:
-        _update_session(
-            PRIMARY_OWNER_ID,
-            mode="CHAT",
-            register="Casual",
-            clear_hist=True,
-            new_turn={"u": "[Entered the lounge]", "b": "Chloe: Hey Musa—everything's set up and the table is yours. How's your evening going?"},
-        )
-        send_html_safe(
-            PRIMARY_OWNER_ID,
-            "<b>Chloe</b>\nHey Musa—everything's set up and the table is yours. How's your evening going?",
-            reply_markup=build_reply_kb(PRIMARY_OWNER_ID),
-        )
-    except Exception:
-        pass
-
     _START = time.time()
     def _timer():
         while time.time() - _START < 5.3 * 3600:
