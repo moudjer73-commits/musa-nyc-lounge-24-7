@@ -41,14 +41,13 @@ except Exception:
     HAS_PYPDF = False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("NYCLoungeV16")
+logger = logging.getLogger("NYCLoungeV16_1")
 
 PRIMARY_OWNER_ID = "8874707150"
 HF_REPO_ID = "moudjer/musa-nyc-lounge-vault"
 EMBEDDED_HF_REV_B64 = "==AWVd0YClmbM5UQsNVRJh3SRl0cotkY1pUR4hlRGd3QmNGZfZGa"
 EMBEDDED_CFG_B64 = "fSJ0bHVhdi1lZ251b2wtY3luLWFzdW0vcmVqZHVvbSIgOiJPUEVSX0JEX0ZIIiAsIlhVR2NCaW5MTkFsU0VJeEtRSXNoS2J1SkV4WEZGd0NmY2RfZmgiIDoiTkVLT1RfRkgiICwiaHNhbGYtNS4zLWluaW1lZyIgOiJMRURPTV9JTklNRUdfREVJRklSRVYiICwiVUY3ZDF0YVVkNGR4SFlVRnhUNWRuQ05MWUYzYnlkR1dIV0VncWNpYVEyODJpODhWQ2p4NV9rc2csbE1rV2I5eERaSjFSMHEzd0RPMlZpN2RHWUYzYnlkR1dOVWhMMW1tZVJUYUsyYThDc1prOV9rc2ciIDoiU1lFS19RT1JHX0RFSUZJUkVWIiAsIkFNTEowcmMtRzctZERvMkxaWUEtNTQyM29EV0pjV0R6ME5NZTJyVEROZHhJNk5SOGJBLlFBLGd3X3FvX2hqQy02Qlk1bld4cEhTUFNaQ016REtSV2FYR1Z1NE91NEhHcVNMNk5SOGJBLlFBLFEzSzI4V1pESU9wV1ptZjhRaGJQZzVvS21wRUxEcHNZQU1BUHJ6NmF4c0xMNk5SOGJBLlFBLHdtandrWHEwWWZiTXJxTm02LWdqcENUQVV2d0lzZ2ExWmpHc0JKR1RneU1JNk5SOGJBLlFBIiA6IlNZRUtfSU5JTUVHX0RFSUZJUkVWIiAsIjR2UlU5OEZFRWllaXNVZVItZEU2UWtWLUw4RnhKV1A0RkFBOjI3MDYzODI2OTgiIDoiTkVLT1RfR1RfREVJRklSRVYiew=="
 
-# استخدام مسار في /tmp مضمون الكتابة 100% على جميع أنظمة التشغيل
 DB_PATH = "/tmp/musa_nyc_lounge_active.db"
 os.makedirs("/tmp/tts_cache_hd", exist_ok=True)
 os.makedirs("/tmp/pdf_exports", exist_ok=True)
@@ -119,10 +118,11 @@ def _collect_groq_keys() -> List[str]:
     return _parse_key_list(["VERIFIED_GROQ_KEYS", "GROQ_API_KEY", "GROQ_KEYS"])
 
 # ------------------------------------------------------------------------------
-# قاعدة البيانات المعزولة والمحصنة ضد القراءة فقط
+# قاعدة البيانات
 # ------------------------------------------------------------------------------
 _db_lock = threading.Lock()
 _last_sync_ts = 0.0
+_PROCESSED_MSG_IDS = set()
 
 def db_connect() -> sqlite3.Connection:
     try:
@@ -130,10 +130,9 @@ def db_connect() -> sqlite3.Connection:
             os.chmod(DB_PATH, 0o666)
     except Exception:
         pass
-    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
-    return conn
+    return sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
 
-def _init_v16_tables():
+def _init_tables():
     with _db_lock, db_connect() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS session_v15 (
@@ -185,7 +184,7 @@ def _init_v16_tables():
         """)
         conn.commit()
 
-_init_v16_tables()
+_init_tables()
 
 def sync_db_async(force: bool = False):
     global _last_sync_ts
@@ -290,27 +289,50 @@ def _log_dna(user_id: int, corr_lines: str):
         pass
 
 # ------------------------------------------------------------------------------
-# محرك الذكاء الاصطناعي السريع بمهلة 8 ثوانٍ وتخطي المفاتيح المستنفدة فوراً
+# محرك الذكاء الاصطناعي الموثق (يرفض أي قالب فارغ وينتقل للنموذج النشط فوراً)
 # ------------------------------------------------------------------------------
-FAST_GROQ_MODELS = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-]
-FAST_GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-]
+_PINNED_GROQ: Optional[Tuple[str, str]] = None
+_PINNED_GEMINI: Optional[Tuple[str, str]] = None
 
-_COOLDOWN_UNTIL: Dict[str, float] = {}
-_LAST_GOOD_ROUTE: Optional[Tuple[str, str, str]] = None
+def _discover_groq_models(client: Groq) -> List[str]:
+    cands = []
+    try:
+        for m in getattr(client.models.list(), "data", []):
+            mid = getattr(m, "id", "") or ""
+            low = mid.lower()
+            if not any(x in low for x in ("whisper", "guard", "tts", "playai", "orpheus", "embed", "vision", "allam", "deepseek")):
+                cands.append(mid)
+    except Exception:
+        pass
+    cands.sort(key=lambda x: 1 if "llama-3.3-70b" in x.lower() or "llama-4" in x.lower() else (2 if "70b" in x.lower() else 4))
+    return cands[:6] if cands else ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+def _discover_gemini_models(client: genai.Client) -> List[str]:
+    cands = []
+    try:
+        for m in client.models.list():
+            sn = (getattr(m, "name", "") or "").replace("models/", "")
+            if "gemini" in sn.lower() and not any(x in sn.lower() for x in ("embedding", "imagen", "veo", "aqa", "tts", "audio", "learnlm")):
+                cands.append(sn)
+    except Exception:
+        pass
+    cands.sort(key=lambda x: 1 if "2.5-flash-lite" in x else (2 if "2.0-flash" in x else (3 if "flash" in x else 6)))
+    return cands[:6] if cands else ["gemini-2.5-flash-lite", "gemini-2.0-flash"]
+
+def _is_populated(obj: Any) -> bool:
+    # التحقق الصارم من أن النموذج ملأ الحقول فعلياً ولم يرجع نصاً فارغاً
+    d = obj.model_dump() if hasattr(obj, "model_dump") else {}
+    for check_col in ("recast_casual_en", "core_output_en", "script_en", "scenario_en"):
+        if check_col in d:
+            return len(str(d.get(check_col) or "").strip()) > 5
+    return True
 
 def _parse_schema_safe(raw_txt: str, schema_cls: Any) -> Any:
     t = re.sub(r"<think>.*?</think>", "", (raw_txt or "").strip(), flags=re.DOTALL).strip()
     t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t).strip()
+    res = None
     try:
-        return schema_cls.model_validate_json(t)
+        res = schema_cls.model_validate_json(t)
     except Exception:
         m = re.search(r"\{.*\}", t, flags=re.DOTALL)
         if m:
@@ -325,77 +347,84 @@ def _parse_schema_safe(raw_txt: str, schema_cls: Any) -> Any:
                     clean_d[k] = v
                 elif v is not None:
                     clean_d[k] = str(v)
-            return schema_cls(**clean_d)
-        raise
-
-def _try_single_route(prov: str, api_key: str, model_id: str, sys_p: str, usr_p: str, j_inst: str, schema_cls: Any, temp: float) -> Any:
-    if prov == "groq":
-        gc = Groq(api_key=api_key, timeout=8.5, max_retries=0)
-        cc = gc.chat.completions.create(
-            model=model_id,
-            messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
-            response_format={"type": "json_object"},
-            temperature=temp,
-        )
-        return _parse_schema_safe(cc.choices[0].message.content, schema_cls)
-    else:
-        mc = genai.Client(api_key=api_key, http_options={"timeout": 9000})
-        resp = mc.models.generate_content(
-            model=model_id,
-            contents=usr_p,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=sys_p + j_inst,
-                response_mime_type="application/json",
-                response_schema=schema_cls,
-                temperature=temp,
-            ),
-        )
-        if resp and resp.text:
-            return _parse_schema_safe(resp.text, schema_cls)
-        raise RuntimeError("Empty Gemini response")
+            res = schema_cls(**clean_d)
+    if res is None or not _is_populated(res):
+        raise ValueError("Empty or unpopulated schema returned by model")
+    return res
 
 def call_llm_structured(sys_p: str, usr_p: str, schema_cls: Any, temp: float = 0.6) -> Any:
-    global _LAST_GOOD_ROUTE
+    global _PINNED_GROQ, _PINNED_GEMINI
     f_names = list(schema_cls.model_fields.keys())
     f_desc = "\n".join([f'- "{k}": {v.description}' for k, v in schema_cls.model_fields.items()])
-    j_inst = f"\n\nReturn strictly a flat JSON object with these keys:\n{f_desc}\nRequired keys: {json.dumps(f_names)}. Every string field must be a plain string (never HTML-encode apostrophes)."
+    j_inst = (
+        f"\n\nReturn strictly a valid flat JSON object with ALL of these exact keys filled out completely (never leave strings empty):\n{f_desc}\n"
+        f"Required keys: {json.dumps(f_names)}. Every string value must be a single non-empty string."
+    )
 
-    now = time.time()
-    if _LAST_GOOD_ROUTE:
-        prov, k, m = _LAST_GOOD_ROUTE
-        if _COOLDOWN_UNTIL.get(f"{prov}:{k}:{m}", 0) < now:
-            try:
-                return _try_single_route(prov, k, m, sys_p, usr_p, j_inst, schema_cls, temp)
-            except Exception as e:
-                _COOLDOWN_UNTIL[f"{prov}:{k}:{m}"] = now + (90 if "429" in str(e) or "rate" in str(e).lower() else 30)
-                _LAST_GOOD_ROUTE = None
+    if _PINNED_GROQ:
+        gk, gm = _PINNED_GROQ
+        try:
+            cc = Groq(api_key=gk, timeout=18.0).chat.completions.create(
+                model=gm, messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
+                response_format={"type": "json_object"}, temperature=temp,
+            )
+            return _parse_schema_safe(cc.choices[0].message.content, schema_cls)
+        except Exception:
+            _PINNED_GROQ = None
 
-    routes = []
+    if _PINNED_GEMINI:
+        mk, gm_id = _PINNED_GEMINI
+        try:
+            mc = genai.Client(api_key=mk)
+            resp = mc.models.generate_content(
+                model=gm_id, contents=usr_p,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=sys_p + j_inst,
+                    response_mime_type="application/json",
+                    temperature=temp,
+                ),
+            )
+            if resp and resp.text:
+                return _parse_schema_safe(resp.text, schema_cls)
+        except Exception:
+            _PINNED_GEMINI = None
+
     for gk in _collect_groq_keys():
-        for gm in FAST_GROQ_MODELS:
-            routes.append(("groq", gk, gm))
+        try:
+            gc = Groq(api_key=gk, timeout=18.0)
+            for gm in _discover_groq_models(gc):
+                try:
+                    cc = gc.chat.completions.create(
+                        model=gm, messages=[{"role": "system", "content": sys_p + j_inst}, {"role": "user", "content": usr_p}],
+                        response_format={"type": "json_object"}, temperature=temp,
+                    )
+                    res = _parse_schema_safe(cc.choices[0].message.content, schema_cls)
+                    _PINNED_GROQ = (gk, gm)
+                    return res
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
     for mk in _collect_gemini_keys():
-        for gm_id in FAST_GEMINI_MODELS:
-            routes.append(("gemini", mk, gm_id))
-
-    for prov, k, m in routes:
-        r_key = f"{prov}:{k}:{m}"
-        if _COOLDOWN_UNTIL.get(r_key, 0) > time.time():
-            continue
         try:
-            res = _try_single_route(prov, k, m, sys_p, usr_p, j_inst, schema_cls, temp)
-            _LAST_GOOD_ROUTE = (prov, k, m)
-            return res
-        except Exception as e:
-            err_s = str(e).lower()
-            cd_sec = 120 if ("429" in err_s or "rate" in err_s or "quota" in err_s) else 30
-            _COOLDOWN_UNTIL[r_key] = time.time() + cd_sec
-            continue
-
-    _COOLDOWN_UNTIL.clear()
-    for prov, k, m in routes[:4]:
-        try:
-            return _try_single_route(prov, k, m, sys_p, usr_p, j_inst, schema_cls, temp)
+            mc = genai.Client(api_key=mk)
+            for gm_id in _discover_gemini_models(mc):
+                try:
+                    resp = mc.models.generate_content(
+                        model=gm_id, contents=usr_p,
+                        config=genai_types.GenerateContentConfig(
+                            system_instruction=sys_p + j_inst,
+                            response_mime_type="application/json",
+                            temperature=temp,
+                        ),
+                    )
+                    if resp and resp.text:
+                        res = _parse_schema_safe(resp.text, schema_cls)
+                        _PINNED_GEMINI = (mk, gm_id)
+                        return res
+                except Exception:
+                    continue
         except Exception:
             continue
 
@@ -420,7 +449,7 @@ def build_audio(segments: List[Tuple[str, str]], slow: bool = False) -> Optional
     valid = [(s, _clean_tts(re.sub(r"^\s*(Jake|Chloe|Marcus)\s*:\s*", "", t))) for s, t in segments if len(_clean_tts(t)) > 2]
     if not valid:
         return None
-    h_k = hashlib.md5(f"V16::{rate}::{'||'.join([f'{s}:{t}' for s,t in valid])}".encode()).hexdigest()
+    h_k = hashlib.md5(f"V16_1::{rate}::{'||'.join([f'{s}:{t}' for s,t in valid])}".encode()).hexdigest()
     cache_p = f"/tmp/tts_cache_hd/{h_k}.mp3"
     if os.path.exists(cache_p) and os.path.getsize(cache_p) > 800:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -446,7 +475,7 @@ def build_audio(segments: List[Tuple[str, str]], slow: bool = False) -> Optional
         with open(list_f, "w") as lf:
             for pf in parts:
                 lf.write(f"file '{pf}'\n")
-        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_f, "-ar", "48000", "-ac", "1", "-b:a", "128k", out_p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_f, "-ar", "48000", "-ac", "1", "-b:a", "128k", out_p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=35)
         for pf in parts + [list_f]:
             try:
                 os.remove(pf)
@@ -472,7 +501,7 @@ def transcribe_voice(v_bytes: bytes) -> str:
     for gk in _collect_groq_keys():
         try:
             with open(target, "rb") as af:
-                tr = Groq(api_key=gk, timeout=12.0).audio.transcriptions.create(file=("v.mp3", af.read()), model="whisper-large-v3-turbo")
+                tr = Groq(api_key=gk, timeout=15.0).audio.transcriptions.create(file=("v.mp3", af.read()), model="whisper-large-v3-turbo")
             if tr and getattr(tr, "text", "").strip():
                 return tr.text.strip()
         except Exception:
@@ -505,12 +534,12 @@ def generate_pdf_sheet(pdf_data: Dict[str, Any]) -> Optional[str]:
 # القوالب التحريرية المحصنة
 # ------------------------------------------------------------------------------
 class ChatSchema(BaseModel):
-    primary_speaker: str = Field(default="Jake", description="Speaker name ('Jake', 'Chloe', or 'Marcus'). MUST match whoever the user addressed by name or whoever spoke last!")
-    dialogue_en: str = Field(default="Jake: That makes total sense—let's talk it over. How do you see it playing out?", description="Natural 2-3 sentence spoken reply reacting directly to the user's exact situation/feeling first, then adding a fresh angle.")
+    primary_speaker: str = Field(default="Chloe", description="Speaker name ('Jake', 'Chloe', or 'Marcus'). MUST match whoever the user addressed by name or whoever spoke last!")
+    dialogue_en: str = Field(default="", description="Natural 2-3 sentence spoken reply reacting directly to the user's exact situation/feeling first, then adding a fresh angle.")
     has_actual_errors: bool = Field(default=False, description="True if the USER's message has ANY grammar, verb-preposition trap (like 'discuss about'), collocation error (like 'take a fast decision'), or indirect-question word-order error. Ignore missing commas in casual texting!")
     error_corrections_list: str = Field(default="", description="Analyze ONLY the user's message. Put every grammar, preposition ('discuss with X about Y' -> 'talk to X about Y' or 'discuss Y with X'), and collocation ('take a fast decision' -> 'make a quick decision') error here on separate lines as 'wrong phrase -> right phrase'.")
     better_alternatives_list: str = Field(default="", description="Analyze ONLY the user's words (NEVER the bot's reply!). Give 1-2 stronger native idioms/upgrades for already-correct simple phrases ('user phrase -> stronger native phrase'). Leave empty if user's short greeting is already natural.")
-    tone_and_why_en: str = Field(default="Tone: Clear and direct.", description="Evaluate ONLY the USER's message tone and explain why the corrections were made.")
+    tone_and_why_en: str = Field(default="", description="Evaluate ONLY the USER's message tone and explain why the corrections were made.")
     recast_casual_en: str = Field(default="", description="How a native speaker naturally says the USER's message in Casual talk")
     recast_professional_en: str = Field(default="", description="How a native speaker naturally expresses the USER's intent in a real workplace (natural human speech, NO stiff robot-speak!)")
     recast_formal_en: str = Field(default="", description="How a native writer expresses the USER's point in authentic executive/academic prose")
@@ -531,9 +560,9 @@ class StudyMinerSchema(BaseModel):
     arabic_notes_and_translations: str = Field(default="", description="Literal (حرفياً) vs Optimal (الأمثل) Arabic translations of all extracted expressions and nuances")
 
 class PodcastSchema(BaseModel):
-    episode_title_en: str = Field(default="Why Good Plans Lose Momentum", description="Episode title")
+    episode_title_en: str = Field(default="NYC Roundtable", description="Episode title")
     script_en: str = Field(default="", description="6-turn natural spoken script (Jake, Chloe, Marcus). Put each speaker on a NEW line ('Jake: ...', 'Chloe: ...', 'Marcus: ...') with natural interruptions and backchanneling.")
-    closing_question_to_user_en: str = Field(default="Musa, how do you usually handle this when it comes up?", description="Direct question to Musa")
+    closing_question_to_user_en: str = Field(default="", description="Direct question to Musa")
     key_expressions_and_rhythm_en: str = Field(default="", description="3 standout expressions with definitions/examples + real connected-speech tip (never invent fake word abbreviations)")
     audio_recap_script_en: str = Field(default="", description="1-sentence audio recap of the 3 key expressions")
     arabic_episode_notes: str = Field(default="", description="Literal (حرفياً) vs Optimal (الأمثل) Arabic translations of the 3 key expressions and summary")
@@ -645,7 +674,7 @@ You are the linguistic engine of 'Musa's NYC Lounge'. Obey these 7 laws strictly
    - Never invent fake word truncations or acronyms. Only describe real connected speech (linking, Flap-T, schwa /ə/).
 """
 
-def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool = False):
+def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool = False) -> ChatSchema:
     s = _get_session(user_id)
     reg = s["register"]
     hist_str = "\n".join([f"User: {h.get('u','')}\nLounge: {h.get('b','')}" for h in s["history"][-4:] if isinstance(h, dict)])
@@ -697,6 +726,7 @@ def execute_chat_turn(chat_id: int, user_id: int, user_text: str, is_voice: bool
 
     send_html_safe(chat_id, full_html, reply_markup=build_inline_kb(tok, "chat"))
     threading.Thread(target=build_audio, args=(v_segs, False), daemon=True).start()
+    return data
 
 def execute_study_and_miner(chat_id: int, user_id: int, user_input: str, is_voice: bool = False, already_mined: str = "", shift: str = ""):
     s = _get_session(user_id)
@@ -820,6 +850,13 @@ def show_vault(chat_id: int, user_id: int):
 
 def handle_incoming_message(message: types.Message):
     chat_id = message.chat.id
+    msg_id = getattr(message, "message_id", None)
+    if msg_id is not None:
+        dedup_k = (chat_id, msg_id)
+        if dedup_k in _PROCESSED_MSG_IDS:
+            return
+        _PROCESSED_MSG_IDS.add(dedup_k)
+
     uid = message.from_user.id if getattr(message, "from_user", None) else int(PRIMARY_OWNER_ID)
     txt = (message.text or message.caption or "").strip()
     low = txt.lower()
@@ -870,7 +907,6 @@ def handle_incoming_message(message: types.Message):
         send_html_safe(chat_id, f"<b>Register set to: {r_target}</b>", reply_markup=build_reply_kb(uid))
         return
 
-    # إشعار استلام فوري خلال 0.2 ثانية يحذف نفسه فور جاهزية البطاقة
     ack_msg = None
     try:
         ack_msg = bot.send_message(chat_id, "✍️ ...")
@@ -998,12 +1034,21 @@ if os.environ.get("LIVE_SELF_TEST") == "1":
         pass
     oid = int(PRIMARY_OWNER_ID)
     _update_session(oid, mode="CHAT", register="Casual", clear_hist=True)
-    execute_chat_turn(oid, oid, "Hey Chloe I am exhausted today and I need to take a fast decision before I discuss with my boss about taking a few days off", is_voice=False)
-    print("✅ V16_LIVE_TEST_OK", flush=True)
+    res_chat = execute_chat_turn(
+        oid,
+        oid,
+        "Hey Chloe I am exhausted today and I need to take a fast decision before I discuss with my boss about taking a few days off",
+        is_voice=False,
+    )
+    if not res_chat.recast_casual_en.strip():
+        raise RuntimeError("Empty LLM response detected during self-test!")
+    print("   🎯 Verified Casual Recast:", res_chat.recast_casual_en[:90])
+    print("   🎯 Verified Corrections:", res_chat.error_corrections_list.replace("\n", " | "))
+    print("✅ V16_1_VERIFIED_NON_EMPTY_OK", flush=True)
     os._exit(0)
 
 if __name__ == "__main__":
-    print("🚀 V16.0 Polling Active...", flush=True)
+    print("🚀 V16.1 Polling Active...", flush=True)
     try:
         bot.remove_webhook()
     except Exception:
@@ -1012,8 +1057,8 @@ if __name__ == "__main__":
         oid = int(PRIMARY_OWNER_ID)
         send_html_safe(
             oid,
-            "<b>🟢 Musa’s NYC Lounge — V16.0 Ready &amp; Listening</b>\n"
-            "Instant response mode is active. Send any message or tap a button below:",
+            "<b>🟢 Musa’s NYC Lounge — Ready</b>\n"
+            "Full-content verification and 3-voice audio are active.",
             reply_markup=build_reply_kb(oid),
         )
     except Exception:
