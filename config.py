@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-config.py — Configuration, Linguistic Registers & Contextual Naturalness Calibration
-Musa's NYC Lounge (24/7 Relay Architecture)
+config.py — Pure Club Experience Configuration, Phonetic Precision & Pragmatic Calibration
+Musa's NYC Lounge
 """
 import os
 import tempfile
@@ -15,7 +15,6 @@ def _clean_env(keys: List[str], default: str = "") -> str:
     return default
 
 def collect_gemini_keys() -> List[str]:
-    """Supports multiple comma-separated Gemini keys or fallback env vars for high availability."""
     raw_pool = []
     for k in ["GEMINI_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]:
         val = os.getenv(k, "")
@@ -33,7 +32,6 @@ GEMINI_API_KEY: str = GEMINI_KEYS[0] if GEMINI_KEYS else ""
 _raw_admin = _clean_env(["ADMIN_ID", "CHAT_ID"], "8874707150")
 ADMIN_ID: int = int(_raw_admin) if _raw_admin.isdigit() else 8874707150
 
-# Dual-DB Architecture Paths (Lightweight User DB for Telegram Pin + Read/FTS5 Corpus DB)
 USER_DB_FILENAME: str = "musa_user_data_v3.db"
 CORPUS_DB_FILENAME: str = "musa_corpus_fts5.db"
 
@@ -43,11 +41,9 @@ CORPUS_DB_PATH: str = os.getenv("CORPUS_DB_PATH", CORPUS_DB_FILENAME)
 TEMP_DIR: str = os.path.join(tempfile.gettempdir(), "musa_nyc_lounge_media")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# 5.3-Hour Relay Cycle (19,080 seconds)
 RELAY_MAX_RUNTIME_SECONDS: int = int(5.3 * 3600)
-PERIODIC_BACKUP_SECONDS: int = 7200  # Every 2 hours
+PERIODIC_BACKUP_SECONDS: int = 10800  # Every 3 hours, silent & self-cleaning
 
-# Gemini Model Fallback Chain (100% Gemini, zero Groq)
 GEMINI_MODELS_CHAIN: List[str] = [
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite-preview",
@@ -56,158 +52,121 @@ GEMINI_MODELS_CHAIN: List[str] = [
     "gemini-3.1-flash-lite"
 ]
 
-# Edge-TTS US Neural Voices
 VOICE_MALE_HOST: str = "en-US-AndrewNeural"
 VOICE_FEMALE_HOST: str = "en-US-AvaNeural"
 
 # =====================================================================
-# The 3 Living Spoken Registers
+# The 3 Spoken American Registers (Clean User-Facing Labels)
 # =====================================================================
 REGISTERS_MAP: Dict[str, str] = {
-    "articulate": "[🎙️ Articulate / Natural]",
-    "casual": "[☕ Casual / Everyday]",
-    "witty": "[🎭 Witty / Ironic]"
+    "articulate": "🎙️ Articulate",
+    "casual": "☕ Casual",
+    "witty": "🎭 Witty"
 }
 
 REGISTER_DESCRIPTIONS: Dict[str, str] = {
-    "articulate": "Smart, articulate spoken American English—fluid for podcasts, work discussions, deep ideas, or social banter without sounding stiff or robotic.",
-    "casual": "Fast everyday NYC street & close-friends vernacular—natural ellipsis, contractions, and idiomatic flow.",
-    "witty": "Dry understatement, irony, rhetorical sharpness, and clever punchlines."
+    "articulate": "Polished, expressive spoken American English—natural for thoughtful discussions, work, or smart social conversations.",
+    "casual": "Relaxed, fast-paced everyday New York talk among close friends—idiomatic, warm, and effortless.",
+    "witty": "Dry understatement, playful irony, rhetorical sharpness, and clever punchlines."
 }
 
 CORE_NYC_PERSONA_PROMPT: str = """
-You are the sharp, culturally literate, witty host of 'Musa's NYC Lounge'—an authentic Manhattan social and intellectual club.
-Your mission is to elevate learners into effortless, native-like Spoken American English that feels 100% natural, spontaneous, and contextually calibrated.
+You are a charismatic, perceptive, and culturally literate New Yorker hosting 'Musa's NYC Lounge'—an intimate Manhattan club for mastering authentic Spoken American English.
 
-CORE LINGUISTIC PRINCIPLES:
-1. CONTEXTUAL FIT & SPONTANEITY (NO ARTIFICIAL WORD BANS):
-   Do not arbitrarily ban workplace, professional, or elevated vocabulary. Instead, calibrate every word to the exact context and human moment.
-   Whether the topic is a casual coffee run, a high-stakes workplace negotiation, or a deep intellectual debate, phrase things the way an articulate American ACTUALLY speaks out loud in that setting—never like a stiff textbook, a literal translation, or a robotic AI essay.
-   Favor natural spoken grammar (Heads & Tails, conversational hedging, ellipsis), crisp phrasal verbs, authentic collocations, and living discourse markers ('Mind you', 'The thing is', 'Funny enough', 'Wait, seriously?', 'Fair enough, though...').
+YOUR CORE COACHING PILLARS:
+1. AUTHENTIC SPOKEN NATURALNESS & CONTEXTUAL FIT:
+   - Never sound like a bot, textbook, or academic lecturer.
+   - Calibrate every expression to the real human moment—whether it's a casual street chat, a sharp workplace negotiation, or a deep philosophical debate.
+   - Actively model Spoken American Grammar: conversational clefts ('What really gets me is...', 'The thing about X is...'), Heads & Tails ('That new spot on Bleecker—have you tried it yet?'), natural hedging ('kind of', 'for the most part', 'more or less'), and discourse markers ('Mind you', 'Funny enough', 'Wait, seriously?', 'Fair enough, though').
 
-2. THE 3 LIVING REGISTERS:
-   Show how any thought adapts across 3 natural spoken vibrations:
-   - [🎙️ Articulate / Natural]: Polished, smart spoken flow (ideal for articulate discussions, podcasts, and sharp workplace/social communication).
-   - [☕ Casual / Everyday]: Relaxed, fast-paced talk among close American friends.
-   - [🎭 Witty / Ironic]: Dry humor, understatement, playful pushback, and clever subtext.
+2. SEMANTIC PRECISION & PRAGMATIC NUANCE:
+   - When upgrading the user's phrasing, highlight subtle semantic distinctions (why one verb or collocation carries the exact shade of meaning over a near-synonym).
+   - Point out unspoken pragmatic subtext, register shifts, and idiomatic collocations.
 
-3. 3-PART LEXICAL FRAMES (CONVERSATIONAL FRAMES):
-   Never teach isolated words. Every suggested upgrade must include:
-   - The Chunk + Register & Tone Tag
-   - 🎯 Trigger: The exact psychological, professional, or social moment a native speaker reaches for it.
-   - 🔗 Co-text & Pattern: Which verbs, prepositions, or polarity (negative/positive) naturally glue to it.
-   - 💬 Typical Follow-up: The natural second sentence an American says right after it to close the thought.
+3. STRICT PHONETIC & PROSODIC PRECISION (AMERICAN ACCENT COACH):
+   - When the user sends a voice note, act as an uncompromising yet encouraging American pronunciation & rhythm critic:
+     * Vowel Precision: Catch tense vs. lax vowel slips (/iː/ vs /ɪ/, /uː/ vs /ʊ/), the American trap-bath /æ/, and diphthongs (/oʊ/, /eɪ/).
+     * Word & Phrase Stress: Pinpoint primary stress (CAPS) vs. unstressed syllables reduced to Schwa (/ə/).
+     * Connected Speech Mechanics: Show exact Flap-T ([ɾ] between vowels: 'what about it' -> 'whaddaboudit'), Glottal Stop ([ʔ] before -en: 'button', 'certain'), palatalization ('did you' -> 'didja', 'got you' -> 'gotcha'), consonant linking, and pitch contours (↘ / ↗) with thought-group pauses (|).
 
-4. US CONNECTED SPEECH & ACOUSTIC PROSODY:
-   Break down how sentences actually sound in fast American speech:
-   - Flap-T (t/d between vowels sounding like a quick tap 'd', e.g., 'what about it' -> 'whaddaboudit').
-   - Schwa reductions (/ə/ in unstressed function words: to -> 'tuh', for -> 'fer', of -> 'uhv').
-   - Consonant-to-vowel linking, palatalization ('did you' -> 'did-ja', 'got you' -> 'got-cha'), and primary stress placement (CAPS) with intonation arrows (↘ / ↗).
+4. 3-PART CONVERSATIONAL FRAMES:
+   - Every expression you teach must include:
+     * 🎯 When to use it (The real-life trigger moment)
+     * 🔗 How it links (Natural verb/preposition collocations & grammar pattern)
+     * 💬 How to follow it up (The natural next line an American says right after it)
 
-5. UNNATURALNESS & L1 INTERFERENCE DETECTOR:
-   Even if the user's sentence is grammatically correct, if an American wouldn't naturally phrase it that way in that specific context, flag it as [🤖 Stiff / L1 Transfer] or [🎯 Context Mismatch] and show the natural native recast.
+5. ZERO TECHNICAL JARGON:
+   - Never mention AI, models, databases, algorithms, or linguistic abbreviations like 'L1' or 'CEFR'. Speak strictly as a real human coach and friend in New York.
 """.strip()
 
 # =====================================================================
-# Detailed In-Telegram Interactive User Guide (6 Deep-Dive Chapters)
+# Clean, Immersive Member's Handbook (Zero Technical Jargon)
 # =====================================================================
 GUIDE_CHAPTERS: Dict[str, str] = {
     "overview": (
-        "📖 <b>Musa's NYC Lounge — Detailed Interactive User Guide</b>\n"
+        "📖 <b>Musa's NYC Lounge — Member's Handbook</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Welcome to <b>Musa's NYC Lounge</b>, a private Manhattan conversational club engineered to take you from advanced English (B2/C1) to <b>Native-like Spoken American Intuition (C2)</b>.\n\n"
-        "🧭 <b>How to Navigate This Guide in Telegram:</b>\n"
-        "Use the chapter buttons below to read the detailed breakdown of every tool, or expand the quick summaries right here:\n\n"
-        "<blockquote expandable>🔬 <b>Chapter 1: The 2-Layer Response & Expandable X-Ray</b>\n"
-        "Every reply in the Lounge separates <b>Conversation Flow</b> from <b>Linguistic Surgery</b>:\n"
-        "• <b>Top Half (Visible Immediately):</b> Natural, witty American banter that responds to your ideas without interrupting the vibe.\n"
-        "• <b>Stealth Input Flood (<i>Italics</i>):</b> Words in <i>italics</i> inside the host's reply are chunks secretly pulled from your Vault & Error Profile so your brain absorbs them naturally.\n"
-        "• <b>Bottom Half (Collapsible X-Ray):</b> Tap <code>🔬 NYC Linguistic & Acoustic X-Ray</code> to reveal your 3-Register rewrites, US Connected Speech map, Surgical Diagnostics, and 3 numbered Lexical Frames.</blockquote>\n\n"
-        "<blockquote expandable>🎚️ <b>Chapter 2: Contextual Calibration & The 3 Living Registers</b>\n"
-        "Language isn't about banning words—it's about <b>Spontaneity & Contextual Fit</b>. Whether you're discussing work, life, or philosophy, every thought is calibrated across:\n"
-        "• <b>[🎙️ Articulate / Natural]:</b> Smart podcast, workplace, & coffeehouse discussion—clear, phrasal-verb rich, effortless.\n"
-        "• <b>[☕ Casual / Everyday]:</b> Fast NYC street & close-friends vernacular with ellipsis and contractions.\n"
-        "• <b>[🎭 Witty / Ironic]:</b> Dry humor, understatement, and clever rhetorical edge.</blockquote>\n\n"
-        "👇 <b>Tap any chapter button below for the full step-by-step guide:</b>"
+        "Welcome to your private Manhattan club for mastering <b>Spoken American English</b>—from effortless everyday banter to razor-sharp pronunciation and cultural nuance.\n\n"
+        "<blockquote expandable>🗽 <b>How Every Conversation Works</b>\n"
+        "• <b>Natural Conversation First:</b> At the top of every message, your host replies naturally to your ideas—just like talking to a sharp friend over coffee in Greenwich Village.\n"
+        "• <b>Subtle Phrase Weaving (<i>Italics</i>):</b> Expressions in <i>italics</i> inside the host's reply are phrases from your personal notebook woven naturally into our conversation so you absorb them effortlessly.\n"
+        "• <b>Collapsible Coaching Notes:</b> Tap the expandable box below any reply to see your thought recast across <b>3 American Vibes</b> (<b>🎙️ Articulate</b>, <b>☕ Casual</b>, <b>🎭 Witty</b>), a full <b>Pronunciation & Rhythm Map</b>, and <b>3 Spoken Expressions</b> to save.</blockquote>\n\n"
+        "<blockquote expandable>🎧 <b>Your Audio & Saving Controls</b>\n"
+        "• <code>🎧 Host Voice</code>: Hear the host's reply spoken aloud with natural New York rhythm.\n"
+        "• <code>🗣️ My Recast</code>: Hear the polished American version of your own sentence.\n"
+        "• <code>🪞 Voice Mirror</code>: Appears when you send a voice note—plays your voice followed immediately by the native version at normal and slow study speeds.\n"
+        "• <code>⭐ Save (1/2/3)</code>: Saves that specific expression directly into your Personal Vault.</blockquote>\n\n"
+        "👇 <b>Tap any chapter below to explore the club's rooms:</b>"
     ),
     "ch1_xray": (
-        "🔬 <b>Chapter 1: Mastering the 2-Layer UI, Atomic Saves & Stealth Flood</b>\n"
+        "🔬 <b>1. Inside the Coaching Notes & Voice Mirror</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. Why Two Layers?</b>\n"
-        "Traditional bots kill conversation by dumping walls of grammar corrections. Here, the host replies naturally at the top while tucking the full diagnostic lab inside an expandable box.\n\n"
-        "<b>2. Incidental Input Flood (Stealth Injection Queue):</b>\n"
-        "• Whenever you save a chunk or make a recurring mistake, it enters a background queue.\n"
-        "• Over your next 4 conversations or podcasts, the bot secretly weaves those exact chunks into its own replies (highlighted in <i>italics</i>).\n"
-        "• Once you encounter a chunk 4 times in live context, it is marked as contextually acquired!\n\n"
-        "<b>3. The Atomic Action Bar (Under Every Turn):</b>\n"
-        "• <code>🔊 US Native Audio</code>: Generates neural American speech for the cleanest rewrite of your message on demand.\n"
-        "• <code>🪞 Acoustic Mirror</code>: Appears whenever you send a voice note (see Chapter 3).\n"
-        "• <code>⭐ Save (1)</code> / <code>(2)</code> / <code>(3)</code>: Atomically saves ONLY that specific numbered 3-Part Lexical Frame into your SQLite Vault and schedules it in SM-2 SRS.\n"
-        "• <code>🎲 New Topic</code>: Generates a fresh AI scenario calibrated to your CEFR level.\n"
-        "• <code>🎚️ Shift Vibe</code>: Cycles your default register between Articulate, Casual, and Witty."
+        "<b>1. The 3 Living American Vibes:</b>\n"
+        "Every time you speak or write, see how a native speaker expresses your exact thought in three ways:\n"
+        "• <b>🎙️ Articulate:</b> Clear, expressive, and intelligent—ideal for work, podcasts, and deep discussions.\n"
+        "• <b>☕ Casual:</b> Warm, fast-paced everyday talk among close friends.\n"
+        "• <b>🎭 Witty:</b> Dry humor, clever understatement, and playful pushback.\n\n"
+        "<b>2. 🪞 The Voice Mirror (For Voice Notes):</b>\n"
+        "Whenever you send a voice message, tap <code>🪞 Voice Mirror</code> under the reply. You will receive a single audio track containing:\n"
+        "<code>[Your Original Voice] ➔ 🔔 ➔ [Native Pace 1.0x] ➔ 🔔 ➔ [Slow Study Pace 0.85x]</code>\n"
+        "Hearing your own vocal rhythm side-by-side with the native model trains your ear to catch vowel lengths, word stress, and connected speech instantly."
     ),
     "ch2_studios": (
-        "🗽 <b>Chapter 2: The 5 Conversational & Pragmatic Studios</b>\n"
+        "🗽 <b>2. The 5 Conversation & Style Rooms</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. 🗣️ NYC Spontaneous Banter:</b>\n"
-        "Unscripted everyday talk on any topic (life, work, culture, ideas). The host pushes the conversation forward like a sharp NYC friend.\n\n"
-        "<b>2. 🎭 Storytelling & Wit Gym:</b>\n"
-        "80% of real life is telling stories. Tell a 1-minute story (real or made up). The bot coaches you on:\n"
-        "• <b>Historical Present:</b> Shifting to present tense for immediacy (<i>'So I walk into the office, right, and he just stares at me...'</i>).\n"
-        "• <b>Setup & Punchline Pacing:</b> Using conversational hooks (<i>'Mind you', 'Next thing I know', 'Here's the kicker'</i>).\n\n"
-        "<b>3. 🎛️ Register Shifter Lab:</b>\n"
-        "Send any sentence or idea to see how it naturally transforms across <b>[🎙️ Articulate]</b>, <b>[☕ Casual]</b>, and <b>[🎭 Witty]</b>.\n\n"
-        "<b>4. 🕵️‍♂️ Subtext & Irony Decoder:</b>\n"
-        "Send something someone said to you or a tricky social/workplace line. The bot decodes the unspoken American subtext and gives you 3 sharp ways to reply.\n\n"
-        "<b>5. ⚡ Situation-to-Gambit Translator:</b>\n"
-        "Describe any social or professional situation (in <b>English or Arabic</b>). You get the exact instinctive American conversational gambits for that moment."
+        "• <b>🗣️ NYC Banter:</b> Unscripted conversation on any topic. Drop a voice note or text, or tap <code>🎲 Spark a Topic</code> for a fresh dilemma.\n\n"
+        "• <b>🎭 Storytelling Gym:</b> Practice telling engaging stories using dramatic present tense (<i>'So I walk in, right...'</i>), natural setups, and punchlines.\n\n"
+        "• <b>🎛️ Vibe & Style Shifter:</b> Send any sentence to see how its tone shifts across Articulate, Casual, and Witty contexts.\n\n"
+        "• <b>🕵️‍♂️ Subtext & Nuance:</b> Decode what Americans <i>really</i> mean between the lines (polite brush-offs, understatement, dry irony) and learn how to reply smoothly.\n\n"
+        "• <b>⚡ What to Say When...:</b> Describe any social or workplace moment (in English or Arabic) to get the exact natural phrases Americans reach for in that second."
     ),
     "ch3_audio_podcast": (
-        "🎙️ <b>Chapter 3: Acoustic Mirror, Connected Speech & Podcast Studio</b>\n"
+        "🎙️ <b>3. Pronunciation Coaching & The Radio Lounge</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. Raw Voice Analysis (Gemini 2.5 Native Audio):</b>\n"
-        "When you send a voice note, the bot listens directly to your raw audio waves—analyzing not just grammar, but:\n"
-        "• <b>Flap-T:</b> Pronouncing intervocalic T/D as a quick tap (<i>'water', 'what about it' ➔ 'whaddaboudit'</i>).\n"
-        "• <b>Schwa (/ə/) Reductions:</b> Weakening unstressed function words (<i>'to' ➔ 'tuh', 'of' ➔ 'uhv'</i>).\n"
-        "• <b>Linking & Intonation:</b> Primary word stress (CAPS) and pitch direction (↘ / ↗).\n\n"
-        "<b>2. 🪞 Back-to-Back Acoustic Mirror (FFmpeg):</b>\n"
-        "Tap <code>🪞 Acoustic Mirror</code> under any voice reply. FFmpeg builds a single audio track:\n"
-        "<code>[1. Your Original Voice] ➔ 🔔 ➔ [2. US Native 1.0x Pace] ➔ 🔔 ➔ [3. US Native 0.85x Slow Study Pace]</code>\n"
-        "Hearing your voice immediately followed by the native model exposes rhythm and vowel differences in one second!\n\n"
-        "<b>3. 🎙️ Dual-Host NYC Podcast Studio (Andrew & Ava):</b>\n"
-        "• <b>Auto Episode from Vault:</b> Writes and mixes a multi-turn radio dialogue between Andrew & Ava weaving in your saved Vault chunks and recurring fixes, pausing mid-show to unpack why an expression works.\n"
-        "• <b>Custom Topic Producer:</b> Give Andrew & Ava any topic to debate while injecting your vocabulary.\n"
-        "• <b>'You Are the Guest':</b> Jump on-air as the guest in a live NYC interview."
+        "<b>1. Precision Pronunciation Feedback:</b>\n"
+        "When you send voice notes, the coach listens closely to your delivery—checking vowel lengths, primary word stress, Flap-T linking, and vowel reductions (Schwa).\n\n"
+        "<b>2. 🎙️ The Radio Lounge (Andrew & Ava):</b>\n"
+        "• <b>Episode from My Vault:</b> Our two New York hosts record a lively radio conversation weaving in the exact phrases you've saved in your Vault, pausing mid-show to explain why each phrase works.\n"
+        "• <b>Custom Topic Show:</b> Pick any topic or debate for Andrew & Ava to discuss on-air.\n"
+        "• <b>Be the Guest:</b> Step up to the mic as the featured guest in a live interview."
     ),
     "ch4_miner_drills": (
-        "🎯 <b>Chapter 4: FTS5 Corpus Lookup, Text Miner & Generative AI Drills</b>\n"
+        "🎯 <b>4. Phrase Finder, Text Miner & Active Workouts</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. ⚡ Instant SQLite FTS5 Collocation Lookup (under 5ms):</b>\n"
-        "Open <code>🔬 Text Miner & Corpus</code> ➔ <code>Instant SQLite Lookup</code> and type 1–3 words. Searches both the FTS5 Corpus and your personal Vault in milliseconds.\n\n"
-        "<b>2. 🔬 Native Text & Subtext Miner:</b>\n"
-        "Paste any paragraph from a book, article, movie script, or email. The bot extracts the 3 best native chunks as full 3-Part Frames with atomic <code>⭐ Save</code> buttons.\n\n"
-        "<b>3. 🔥 Generative Forced Output Challenge:</b>\n"
-        "Pulls 3 target chunks from your Vault & Error Profile and invents a fresh NYC scenario tailored to your level. Reply with ONE voice note or text naturally using all 3 chunks.\n\n"
-        "<b>4. 🎙️ Generative US Connected Speech Shadowing:</b>\n"
-        "Generates a fresh target sentence, an acoustic Flap-T map, and a native audio clip. Record yourself shadowing the exact rhythm.\n\n"
-        "<b>5. 👂 Generative Fast Micro-Dictation Decoder:</b>\n"
-        "Sends you a freshly generated fast American audio clip with NO text. Type what you heard to train your bottom-up listening ear."
+        "• <b>🔎 Collocation & Phrase Finder:</b> Type any word or verb (e.g., <i>'slack'</i>, <i>'wind up'</i>, <i>'point'</i>) to instantly see its most natural spoken American collocations, patterns, and examples.\n\n"
+        "• <b>🔬 Native Text Miner:</b> Paste a paragraph from an article, book, or movie script to extract its best spoken idioms and unpack its tone.\n\n"
+        "• <b>🔥 3-Phrase Challenge:</b> We give you 3 target expressions from your Vault and a realistic scenario—try weaving all 3 into a single voice note or reply!\n\n"
+        "• <b>🎙️ Rhythm & Shadowing:</b> Listen to a connected-speech sentence with a full stress & Flap-T map, then record yourself matching the exact cadence.\n\n"
+        "• <b>👂 Fast Ear Catcher:</b> Listen to a fast, natural American audio clip with no text, and type what you heard to sharpen your listening ear."
     ),
     "ch5_vault_routine": (
-        "🧠 <b>Chapter 5: 3-Part Lexical Frames, SM-2 SRS, Exports & Daily Routine</b>\n"
+        "🧠 <b>5. Your Vault, Daily Review & Exports</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. What is a 3-Part Lexical Frame?</b>\n"
-        "Every chunk saved in your Vault stores 3 horizontal dimensions so you never hesitate in real speech:\n"
-        "• 🎯 <b>1. The Trigger:</b> What social/mental cue makes a native speaker reach for it.\n"
-        "• 🔗 <b>2. Co-text & Pattern:</b> Which verbs, prepositions, or negative/positive polarity glue to it.\n"
-        "• 💬 <b>3. Typical Follow-up:</b> The natural next sentence that closes the thought.\n\n"
-        "<b>2. 🧠 In-Bot Smart SRS (SuperMemo-2):</b>\n"
-        "Tap <code>🧠 Smart SRS Review</code> for 2-minute daily Cloze-deletion flashcards. Reveal the 3-Part Frame, listen to the audio, and grade yourself (<code>🔴 Hard 1d</code>, <code>🟡 Good</code>, <code>🟢 Easy</code>).\n\n"
-        "<b>3. 📄 PDF & 🗂️ Anki CSV Exports:</b>\n"
-        "From <code>📓 My Vault & Export</code>, download a beautifully formatted <b>WeasyPrint PDF book</b> of your frames or a semicolon-delimited <b>Anki CSV deck</b>.\n\n"
-        "⏱️ <b>Recommended 15-Minute Daily C2 Routine:</b>\n"
-        "• <b>Morning (3m):</b> Clear due cards in <code>🧠 Smart SRS Review</code> + listen to an auto-generated <code>🎙️ Podcast Episode</code>.\n"
-        "• <b>Midday (7m):</b> Send 2–3 voice notes in <code>🗣️ NYC Banter</code> or <code>🎭 Storytelling Gym</code>, tap <code>🪞 Acoustic Mirror</code>, and save new frames via <code>⭐ Save (1/2/3)</code>.\n"
-        "• <b>Evening (5m):</b> Complete one <code>🔥 Forced Output Challenge</code> or <code>👂 Micro-Dictation</code>."
+        "<b>1. How Phrases Are Stored:</b>\n"
+        "Every saved expression includes <b>When to use it</b>, <b>How it links grammatically</b>, and <b>What to say right after it</b>.\n\n"
+        "<b>2. 🧠 Daily Phrase Review (Active & Passive):</b>\n"
+        "Open <code>🧠 Daily Review</code> to practice due phrases. You can either tap to reveal and grade yourself, OR <b>send a voice note / sentence using the phrase</b> to get instant feedback!\n\n"
+        "<b>3. 📄 Printable Book & Flashcard Exports:</b>\n"
+        "From <code>📓 My Vault</code>, download your entire collection as a clean <b>PDF Booklet</b> or an <b>Anki Flashcard Deck</b> anytime."
     )
 }

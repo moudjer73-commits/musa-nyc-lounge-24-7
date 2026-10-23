@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-database.py — Dual-SQLite Architecture (User Data DB + FTS5 Lexical Corpus DB)
-Includes SM-2 SRS, Stealth Input Flood Queue, Error Profile, Atomic Buffer & Telegram Pin Sync.
+database.py — Dual-Database Engine with Expanded Spoken Corpus,
+Self-Cleaning Silent Backup, Dual Audio Buffer (Host + Recast), and Active Review State.
 """
 import os
 import re
@@ -23,26 +23,34 @@ from config import (
 
 logger = logging.getLogger("MusaNYCLounge.DB")
 
-# Seed authentic American Spoken Chunks & Collocations for the FTS5 Corpus
 INITIAL_CORPUS_SEED: List[Tuple[str, str, str, str, str, str]] = [
-    ("play it by ear", "[☕ Casual / Everyday]", "Decide how to deal with a situation as it develops rather than planning ahead", "When plans are uncertain or flexible", "let's just / we'll + play it by ear", "Yeah, no need to lock anything down right now—let's just play it by ear."),
-    ("wind up", "[🎙️ Articulate / Natural]", "End up in a situation or place, often unexpectedly", "Storytelling about an unintended outcome", "wind up + V-ing / adj", "We went out for a quick coffee and wound up talking for three hours."),
-    ("take it with a grain of salt", "[🎙️ Articulate / Natural]", "View a claim or statement with healthy skepticism", "When someone exaggerates or gossips", "take [something] with a grain of salt", "I'd take his version of the story with a grain of salt; he loves drama."),
-    ("call it a day", "[☕ Casual / Everyday]", "Decide to stop working or doing an activity for the rest of the day", "When feeling tired or satisfied with progress", "let's / I'm gonna + call it a day", "We've covered enough ground—let's call it a day and grab some food."),
-    ("off the top of my head", "[🎙️ Articulate / Natural]", "From memory, without checking exact details or calculating", "Giving a quick estimate in conversation", "off the top of my head, I'd say...", "Off the top of my head, I think it costs around fifty bucks, give or take."),
-    ("cut someone some slack", "[☕ Casual / Everyday]", "Treat someone less harshly or give them a break", "Defending someone who made an honest mistake", "cut [person] some slack", "Hey, cut him some slack, it's literally his first week on the job."),
-    ("on the fence", "[🎙️ Articulate / Natural]", "Undecided between two options", "Discussing a tough personal choice", "be / sit + on the fence about [something]", "I'm still on the fence about moving uptown, to be honest."),
-    ("a tough pill to swallow", "[🎙️ Articulate / Natural]", "An unpleasant fact or disappointment that must be accepted", "Acknowledging harsh feedback or reality", "that's a tough pill to swallow", "Losing that match was a tough pill to swallow, but they earned it."),
-    ("push the envelope", "[🎙️ Articulate / Natural]", "Go beyond usual limits or innovate boldly", "Discussing creative work or bold ideas", "really pushing the envelope on [topic]", "That director always pushes the envelope without making it feel forced."),
-    ("bite off more than you can chew", "[☕ Casual / Everyday]", "Take on a commitment that is too big to handle", "Feeling overwhelmed by projects", "bit off a bit more than I could chew", "I think I bit off more than I could chew by agreeing to host dinner for twenty people."),
-    ("read between the lines", "[🕵️‍♂️ Subtext / Pragmatic]", "Perceive the unspoken meaning or real intention behind someone's words", "Decoding polite excuses or subtle hints", "if you read between the lines", "She said everything was fine, but if you read between the lines, she's clearly frustrated."),
-    ("that's one way to put it", "[🎭 Witty / Ironic]", "Understated, dry reaction when someone describes a disaster too mildly", "Reacting with dry humor or irony", "Well, that's certainly one way to put it", "You call getting stranded at JFK for twelve hours 'a minor delay'? Well, that's one way to put it."),
-    ("jump the gun", "[☕ Casual / Everyday]", "Act too soon before the right time or before having all the facts", "When someone reacts prematurely", "don't jump the gun", "Hold on, let's not jump the gun before we actually hear his side of the story."),
-    ("hit the nail on the head", "[🎙️ Articulate / Natural]", "Describe the exact truth or root cause of a situation", "Validating a sharp observation in discussion", "you hit the nail right on the head", "You hit the nail on the head—that's the exact issue nobody wants to talk about."),
-    ("let it slide", "[☕ Casual / Everyday]", "Ignore a minor mistake or offense instead of making an issue out of it", "Choosing peace over confrontation", "just let it slide this time", "It annoyed me a little, sure, but I figured I'd just let it slide."),
-    ("by the skin of my teeth", "[🎭 Witty / Ironic]", "Barely manage to do something or escape a bad outcome", "Telling a close-call story", "made it by the skin of my teeth", "The subway doors were literally closing—I caught the train by the skin of my teeth."),
-    ("Touché", "[🎭 Witty / Ironic]", "Acknowledging a clever counter-point or witty comeback made at your expense", "Playful banter and debate", "Fair enough, touché!", "Okay, touché—I did say the exact opposite last week."),
-    ("have a lot on my plate", "[☕ Casual / Everyday]", "Be very busy with many responsibilities at once", "Politely declining extra tasks or explaining why you're busy", "I've got a lot on my plate right now", "I'd love to help out, man, but I've got way too much on my plate this week.")
+    ("play it by ear", "☕ Casual", "Decide how to handle something as it unfolds instead of planning ahead", "When plans are uncertain or flexible", "let's just / we'll + play it by ear", "No need to lock anything down right now—let's just play it by ear."),
+    ("wind up", "🎙️ Articulate", "End up in an unexpected situation or doing something unplanned", "Telling a story about an unintended outcome", "wind up + V-ing / adj", "We went out for a quick coffee and wound up talking for three hours."),
+    ("take it with a grain of salt", "🎙️ Articulate", "Treat a claim or story with healthy skepticism", "When someone exaggerates or passes along rumors", "take [something] with a grain of salt", "I'd take his version of the story with a grain of salt; he loves drama."),
+    ("call it a day", "☕ Casual", "Stop working or wrap up an activity for the rest of the day", "When you've done enough and want to rest", "let's / I'm gonna + call it a day", "We've covered enough ground—let's call it a day and grab some food."),
+    ("off the top of my head", "🎙️ Articulate", "From memory, without checking exact figures or details", "Giving a quick estimate in conversation", "off the top of my head, I'd say...", "Off the top of my head, I think it costs around fifty bucks, give or take."),
+    ("cut someone some slack", "☕ Casual", "Give someone a break instead of judging them harshly", "Defending someone who made an honest mistake", "cut [person] some slack", "Hey, cut him some slack—it's literally his first week on the job."),
+    ("on the fence", "🎙️ Articulate", "Undecided between two choices", "Discussing a tough decision", "be / sit + on the fence about [something]", "I'm still on the fence about taking that offer, to be honest."),
+    ("a tough pill to swallow", "🎙️ Articulate", "A harsh reality or disappointment that you have to accept", "Acknowledging difficult news or blunt feedback", "that's a tough pill to swallow", "Missing the finals by one point was a tough pill to swallow."),
+    ("push the envelope", "🎙️ Articulate", "Go beyond usual boundaries or innovate boldly", "Praising bold creative or professional work", "really pushing the envelope on [topic]", "That director always pushes the envelope without making it feel forced."),
+    ("bite off more than you can chew", "☕ Casual", "Take on a commitment that's too big to handle", "Feeling overwhelmed by too many tasks", "bit off a bit more than I could chew", "I think I bit off more than I could chew by agreeing to host twenty people."),
+    ("read between the lines", "🎙️ Articulate", "Catch the unspoken meaning or real intention behind someone's words", "Decoding polite excuses or subtle hints", "if you read between the lines", "She said everything was fine, but if you read between the lines, she's frustrated."),
+    ("that's one way to put it", "🎭 Witty", "Dry, understated reaction when someone describes a disaster too mildly", "Reacting with irony or dry humor", "Well, that's certainly one way to put it", "You call getting stranded at JFK for twelve hours 'a minor delay'? Well, that's one way to put it."),
+    ("jump the gun", "☕ Casual", "Act too soon before having all the facts", "Stopping someone from reacting prematurely", "let's not jump the gun", "Hold on, let's not jump the gun before we actually hear his side of the story."),
+    ("hit the nail on the head", "🎙️ Articulate", "Pinpoint the exact truth or root cause of an issue", "Validating a sharp observation", "you hit the nail right on the head", "You hit the nail on the head—that's the exact issue nobody wants to admit."),
+    ("let it slide", "☕ Casual", "Ignore a minor mistake or annoyance instead of making a big deal out of it", "Choosing peace over confrontation", "just let it slide this time", "It annoyed me a little, sure, but I figured I'd just let it slide."),
+    ("by the skin of my teeth", "🎭 Witty", "Barely manage to do something or escape a close call", "Narrating a narrow escape", "made it by the skin of my teeth", "The subway doors were literally closing—I caught the train by the skin of my teeth."),
+    ("have a lot on my plate", "☕ Casual", "Be busy juggling many responsibilities at once", "Politely declining extra work", "I've got a lot on my plate right now", "I'd love to help out, man, but I've got way too much on my plate this week."),
+    ("boil down to", "🎙️ Articulate", "Come down to the single most important factor or core issue", "Summarizing a complex argument", "what it really boils down to is [noun]", "At the end of the day, the whole disagreement boils down to trust."),
+    ("pan out", "🎙️ Articulate", "Turn out well or develop in a particular way", "Talking about how a plan or project unfolded", "see how things pan out / didn't pan out", "We tried launching it in the spring, but the timing just didn't pan out."),
+    ("iron out", "🎙️ Articulate", "Resolve remaining small problems or details", "Finalizing a plan or agreement", "iron out a few kinks / details", "We're almost ready—we just need to iron out a few last-minute details."),
+    ("brush up on", "☕ Casual", "Review and refresh a skill you haven't used lately", "Preparing for a trip or presentation", "brush up on my [skill]", "I really need to brush up on my spoken French before the conference."),
+    ("run it by", "🎙️ Articulate", "Tell someone about an idea to get their quick feedback or approval", "Checking with a colleague or friend", "let me run this by [person]", "That sounds promising—let me run it by Sarah and see what she thinks."),
+    ("fall through", "☕ Casual", "Fail to happen after being planned (deals, trips, plans)", "Explaining why a plan was canceled", "our plans fell through at the last minute", "We were supposed to drive upstate, but the whole trip fell through."),
+    ("give someone the benefit of the doubt", "🎙️ Articulate", "Choose to believe someone had good intentions despite doubts", "Being fair when evidence is incomplete", "give [person] the benefit of the doubt", "Maybe his phone really did die—let's give him the benefit of the doubt."),
+    ("not my cup of tea", "🎭 Witty", "Polite, understated way to say you really dislike something", "Declining an activity without sounding harsh", "just not really my cup of tea", "Crowded nightclubs aren't really my cup of tea anymore."),
+    ("pull strings", "🎙️ Articulate", "Use personal influence or connections behind the scenes", "Explaining how someone got a rare favor", "pull a few strings to make it happen", "He had to pull a few strings just to get us a table on Friday night."),
+    ("keep me posted", "☕ Casual", "Keep me updated as things develop", "Wrapping up a conversation when waiting for news", "keep me posted on how it goes", "Good luck with the interview tomorrow—definitely keep me posted!")
 ]
 
 
@@ -68,12 +76,8 @@ class LoungeDatabase:
         conn.execute("PRAGMA journal_mode=WAL;")
         return conn
 
-    # =================================================================
-    # 1. Schema Initialization & Auto-Migration
-    # =================================================================
     def init_schema(self):
         with self._lock, self._conn() as conn:
-            # 1. Users & Persistent State Machine
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -93,7 +97,6 @@ class LoungeDatabase:
                 )
             """)
 
-            # 2. Conversation Context History
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS chat_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,13 +107,12 @@ class LoungeDatabase:
                 )
             """)
 
-            # 3. 3-Part Lexical Frames Vault + SM-2 SRS + Stealth Flood Queue
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS lexical_vault (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
                     chunk TEXT,
-                    register_tag TEXT DEFAULT '[🎙️ Articulate / Natural]',
+                    register_tag TEXT DEFAULT '🎙️ Articulate',
                     explanation TEXT DEFAULT '',
                     trigger_context TEXT DEFAULT '',
                     co_text_pattern TEXT DEFAULT '',
@@ -128,12 +130,11 @@ class LoungeDatabase:
                 )
             """)
 
-            # 4. Smart Error Profile (Recurring Weaknesses & L1 Interference)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS error_profile (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
-                    category TEXT DEFAULT 'Naturalness',
+                    category TEXT DEFAULT 'Spoken Flow',
                     user_said TEXT DEFAULT '',
                     native_fix TEXT DEFAULT '',
                     why_note TEXT DEFAULT '',
@@ -144,19 +145,18 @@ class LoungeDatabase:
                 )
             """)
 
-            # 5. Atomic Save & Media Buffer
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS atomic_buffer (
                     token_key TEXT PRIMARY KEY,
                     user_id INTEGER,
                     payload_json TEXT,
                     audio_clean_text TEXT DEFAULT '',
+                    host_reply_text TEXT DEFAULT '',
                     user_voice_file_id TEXT DEFAULT '',
                     created_at INTEGER
                 )
             """)
 
-            # 6. Friend Invite Codes
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS invite_codes (
                     code TEXT PRIMARY KEY,
@@ -166,38 +166,28 @@ class LoungeDatabase:
                 )
             """)
 
-            # Auto-Migration guard for any older table structures
-            existing_cols = [c[1] for c in conn.execute("PRAGMA table_info(users)").fetchall()]
-            needed_cols = {
-                "username": "TEXT DEFAULT ''",
-                "full_name": "TEXT DEFAULT ''",
-                "level": "TEXT DEFAULT 'C1'",
-                "english_only": "INTEGER DEFAULT 1",
-                "preferred_register": "TEXT DEFAULT 'articulate'",
-                "current_mode": "TEXT DEFAULT 'spontaneous_chat'",
-                "session_meta": "TEXT DEFAULT '{}'",
-                "is_whitelisted": "INTEGER DEFAULT 0",
-                "onboarded": "INTEGER DEFAULT 1",
-                "daily_count": "INTEGER DEFAULT 0",
-                "daily_limit": "INTEGER DEFAULT 120",
-                "last_date": "TEXT DEFAULT ''"
-            }
-            for col_name, col_def in needed_cols.items():
-                if col_name not in existing_cols:
-                    try:
-                        conn.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}")
-                    except Exception:
-                        pass
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS system_state (
+                    key TEXT PRIMARY KEY,
+                    val TEXT DEFAULT ''
+                )
+            """)
 
-            # Ensure Founder Admin is always registered and whitelisted
+            # Auto-migration for atomic_buffer host_reply_text
+            ab_cols = [c[1] for c in conn.execute("PRAGMA table_info(atomic_buffer)").fetchall()]
+            if "host_reply_text" not in ab_cols:
+                try:
+                    conn.execute("ALTER TABLE atomic_buffer ADD COLUMN host_reply_text TEXT DEFAULT ''")
+                except Exception:
+                    pass
+
             if ADMIN_ID > 0:
                 conn.execute("""
                     INSERT OR IGNORE INTO users (user_id, full_name, level, english_only, preferred_register, is_whitelisted, onboarded, daily_limit)
-                    VALUES (?, 'Musa (Founder)', 'C2', 1, 'articulate', 1, 1, 500)
+                    VALUES (?, 'Musa', 'C2', 1, 'articulate', 1, 1, 500)
                 """, (ADMIN_ID,))
                 conn.execute("UPDATE users SET is_whitelisted = 1, daily_limit = 500 WHERE user_id = ?", (ADMIN_ID,))
 
-            # Purge any legacy registers ('formal', 'professional')
             conn.execute("""
                 UPDATE users
                 SET preferred_register = 'articulate'
@@ -205,9 +195,16 @@ class LoungeDatabase:
             """)
             conn.commit()
 
-    # =================================================================
-    # 2. FTS5 Corpus Initialization & Zero-Latency Collocation Search
-    # =================================================================
+    def get_sys_state(self, key: str, default: str = "") -> str:
+        with self._lock, self._conn() as conn:
+            row = conn.execute("SELECT val FROM system_state WHERE key = ?", (key,)).fetchone()
+            return row["val"] if row else default
+
+    def set_sys_state(self, key: str, val: str):
+        with self._lock, self._conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO system_state (key, val) VALUES (?, ?)", (key, str(val)))
+            conn.commit()
+
     def init_corpus_fts5(self):
         with self._lock, self._corpus_conn() as conn:
             conn.execute("""
@@ -235,25 +232,23 @@ class LoungeDatabase:
                     )
                 """)
                 self.fts5_supported = True
-            except Exception as e:
-                logger.warning(f"FTS5 fallback to standard index: {e}")
+            except Exception:
                 self.fts5_supported = False
 
-            # Seed initial entries if empty
-            count = conn.execute("SELECT COUNT(*) FROM corpus_entries").fetchone()[0]
-            if count == 0:
-                for row in INITIAL_CORPUS_SEED:
-                    conn.execute("""
-                        INSERT OR IGNORE INTO corpus_entries
-                        (chunk, register_tag, explanation, trigger_context, co_text_pattern, example_sentence)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, row)
-                if self.fts5_supported:
+            for row in INITIAL_CORPUS_SEED:
+                conn.execute("""
+                    INSERT OR IGNORE INTO corpus_entries
+                    (chunk, register_tag, explanation, trigger_context, co_text_pattern, example_sentence)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, row)
+            if self.fts5_supported:
+                try:
                     conn.execute("INSERT INTO corpus_fts(corpus_fts) VALUES('rebuild')")
-                conn.commit()
+                except Exception:
+                    pass
+            conn.commit()
 
     def ingest_chunks_to_corpus(self, items: List[Dict[str, Any]]):
-        """Auto-enriches the local FTS5 corpus whenever new 3-Part Frames are discovered."""
         if not items:
             return
         with self._lock, self._corpus_conn() as conn:
@@ -268,11 +263,11 @@ class LoungeDatabase:
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (
                     chunk,
-                    it.get("register_tag", "[🎙️ Articulate / Natural]"),
+                    it.get("register_tag", "🎙️ Articulate"),
                     it.get("explanation", ""),
-                    it.get("trigger", ""),
-                    it.get("pattern", ""),
-                    it.get("example", "")
+                    it.get("trigger", it.get("trigger_context", "")),
+                    it.get("pattern", it.get("co_text_pattern", "")),
+                    it.get("example", it.get("example_sentence", ""))
                 ))
                 if cur.rowcount > 0:
                     added = True
@@ -284,7 +279,6 @@ class LoungeDatabase:
             conn.commit()
 
     def lookup_collocations(self, query: str, user_id: int = 0, limit: int = 8) -> List[Dict[str, Any]]:
-        """Instant (<5ms) hybrid lookup across FTS5 Corpus and User's Personal Vault."""
         clean_q = re.sub(r"[^a-zA-Z0-9\s'-]", "", query).strip()
         if not clean_q:
             return []
@@ -292,7 +286,6 @@ class LoungeDatabase:
         results: List[Dict[str, Any]] = []
         seen_chunks = set()
 
-        # 1. Search User's Personal Vault first
         if user_id:
             with self._lock, self._conn() as uconn:
                 u_rows = uconn.execute("""
@@ -307,7 +300,6 @@ class LoungeDatabase:
                     results.append(d)
                     seen_chunks.add(d["chunk"].lower())
 
-        # 2. Search FTS5 Corpus DB
         with self._lock, self._corpus_conn() as cconn:
             c_rows = []
             if self.fts5_supported:
@@ -333,14 +325,13 @@ class LoungeDatabase:
             for r in c_rows:
                 d = dict(r)
                 if d["chunk"].lower() not in seen_chunks:
-                    d["source"] = "📚 NYC FTS5 Corpus"
+                    d["source"] = "🗽 Club Phrasebook"
                     results.append(d)
                     seen_chunks.add(d["chunk"].lower())
 
         return results[:limit]
 
     def get_rag_collocations_for_context(self, user_text: str, limit: int = 4) -> List[str]:
-        """Extracts content words from user input and queries FTS5 corpus for background RAG grounding."""
         stopwords = {
             "the", "and", "for", "that", "this", "with", "you", "not", "have", "are", "from",
             "was", "but", "what", "all", "when", "can", "said", "there", "use", "each", "which",
@@ -355,13 +346,10 @@ class LoungeDatabase:
         query_str = " ".join(words[:4])
         hits = self.lookup_collocations(query_str, user_id=0, limit=limit)
         return [
-            f"{h['chunk']} {h['register_tag']} (Pattern: {h['co_text_pattern']}) — e.g., '{h['example_sentence']}'"
+            f"{h['chunk']} ({h['register_tag']}) [Pattern: {h['co_text_pattern']}] — e.g., '{h['example_sentence']}'"
             for h in hits
         ]
 
-    # =================================================================
-    # 3. User Management, Persistent State & Invite Codes
-    # =================================================================
     def get_user(self, user_id: int, username: str = "", full_name: str = "") -> Dict[str, Any]:
         today = datetime.utcnow().strftime("%Y-%m-%d")
         with self._lock, self._conn() as conn:
@@ -474,9 +462,6 @@ class LoungeDatabase:
             conn.commit()
             return limit_val
 
-    # =================================================================
-    # 4. Conversation Context Memory & Smart Error Profile
-    # =================================================================
     def append_history(self, user_id: int, role: str, content: str):
         with self._lock, self._conn() as conn:
             conn.execute("INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)", (user_id, role, content[:1500]))
@@ -521,7 +506,7 @@ class LoungeDatabase:
                         last_seen = CURRENT_TIMESTAMP
                 """, (
                     user_id,
-                    d.get("category", "Naturalness"),
+                    d.get("category", "Spoken Flow"),
                     user_said,
                     native_fix,
                     d.get("why_note", "")
@@ -543,28 +528,24 @@ class LoungeDatabase:
             conn.execute("UPDATE error_profile SET mastered = 1 WHERE id = ?", (err_id,))
             conn.commit()
 
-    # =================================================================
-    # 5. Atomic Saving, Stealth Input Flood & SM-2 SRS
-    # =================================================================
     def store_atomic_batch(
         self,
         user_id: int,
         token_key: str,
         items: List[Dict[str, Any]],
         audio_clean_text: str = "",
+        host_reply_text: str = "",
         user_voice_file_id: str = ""
     ):
-        # Also auto-enrich the local FTS5 Corpus with newly discovered chunks
         self.ingest_chunks_to_corpus(items)
-
         now_ts = int(time.time())
         with self._lock, self._conn() as conn:
             conn.execute("DELETE FROM atomic_buffer WHERE created_at < ?", (now_ts - 172800,))
             conn.execute("""
                 INSERT OR REPLACE INTO atomic_buffer
-                (token_key, user_id, payload_json, audio_clean_text, user_voice_file_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (token_key, user_id, json.dumps(items, ensure_ascii=False), audio_clean_text, user_voice_file_id, now_ts))
+                (token_key, user_id, payload_json, audio_clean_text, host_reply_text, user_voice_file_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (token_key, user_id, json.dumps(items, ensure_ascii=False), audio_clean_text, host_reply_text, user_voice_file_id, now_ts))
             conn.commit()
 
     def get_atomic_meta(self, token_key: str) -> Optional[Dict[str, Any]]:
@@ -578,7 +559,7 @@ class LoungeDatabase:
             return ""
         example = (item.get("example") or item.get("example_sentence") or "").strip()
         pattern_re = re.compile(re.escape(chunk), re.IGNORECASE)
-        cloze = pattern_re.sub("______", example) if pattern_re.search(example) else f"{example} (Target: ______)"
+        cloze = pattern_re.sub("______", example) if pattern_re.search(example) else f"{example} (Phrase: ______)"
         today = datetime.utcnow().strftime("%Y-%m-%d")
 
         with self._lock, self._conn() as conn:
@@ -589,7 +570,7 @@ class LoungeDatabase:
             """, (
                 user_id,
                 chunk,
-                item.get("register_tag", "[🎙️ Articulate / Natural]"),
+                item.get("register_tag", "🎙️ Articulate"),
                 item.get("explanation", ""),
                 item.get("trigger", item.get("trigger_context", "")),
                 item.get("pattern", item.get("co_text_pattern", "")),
@@ -616,7 +597,6 @@ class LoungeDatabase:
             return None
 
     def get_stealth_injection_targets(self, user_id: int, limit: int = 3) -> Tuple[List[Dict[str, Any]], List[int]]:
-        """Pulls saved chunks that still need Incidental Input Flood exposure."""
         with self._lock, self._conn() as conn:
             rows = conn.execute("""
                 SELECT id, chunk, register_tag, trigger_context
@@ -654,7 +634,6 @@ class LoungeDatabase:
             return dict(row) if row else None
 
     def grade_srs_card(self, card_id: int, quality: int):
-        """SuperMemo-2 (SM-2) Spaced Repetition Algorithm."""
         card = self.get_srs_card_by_id(card_id)
         if not card:
             return
@@ -714,25 +693,25 @@ class LoungeDatabase:
             }
 
     # =================================================================
-    # 6. Telegram Pinned Backup & Safe Auto-Restore (User Data DB)
+    # Self-Cleaning Silent Vault Sync (Deletes previous backup message)
     # =================================================================
-    def backup_to_telegram(self, bot: Any, caption_note: str = "Automated Relay Backup") -> bool:
+    def backup_to_telegram(self, bot: Any, caption_note: str = "Vault Sync") -> bool:
         if not ADMIN_ID or not bot:
             return False
         try:
+            old_msg_id = self.get_sys_state("last_backup_msg_id", "")
             snap_path = f"{self.user_db_path}.backup"
             with self._lock, self._conn() as src_conn:
                 dst_conn = sqlite3.connect(snap_path)
                 src_conn.backup(dst_conn)
                 dst_conn.close()
 
-            ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
             with open(snap_path, "rb") as f:
                 sent = bot.send_document(
                     ADMIN_ID,
                     f,
                     visible_file_name=os.path.basename(self.user_db_path),
-                    caption=f"🗽 <b>Musa's NYC Lounge — SQLite Relay Snapshot</b>\n📌 {caption_note}\n🕒 <code>{ts}</code>",
+                    caption=f"📓 <i>{caption_note}</i>",
                     parse_mode="HTML",
                     disable_notification=True
                 )
@@ -740,6 +719,15 @@ class LoungeDatabase:
                 bot.pin_chat_message(ADMIN_ID, sent.message_id, disable_notification=True)
             except Exception:
                 pass
+
+            # Delete previous backup document message so chat stays 100% clean
+            if old_msg_id and old_msg_id.isdigit() and int(old_msg_id) != sent.message_id:
+                try:
+                    bot.delete_message(ADMIN_ID, int(old_msg_id))
+                except Exception:
+                    pass
+
+            self.set_sys_state("last_backup_msg_id", str(sent.message_id))
             if os.path.exists(snap_path):
                 os.remove(snap_path)
             return True
@@ -769,11 +757,10 @@ class LoungeDatabase:
                     with self._lock:
                         os.replace(temp_check, self.user_db_path)
                     self.init_schema()
-                    logger.info("✅ User DB v3 successfully restored from Admin pinned message!")
+                    self.set_sys_state("last_backup_msg_id", str(pinned.message_id))
                     return True
                 else:
                     os.remove(temp_check)
-                    logger.warning("⚠️ Ignored incompatible legacy DB file.")
         except Exception as e:
             logger.warning(f"Could not auto-restore from pinned message: {e}")
         return False

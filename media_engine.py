@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-media_engine.py — US Neural TTS, FFmpeg Acoustic Mirror (1.0x + 0.85x),
-Dual-Host Podcast Producer, WeasyPrint PDF & Anki CSV Exporter.
-Includes Semaphore Task Guard & Automatic Garbage Collection.
+media_engine.py — Neural US Speech (Host & User Recast), Voice Mirror (1.0x + 0.85x),
+Dual-Host Radio Producer, Printable PDF Booklet & Anki Deck Exporter.
 """
 import os
 import re
@@ -27,14 +26,12 @@ from config import (
 
 logger = logging.getLogger("MusaNYCLounge.Media")
 
-# Semaphore to prevent Out-Of-Memory (OOM) on concurrent FFmpeg / WeasyPrint tasks
 MEDIA_TASK_SEMAPHORE = threading.BoundedSemaphore(2)
 
 
 class LoungeMediaEngine:
     @staticmethod
     def cleanup_file(path: Optional[str]):
-        """Deletes temporary media file immediately after Telegram upload."""
         if path and os.path.exists(path):
             try:
                 os.remove(path)
@@ -43,7 +40,6 @@ class LoungeMediaEngine:
 
     @staticmethod
     def sweep_old_temp_files(max_age_seconds: int = 1800):
-        """Garbage collector for stale temp files older than 30 minutes."""
         now = time.time()
         if not os.path.exists(TEMP_DIR):
             return
@@ -57,18 +53,16 @@ class LoungeMediaEngine:
 
     @staticmethod
     def clean_text_for_tts(text: str) -> str:
-        """Strips HTML tags, markdown symbols, and bracketed register labels before TTS."""
         if not text:
             return ""
         t = re.sub(r"<[^>]+>", "", text)
         t = re.sub(r"\[[^\]]*\]", "", t)
-        t = re.sub(r"[*_`~#>]", "", t)
+        t = re.sub(r"[*_`~#>🗽🎙️☕🎭🔬🎧🩺💎🌊]", "", t)
         t = re.sub(r"\s+", " ", t).strip()
         return t
 
     @staticmethod
     def _run_async(coro):
-        """Safely executes async Edge-TTS coroutines inside threaded handlers."""
         loop = asyncio.new_event_loop()
         try:
             return loop.run_until_complete(coro)
@@ -91,13 +85,12 @@ class LoungeMediaEngine:
                 if os.path.exists(out_mp3) and os.path.getsize(out_mp3) > 100:
                     return True
             except Exception as e:
-                logger.warning(f"Edge-TTS attempt {attempt + 1} failed: {e}")
-                time.sleep(0.6)
+                logger.warning(f"Voice synthesis attempt {attempt + 1} note: {e}")
+                time.sleep(0.5)
         return False
 
     @staticmethod
     def _to_standard_wav(in_path: str, out_wav: str) -> bool:
-        """Converts any audio file to 24kHz Mono 16-bit PCM WAV for glitch-free FFmpeg concatenation."""
         cmd = [
             "ffmpeg", "-y", "-i", in_path,
             "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
@@ -108,7 +101,6 @@ class LoungeMediaEngine:
 
     @staticmethod
     def _generate_chime_wav(out_wav: str, freq: int = 880, duration: float = 0.22) -> bool:
-        """Generates a clean acoustic separator chime + short silence padding in 24kHz Mono WAV."""
         cmd = [
             "ffmpeg", "-y",
             "-f", "lavfi", "-i", f"sine=frequency={freq}:duration={duration}:sample_rate=24000",
@@ -130,9 +122,6 @@ class LoungeMediaEngine:
         res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return res.returncode == 0 and os.path.exists(out_wav)
 
-    # =================================================================
-    # 1. On-Demand US Native Speech Synthesis (.ogg Opus for Telegram)
-    # =================================================================
     @classmethod
     def synthesize_us_speech(
         cls,
@@ -162,9 +151,6 @@ class LoungeMediaEngine:
                 if os.path.exists(out_ogg) and os.path.exists(raw_mp3):
                     cls.cleanup_file(raw_mp3)
 
-    # =================================================================
-    # 2. FFmpeg Back-to-Back Acoustic Mirror (User + 1.0x US + 0.85x US)
-    # =================================================================
     @classmethod
     def build_acoustic_mirror(
         cls,
@@ -173,8 +159,7 @@ class LoungeMediaEngine:
         voice: str = VOICE_MALE_HOST
     ) -> Optional[str]:
         """
-        Builds a single merged voice track:
-        [User Original Voice] -> [Chime] -> [US Native 1.0x] -> [Chime] -> [US Native 0.85x Slow-Mo]
+        Merges: [User Voice] -> [Chime] -> [Native 1.0x] -> [Chime] -> [Slow Study 0.85x]
         """
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:10]
@@ -201,7 +186,6 @@ class LoungeMediaEngine:
                     return None
                 if not cls._to_standard_wav(fast_mp3, fast_wav):
                     return None
-                # 0.85x pace (-15%) for slow-motion connected speech & Flap-T study
                 if not cls._edge_tts_to_file(target_us_sentence, slow_mp3, voice=voice, rate="-15%"):
                     return None
                 if not cls._to_standard_wav(slow_mp3, slow_wav):
@@ -223,21 +207,14 @@ class LoungeMediaEngine:
                     return final_ogg
                 return None
             except Exception as e:
-                logger.error(f"Acoustic Mirror build error: {e}")
+                logger.error(f"Voice Mirror error: {e}")
                 return None
             finally:
                 for tf in temp_files:
                     cls.cleanup_file(tf)
 
-    # =================================================================
-    # 3. Dual-Host NYC Podcast Studio Producer (Andrew & Ava)
-    # =================================================================
     @classmethod
     def produce_dual_host_podcast(cls, episode: Any) -> Optional[str]:
-        """
-        Synthesizes a natural multi-turn dialogue between Andrew (male_host) and Ava (female_host)
-        and merges all turns into a single broadcast-ready MP3 episode via FFmpeg.
-        """
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:10]
         temp_files: List[str] = []
@@ -248,7 +225,7 @@ class LoungeMediaEngine:
 
         pause_wav = os.path.join(TEMP_DIR, f"p_pause_{uid}.wav")
         concat_txt = os.path.join(TEMP_DIR, f"p_list_{uid}.txt")
-        final_mp3 = os.path.join(TEMP_DIR, f"nyc_podcast_{uid}.mp3")
+        final_mp3 = os.path.join(TEMP_DIR, f"nyc_radio_{uid}.mp3")
         temp_files.extend([pause_wav, concat_txt])
 
         with MEDIA_TASK_SEMAPHORE:
@@ -289,15 +266,12 @@ class LoungeMediaEngine:
                     return final_mp3
                 return None
             except Exception as e:
-                logger.error(f"Podcast production error: {e}")
+                logger.error(f"Radio episode error: {e}")
                 return None
             finally:
                 for tf in temp_files:
                     cls.cleanup_file(tf)
 
-    # =================================================================
-    # 4. Vault Exports: WeasyPrint PDF Report & Anki CSV Deck
-    # =================================================================
     @classmethod
     def export_vault_pdf(
         cls,
@@ -307,7 +281,7 @@ class LoungeMediaEngine:
     ) -> Optional[str]:
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:8]
-        pdf_path = os.path.join(TEMP_DIR, f"Musa_NYC_Lounge_Vault_{uid}.pdf")
+        pdf_path = os.path.join(TEMP_DIR, f"Musa_NYC_Lounge_Notebook_{uid}.pdf")
 
         cards_html = []
         for idx, item in enumerate(vault_items, 1):
@@ -317,13 +291,13 @@ class LoungeMediaEngine:
                     <span class="chunk">{idx}. {html.escape(item.get('chunk', ''))}</span>
                     <span class="badge">{html.escape(item.get('register_tag', ''))}</span>
                 </div>
-                <p class="meaning"><b>Pragmatic Meaning:</b> {html.escape(item.get('explanation', ''))}</p>
+                <p class="meaning"><b>Nuance & Meaning:</b> {html.escape(item.get('explanation', ''))}</p>
                 <div class="frame-grid">
-                    <div><b>🎯 Trigger:</b> {html.escape(item.get('trigger_context', ''))}</div>
-                    <div><b>🔗 Pattern & Co-text:</b> <code>{html.escape(item.get('co_text_pattern', ''))}</code></div>
-                    <div><b>💬 Typical Follow-up:</b> <i>"{html.escape(item.get('typical_followup', ''))}"</i></div>
+                    <div><b>🎯 When to Reach For It:</b> {html.escape(item.get('trigger_context', ''))}</div>
+                    <div><b>🔗 Natural Pattern:</b> <code>{html.escape(item.get('co_text_pattern', ''))}</code></div>
+                    <div><b>💬 Natural Follow-up:</b> <i>"{html.escape(item.get('typical_followup', ''))}"</i></div>
                 </div>
-                <p class="example"><b>🗽 NYC Example:</b> <i>"{html.escape(item.get('example_sentence', ''))}"</i></p>
+                <p class="example"><b>🗽 In Conversation:</b> <i>"{html.escape(item.get('example_sentence', ''))}"</i></p>
             </div>
             """)
 
@@ -347,11 +321,10 @@ class LoungeMediaEngine:
             </style>
         </head>
         <body>
-            <h1>🗽 Musa's NYC Lounge — 3-Part Lexical Frames Vault</h1>
+            <h1>🗽 Musa's NYC Lounge — Personal Phrasebook</h1>
             <div class="subtitle">
                 Member: <b>{html.escape(user.get('full_name') or 'Member')}</b> |
-                Level: <b>{html.escape(user.get('level', 'C1'))}</b> |
-                Total Saved Frames: <b>{stats.get('total_vault', len(vault_items))}</b> |
+                Collected Expressions: <b>{stats.get('total_vault', len(vault_items))}</b> |
                 Date: <b>{datetime.utcnow().strftime('%Y-%m-%d')}</b>
             </div>
             {''.join(cards_html)}
@@ -365,15 +338,14 @@ class LoungeMediaEngine:
                 if os.path.exists(pdf_path):
                     return pdf_path
             except Exception as e:
-                logger.error(f"WeasyPrint PDF error: {e}")
+                logger.error(f"PDF Booklet error: {e}")
             return None
 
     @classmethod
     def export_vault_anki_csv(cls, vault_items: List[Dict[str, Any]]) -> Optional[str]:
-        """Exports a semicolon-delimited CSV deck ready for direct import into Anki."""
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:8]
-        csv_path = os.path.join(TEMP_DIR, f"Musa_NYC_Lounge_Anki_{uid}.csv")
+        csv_path = os.path.join(TEMP_DIR, f"Musa_NYC_Lounge_Flashcards_{uid}.csv")
         try:
             with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f, delimiter=";")
@@ -383,11 +355,11 @@ class LoungeMediaEngine:
                     trig = item.get("trigger_context", "")
                     cloze = item.get("cloze_sentence") or item.get("example_sentence", "").replace(chunk, "______")
 
-                    front = f"[{reg}] (Trigger: {trig})<br><br><b>{cloze}</b>"
+                    front = f"[{reg}] (When: {trig})<br><br><b>{cloze}</b>"
                     back = (
-                        f"<b>{chunk}</b> {reg}<br><br>"
-                        f"<b>Meaning:</b> {item.get('explanation', '')}<br>"
-                        f"<b>🎯 Trigger:</b> {trig}<br>"
+                        f"<b>{chunk}</b> ({reg})<br><br>"
+                        f"<b>Nuance:</b> {item.get('explanation', '')}<br>"
+                        f"<b>🎯 When to use:</b> {trig}<br>"
                         f"<b>🔗 Pattern:</b> <code>{item.get('co_text_pattern', '')}</code><br>"
                         f"<b>💬 Follow-up:</b> <i>{item.get('typical_followup', '')}</i><br><br>"
                         f"<b>🗽 Example:</b> <i>{item.get('example_sentence', '')}</i>"
@@ -395,5 +367,5 @@ class LoungeMediaEngine:
                     writer.writerow([front, back, "Musa_NYC_Lounge"])
             return csv_path if os.path.exists(csv_path) else None
         except Exception as e:
-            logger.error(f"Anki CSV export error: {e}")
+            logger.error(f"Flashcard CSV error: {e}")
             return None
