@@ -104,7 +104,7 @@ class LoungeTurnResponse(BaseModel):
         description="Detailed American Rhythm & Pronunciation Map built on `tts_clean_target`."
     )
     tts_clean_target: str = Field(
-        description="Clean plain-text version of the best American recast of the user's message."
+        description="Clean plain-text version of the recast that matches the member's ACTIVE VIBE (no brackets or phonetic symbols) ready for voice synthesis."
     )
     mirror_clean_target: str = Field(
         default="",
@@ -116,7 +116,7 @@ class LoungeTurnResponse(BaseModel):
     )
     lexical_upgrades: List[LexicalFrameUpgrade] = Field(
         default_factory=list,
-        description="Exactly 3 numbered C1/C2 Spoken American Expressions tailored to this turn."
+        description="Exactly 3 numbered Spoken American Expressions tailored to this turn, ALL 3 strictly matching the member's ACTIVE VIBE."
     )
 
 
@@ -354,7 +354,7 @@ class NYCLoungeAI:
         if mode == "devils_advocate":
             return "ACTIVE ROOM: 🥊 DEVIL'S ADVOCATE. Challenge the member's premise with sharp New York pushback."
         elif mode == "storytelling_gym":
-            return "ACTIVE ROOM: 🎭 STORYTELLING & WIT GYM. Coach dramatic present-tense storytelling and punchlines."
+            return "ACTIVE ROOM: 🎭 STORYTELLING GYM (Delivered strictly in the member's ACTIVE VIBE). Coach dramatic present-tense storytelling and punchlines."
         elif mode == "register_lab":
             return "ACTIVE ROOM: 🎛️ VIBE & STYLE SHIFTER. Contrast Articulate, Casual, and Witty registers."
         elif mode == "subtext_decoder":
@@ -369,7 +369,7 @@ class NYCLoungeAI:
         elif mode == "shadowing_drill":
             target_sent = session_meta.get("drill_target_sentence", "")
             return f"ACTIVE ROOM: 🎙️ RHYTHM & SHADOWING WORKOUT. Target sentence: '{target_sent}'."
-        return "ACTIVE ROOM: 🗣️ NYC SPONTANEOUS BANTER. Engage in genuine, unscripted, witty New York conversation."
+        return "ACTIVE ROOM: 🗣️ NYC SPONTANEOUS BANTER. Engage in genuine, unscripted New York conversation strictly locked to the member's ACTIVE VIBE."
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
         uid = user["user_id"]
@@ -492,10 +492,9 @@ class NYCLoungeAI:
             max_output_tokens=4096
         )
 
-        allowed_tags = list(REGISTERS_MAP.values())
-        for idx, up in enumerate(res.lexical_upgrades):
-            if not any(k in up.register_tag for k in ("Articulate", "Casual", "Witty")):
-                up.register_tag = allowed_tags[idx % len(allowed_tags)]
+        active_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        for up in res.lexical_upgrades:
+            up.register_tag = active_badge
 
         res = self._finalize_chat_turns(res, active_persona=active_persona, user_text=user_text)
 

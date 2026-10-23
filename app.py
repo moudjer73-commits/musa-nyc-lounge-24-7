@@ -141,6 +141,14 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
     )
 
 
+def get_active_recast(res: LoungeTurnResponse, pref_reg: str) -> str:
+    if pref_reg == "casual":
+        return res.rewrite_casual or res.tts_clean_target or res.rewrite_articulate
+    if pref_reg == "witty":
+        return res.rewrite_witty or res.tts_clean_target or res.rewrite_articulate
+    return res.rewrite_articulate or res.tts_clean_target
+
+
 def format_lounge_turn_html(
     res: LoungeTurnResponse,
     is_voice: bool = False,
@@ -773,7 +781,7 @@ if bot:
                 nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "articulate"
                 db.update_user(uid, preferred_register=nxt)
                 user = db.get_user(uid)
-                bot.answer_callback_query(call.id, f"🎚️ Vibe: {REGISTERS_MAP[nxt]}")
+                bot.answer_callback_query(call.id, f"🎚️ All club hosts locked to: {REGISTERS_MAP[nxt]}", show_alert=False)
                 try:
                     bot.edit_message_reply_markup(
                         call.message.chat.id, call.message.message_id,
@@ -1206,7 +1214,7 @@ if bot:
                 user_id=uid,
                 token_key=token_key,
                 items=upgrades_dicts,
-                audio_clean_text=res.tts_clean_target or res.rewrite_articulate,
+                audio_clean_text=get_active_recast(res, user.get('preferred_register', 'articulate')),
                 user_transcript_text=mirror_sent,
                 host_reply_text=turns_json,
                 active_persona=active_cast_key,
@@ -1423,7 +1431,7 @@ if bot:
                 user_id=uid,
                 token_key=token_key,
                 items=upgrades_dicts,
-                audio_clean_text=res.tts_clean_target or res.rewrite_articulate,
+                audio_clean_text=get_active_recast(res, user.get('preferred_register', 'articulate')),
                 user_transcript_text=res.mirror_clean_target or text,
                 host_reply_text=turns_json,
                 active_persona=active_cast_key

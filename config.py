@@ -141,9 +141,21 @@ REGISTERS_MAP: Dict[str, str] = {
 }
 
 REGISTER_DESCRIPTIONS: Dict[str, str] = {
-    "articulate": "Polished, expressive spoken American English—natural for thoughtful discussions, work, or smart social conversations.",
-    "casual": "Relaxed, fast-paced everyday New York talk among close friends—idiomatic, warm, and effortless.",
-    "witty": "Dry understatement, playful irony, rhetorical sharpness, and clever punchlines."
+    "articulate": (
+        "STRICTLY ARTICULATE MODE: Every persona/host MUST speak in polished, eloquent, intellectually sharp, "
+        "and well-structured spoken American English. Avoid slang or comedic irony; use precise phrasal verbs, "
+        "nuanced collocations, and thoughtful discourse markers ('What really strikes me is...', 'By the same token...', 'To put it in perspective...')."
+    ),
+    "casual": (
+        "STRICTLY CASUAL MODE: Every persona/host MUST speak in relaxed, warm, fast-paced everyday New York "
+        "conversation among close friends. Use natural conversational ellipsis, everyday idioms, contractions, "
+        "and casual street/coffee-shop markers ('Honestly, man...', 'No way', 'I mean, look...', 'Let's just play it by ear')."
+    ),
+    "witty": (
+        "STRICTLY WITTY MODE: Every persona/host MUST speak with dry New York understatement, clever irony, "
+        "playful skepticism, and rhetorical punchlines. Use deadpan observations and witty turns of phrase "
+        "('Well, that's certainly one way to put it', 'Color me shocked', 'Funny how that works out')."
+    )
 }
 
 CORE_NYC_PERSONA_PROMPT: str = """
