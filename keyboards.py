@@ -155,7 +155,7 @@ class LoungeKeyboards:
 
         kb.row(
             InlineKeyboardButton("🎙️ Take 2", callback_data=f"take2:{token_key}"),
-            InlineKeyboardButton("👥 Hosts (1/2/3)", callback_data="menu:cast_selector"),
+            InlineKeyboardButton("👥 Hosts", callback_data="menu:cast_selector"),
             InlineKeyboardButton("🎲 Topic", callback_data="action:spark_topic"),
             InlineKeyboardButton("🏠 Menu", callback_data="menu:home")
         )

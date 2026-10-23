@@ -365,7 +365,7 @@ if bot:
             reply_markup=LoungeKeyboards.podcast_menu()
         )
 
-    @bot.message_handler(commands=["spark", "devil", "audit", "review"])
+    @bot.message_handler(commands=["spark", "devil", "audit", "review", "hosts", "lookup", "drills", "vault", "pdf", "fresh", "new", "chat"])
     def cmd_shortcuts(message):
         uid = message.from_user.id
         uname = message.from_user.username or ""
@@ -402,6 +402,64 @@ if bot:
                 bot.send_message(message.chat.id, "🎉 <b>You're all caught up on your Daily Review for today!</b>")
             else:
                 send_srs_card_prompt(message.chat.id, uid, card)
+        elif cmd == "hosts":
+            cur_cast = user.get("active_persona", "trio")
+            bot.send_message(
+                message.chat.id,
+                "👥 <b>Choose Your Conversation Hosts (1, 2, or 3 Characters)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"<b>Current Table Cast:</b> {_persona_badge(cur_cast)}\n\n"
+                "Pick Trio (3), Duo (2), or Solo (1) below:",
+                reply_markup=LoungeKeyboards.cast_selector_menu(cur_cast)
+            )
+        elif cmd == "lookup":
+            db.update_user(uid, current_mode="fast_lookup")
+            bot.send_message(
+                message.chat.id,
+                "🔎 <b>Collocation & Phrase Finder</b>\n\n"
+                "Send any word, verb, or short phrase to explore its natural spoken American collocations and B2-to-C2 upgrades!"
+            )
+        elif cmd == "drills":
+            bot.send_message(
+                message.chat.id,
+                "🎯 <b>Speaking, Rhythm & Ear Workouts</b>\n\nChoose a live workout below:",
+                reply_markup=LoungeKeyboards.drills_menu()
+            )
+        elif cmd == "vault":
+            vault_items = db.get_user_vault(uid, limit=10)
+            stats = db.get_user_stats(uid)
+            preview = "\n".join([
+                f"{i}. <b>{html.escape(v['chunk'])}</b> ({html.escape(v['register_tag'])})"
+                for i, v in enumerate(vault_items, 1)
+            ]) if vault_items else "<i>Your Vault is empty right now.</i>"
+            bot.send_message(
+                message.chat.id,
+                f"📓 <b>My Personal Phrasebook & Vault</b>\n"
+                f"Saved: <code>{stats['total_vault']}</code> | 🔥 Produced: <code>{stats.get('productive_mastered', 0)}</code>\n\n{preview}",
+                reply_markup=LoungeKeyboards.vault_menu()
+            )
+        elif cmd == "pdf":
+            vault_items = db.get_user_vault(uid, limit=250)
+            if not vault_items:
+                bot.send_message(message.chat.id, "📓 Your Vault is empty—save a few phrases first!")
+            else:
+                stats = db.get_user_stats(uid)
+                pdf_p = LoungeMediaEngine.export_vault_pdf(user, vault_items, stats)
+                if pdf_p:
+                    with open(pdf_p, "rb") as pf:
+                        bot.send_document(message.chat.id, pf, caption="📄 <b>Musa's NYC Lounge — Personal Phrasebook</b>")
+                    LoungeMediaEngine.cleanup_file(pdf_p)
+        elif cmd in ("fresh", "new"):
+            db.reset_history(uid)
+            bot.send_message(message.chat.id, "🔄 <b>Fresh table! Conversation memory cleared.</b>")
+        elif cmd == "chat":
+            db.update_user(uid, current_mode="spontaneous_chat")
+            user = db.get_user(uid)
+            bot.send_message(
+                message.chat.id,
+                build_welcome_banner(user),
+                reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
+            )
 
     @bot.message_handler(commands=["start", "menu", "lounge"])
     def cmd_start(message):
@@ -1396,28 +1454,60 @@ def sync_bot_profile_metadata():
     if not bot:
         return
     try:
-        bot.set_my_short_description(
-            "🗽 Musa's NYC Lounge — Private Manhattan Club with Marcus, Chloe & Jake for C1/C2 Spoken American English."
+        short_desc = "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club with Marcus, Chloe & Jake."
+        full_desc = (
+            "Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n\n"
+            "• Live NYC Trio: Unscripted banter, Devil's Advocate & storytelling with Marcus (🎙️ Articulate), Chloe (🎭 Witty) & Jake (☕ Casual).\n"
+            "• Podcast Lounge: 3+ min Trio & Duo episodes with stereo audio & [MM:SS] timestamps.\n"
+            "• Voice Mirror: 1.0x/0.85x accent mirror, stress & linking map.\n"
+            "• Vault & Finder: B2→C2 upgrades, collocations & PDF/Anki exports."
         )
-        bot.set_my_description(
-            "🗽 Welcome to Musa's NYC Lounge!\n\n"
-            "Your private Manhattan club for mastering Spoken American English with Marcus, Chloe & Jake.\n\n"
-            "✨ Inside the Club:\n"
-            "• 🗽 Trio & Individual Banter (Marcus, Chloe, Jake)\n"
-            "• 🎙️ 3+ Minute NotebookLM-Style Trio & Duo Podcasts\n"
-            "• 🪞 Loudness-Normalized Voice Mirror & Accent Coaching\n"
-            "• 🔎 Spoken Collocation Finder & Personal Phrasebook\n\n"
-            "Tap Start or /guide to pull up a chair!"
-        )
-        bot.set_my_commands([
-            telebot.types.BotCommand("start", "🗽 Enter the Lounge & Main Menu"),
-            telebot.types.BotCommand("trio", "🎙️ Launch Trio & Duo Podcast Studio"),
-            telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic"),
-            telebot.types.BotCommand("devil", "🥊 Devil's Advocate Sparring"),
-            telebot.types.BotCommand("review", "🧠 Daily Phrase Practice"),
-            telebot.types.BotCommand("audit", "📊 Spoken Fluency Audit"),
-            telebot.types.BotCommand("guide", "📖 Open the Member's Handbook")
-        ])
+        commands = [
+            telebot.types.BotCommand("start", "🗽 Main Club Menu & Dashboard"),
+            telebot.types.BotCommand("hosts", "👥 Choose 1 (Solo), 2 (Duo) or 3 (Trio) Hosts"),
+            telebot.types.BotCommand("podcast", "🎙️ 3+ Min Trio & Duo Podcast Studio"),
+            telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic or Scenario"),
+            telebot.types.BotCommand("devil", "🥊 Devil's Advocate Pushback Sparring"),
+            telebot.types.BotCommand("lookup", "🔎 Spoken Collocation & Phrase Finder"),
+            telebot.types.BotCommand("drills", "🎯 Speaking, Stress & Shadowing Workouts"),
+            telebot.types.BotCommand("review", "🧠 Daily Active Phrase Practice"),
+            telebot.types.BotCommand("vault", "📓 My Saved Phrases, PDF & Anki Export"),
+            telebot.types.BotCommand("audit", "📊 My Spoken Fluency & Style Audit"),
+            telebot.types.BotCommand("guide", "📖 Member's Handbook & How It Works"),
+            telebot.types.BotCommand("fresh", "🔄 Clear Table & Start Fresh Memory")
+        ]
+
+        scopes = [
+            telebot.types.BotCommandScopeDefault(),
+            telebot.types.BotCommandScopeAllPrivateChats(),
+            telebot.types.BotCommandScopeAllGroupChats()
+        ]
+        if ADMIN_ID:
+            scopes.append(telebot.types.BotCommandScopeChat(ADMIN_ID))
+
+        for sc in scopes:
+            for lang in [None, "en", "ar"]:
+                try:
+                    bot.delete_my_commands(scope=sc, language_code=lang)
+                except Exception:
+                    pass
+
+        for sc in [
+            telebot.types.BotCommandScopeDefault(),
+            telebot.types.BotCommandScopeAllPrivateChats()
+        ] + ([telebot.types.BotCommandScopeChat(ADMIN_ID)] if ADMIN_ID else []):
+            for lang in [None, "en"]:
+                try:
+                    bot.set_my_commands(commands, scope=sc, language_code=lang)
+                except Exception:
+                    pass
+
+        for lang in [None, "en", "ar"]:
+            try:
+                bot.set_my_short_description(short_desc, language_code=lang)
+                bot.set_my_description(full_desc, language_code=lang)
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"Profile sync note: {e}")
 
