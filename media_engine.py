@@ -84,6 +84,11 @@ class LoungeMediaEngine:
         t = re.sub(r"[↘↗➔→←↑↓↔⇒⇐⇑⇓▸▹►▻•●◆▪▫━─═]", " ", t)
         # 4. السماح فقط بالحروف والأرقام الإنجليزية وعلامات الترقيم المنطوقة الطبيعية
         t = re.sub(r"[^a-zA-Z0-9\s.,!?'\"\-;:$%&()]", " ", t)
+        # 5. تحويل الكلمات المكتوبة بحروف كبيرة للنبر (مثل US, IT, IN, AM, OR) إلى حروف صغيرة حتى لا تُقرأ كاختصارات
+        def _decap(m):
+            w = m.group(0)
+            return w if w in ("I", "NYC", "JFK", "FBI", "CIA", "CEO", "TV", "DJ", "AI", "UK", "USA") else w.lower()
+        t = re.sub(r"\b[A-Z]{2,}\b", _decap, t)
         t = re.sub(r"\s+", " ", t).strip()
         return t
 

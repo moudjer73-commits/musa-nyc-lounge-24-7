@@ -678,6 +678,9 @@ if bot:
 
             # --- 3B. Spark a Fresh Topic / Scenario ---
             elif data == "action:spark_topic":
+                if user.get("current_mode") in ("srs_active_practice", "fast_lookup", "chunk_miner"):
+                    db.update_user(uid, current_mode="spontaneous_chat")
+                    user = db.get_user(uid)
                 bot.answer_callback_query(call.id, "🎲 Setting up a fresh topic...")
                 wait_msg = bot.send_message(
                     call.message.chat.id,
@@ -1155,6 +1158,7 @@ if bot:
                     wait_msg = bot.reply_to(message, f"🎧 <b>Listening to how you used <code>{html.escape(card['chunk'])}</code>...</b>")
                     ev = ai_engine.evaluate_active_srs_usage(user, card, audio_bytes=audio_bytes)
                     db.grade_srs_card(card_id, ev.recommended_grade)
+                    db.update_user(uid, current_mode="spontaneous_chat")
                     if ev.used_naturally:
                         db.detect_and_record_active_uptake(uid, card["chunk"])
                     badge = "🌟 <b>Spot-On Delivery!</b>" if ev.used_naturally else "💡 <b>Close—Here's How to Polish It:</b>"
@@ -1293,6 +1297,7 @@ if bot:
                 try:
                     ev = ai_engine.evaluate_active_srs_usage(user, card, user_text=text)
                     db.grade_srs_card(card_id, ev.recommended_grade)
+                    db.update_user(uid, current_mode="spontaneous_chat")
                     if ev.used_naturally:
                         db.detect_and_record_active_uptake(uid, text)
                     badge = "🌟 <b>Spot-On Usage!</b>" if ev.used_naturally else "💡 <b>Nice Try—Here's How to Make It Sound Effortless:</b>"
@@ -1311,7 +1316,7 @@ if bot:
                 return
 
         # --- C. Collocation & Phrase Finder ---
-        if mode == "fast_lookup" and len(text.split()) <= 5:
+        if mode == "fast_lookup" and len(text.split()) <= 10:
             local_hits = db.lookup_collocations(text, user_id=uid, limit=4)
             wait_msg = bot.reply_to(message, f"🔎 <b>Exploring natural American collocations for <code>{html.escape(text)}</code>...</b>")
             try:
