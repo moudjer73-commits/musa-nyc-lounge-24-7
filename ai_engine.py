@@ -475,12 +475,12 @@ class NYCLoungeAI:
         for up in res.lexical_upgrades:
             up.register_tag = active_badge
 
-        res = self._finalize_chat_turns(res, active_persona=active_persona, user_text=user_text)
+        res = self._finalize_chat_turns(res, active_persona=active_persona, user_text=user_text or res.transcription)
 
         used_stealth_ids: List[int] = []
         reply_lower = (res.lounge_reply or "").lower()
         for it in stealth_items:
-            if it["chunk"].lower() in reply_lower:
+            if self.db.smart_chunk_match(it["chunk"], res.lounge_reply or ""):
                 used_stealth_ids.append(it["id"])
 
         return res, used_stealth_ids
@@ -509,28 +509,42 @@ class NYCLoungeAI:
     def evaluate_active_srs_usage(
         self,
         user: Dict[str, Any],
-        card: Dict[str, Any],
-        user_text: str = "",
+        target_chunk: str,
+        user_sentence: str = "",
         audio_bytes: Optional[bytes] = None,
         audio_mime: str = "audio/ogg"
-    ) -> ActiveReviewEvalSchema:
-        target_chunk = card.get("chunk", "")
+    ) -> SRSEvaluationSchema:
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+
+        modality_note = (
+            "The member submitted a VOICE NOTE. Evaluate whether they used the target expression naturally and accurately, and keep your coaching focused on phrasing and natural spoken flow."
+            if audio_bytes else
+            "The member submitted a WRITTEN TEXT sentence. Evaluate strictly their phrasing, context, and pragmatic accuracy—do NOT mention pronunciation or voice delivery."
+        )
+
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"TASK: Evaluate how the member practiced `{target_chunk}` ({card.get('register_tag', '')})."
+            "ACTIVE TASK: 🗂️ SRS ACTIVE RECALL COACH.\n"
+            f"- Target Expression: '{target_chunk}'\n"
+            f"- STRICT VIBE LOCK ({vibe_badge}): {vibe_rules}\n"
+            f"- {modality_note}\n"
+            f"- Provide `native_polish` as a 100% natural {vibe_badge} sentence using '{target_chunk}'."
         )
+
         contents: List[Any] = []
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
-            contents.append(f"Evaluate how the member used and pronounced '{target_chunk}'.")
+            contents.append(f"Evaluate how the member used '{target_chunk}' in this voice note.")
         else:
-            contents.append(f"Member's practice sentence for '{target_chunk}':\n{user_text}")
+            contents.append(f"Target Expression: '{target_chunk}'\nMember's Sentence: '{user_sentence}'")
 
         return self._call_structured(
             contents=contents,
-            schema_cls=ActiveReviewEvalSchema,
+            schema_cls=SRSEvaluationSchema,
             system_instruction=system_prompt,
-            temperature=0.55
+            temperature=0.65
         )
 
     def generate_fluency_audit(self, user: Dict[str, Any]) -> str:
@@ -577,24 +591,32 @@ class NYCLoungeAI:
             logger.warning(f"Fluency audit fallback: {e}")
             return "📊 <b>Your Spoken Fluency Snapshot</b>\nKeep sending voice notes in NYC Banter!"
 
-    def mine_text_and_subtext(self, user: Dict[str, Any], source_text: str) -> LoungeTurnResponse:
+    def mine_text_and_subtext(self, user: Dict[str, Any], raw_text: str) -> LoungeTurnResponse:
         pref_reg = user.get("preferred_register", "articulate")
         vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
         vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
-        active_vibe_badge = vibe_badge
-        level = user.get("level", "C1")
         active_persona = user.get("active_persona", "trio")
+
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"ACTIVE ROOM: 🔬 NATIVE TEXT & SUBTEXT MINER ({self._level_calibration_guide(level)})."
+            "ACTIVE TASK: 📥 NATIVE TEXT & SUBTEXT MINER.\n"
+            f"- {self._persona_routing_directive(active_persona, 'chunk_miner', raw_text)}\n"
+            f"- STRICT SESSION VIBE LOCK ({vibe_badge}): {vibe_rules}\n"
+            f"- Analyze the submitted passage or quote. Have the active cast react to its subtext, tone, and pragmatic nuance strictly in {vibe_badge} mode.\n"
+            f"- Provide 3 distinct native recast alternatives (`rewrite_articulate` = Natural, `rewrite_casual` = Idiomatic, `rewrite_witty` = Punchy) ALL strictly in {vibe_badge} mode.\n"
+            f"- Extract the 3 best C1/C2 spoken expressions (`lexical_upgrades`) strictly calibrated to {vibe_badge}, and provide phrasing-only `diagnostics` (NO pronunciation/IPA notes).\n"
+            "- Leave `acoustic_prosody_xray` and `self_repair_pivot` empty."
         )
+
         res: LoungeTurnResponse = self._call_structured(
-            contents=[f"MINE THIS PASSAGE FOR SPOKEN EXPRESSIONS & SUBTEXT:\n{source_text}"],
+            contents=[f"TEXT TO MINE AND ANALYZE:\n{raw_text}"],
             schema_cls=LoungeTurnResponse,
             system_instruction=system_prompt,
-            temperature=0.60
+            temperature=0.7
         )
-        return self._finalize_chat_turns(res, active_persona=active_persona, user_text=source_text)
+        for up in res.lexical_upgrades:
+            up.register_tag = vibe_badge
+        return self._finalize_chat_turns(res, active_persona=active_persona, user_text=raw_text)
 
     def generate_podcast_episode(self, user: Dict[str, Any], custom_topic: str = "") -> PodcastEpisodeSchema:
         uid = user["user_id"]

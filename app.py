@@ -141,35 +141,55 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
     )
 
 
-def get_active_recast(res: LoungeTurnResponse, pref_reg: str) -> str:
-    if pref_reg == "casual":
-        return res.rewrite_casual or res.tts_clean_target or res.rewrite_articulate
-    if pref_reg == "witty":
-        return res.rewrite_witty or res.tts_clean_target or res.rewrite_articulate
-    return res.rewrite_articulate or res.tts_clean_target
+def get_active_recast(res: LoungeTurnResponse, preferred_register: str = "articulate") -> str:
+    opts = []
+    for o in (res.rewrite_articulate, res.rewrite_casual, res.rewrite_witty):
+        clean_o = (o or "").strip()
+        if clean_o and clean_o not in opts:
+            opts.append(clean_o)
+    if opts:
+        return " ... ".join(opts)
+    return (res.tts_clean_target or res.lounge_reply or "").strip()
 
 
 def format_lounge_turn_html(
     res: LoungeTurnResponse,
     is_voice: bool = False,
     stealth_count: int = 0,
-    active_uptakes: List[str] = None
-, active_reg: str = 'articulate') -> str:
-    top_section = ""
-    if active_uptakes:
-        up_badges = ", ".join([f"<code>{html.escape(u)}</code>" for u in active_uptakes])
-        top_section += f"🔥 <b>Active Mastery! You naturally produced from your Vault:</b> {up_badges}\n\n"
+    active_uptakes: Optional[List[str]] = None,
+    active_reg: str = "articulate"
+) -> str:
+    def _safe_italics(txt: str) -> str:
+        esc = html.escape(txt or "")
+        esc = esc.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+        if esc.count("<i>") > esc.count("</i>"):
+            esc += "</i>" * (esc.count("<i>") - esc.count("</i>"))
+        return esc
 
+    header_parts = []
     if is_voice and res.transcription:
-        top_section += f"🎙️ <i>\"{html.escape(res.transcription)}\"</i>\n\n"
+        header_parts.append(f"🎙️ <i>\"{html.escape(res.transcription)}\"</i>\n")
 
-    resp_p = (getattr(res, "responding_persona", "marcus") or "marcus").lower()
-    p_icon = {"marcus": "🧔‍♂️", "chloe": "👩🏼‍💼", "jake": "🧢"}.get(resp_p, "🗽")
-    reply_clean = sanitize_ai_html(res.lounge_reply)
-    if any(tag in reply_clean for tag in ("Marcus:", "Chloe:", "Jake:")):
-        top_section += f"{reply_clean}\n\n"
+    if active_uptakes:
+        badges = ", ".join([f"<code>{html.escape(c)}</code>" for c in active_uptakes])
+        header_parts.append(f"🔥 <b>Active Mastery Bonus! You used:</b> {badges}\n")
+
+    if stealth_count > 0:
+        header_parts.append(f"🕵️‍♂️ <i>{stealth_count} Vault phrase(s) naturally woven in italics below!</i>\n")
+
+    turns = getattr(res, "chat_turns", None) or []
+    if turns:
+        turn_lines = []
+        for t in turns:
+            sp_key = (t.speaker or "marcus").lower().strip()
+            p_meta = PERSONAS.get(sp_key, PERSONAS["marcus"])
+            turn_lines.append(f"{p_meta['title']}: {_safe_italics(t.text)}")
+        main_reply_html = "\n\n".join(turn_lines)
     else:
-        top_section += f"{p_icon} {reply_clean}\n\n"
+        main_reply_html = _safe_italics(res.lounge_reply)
+
+    header_parts.append(main_reply_html)
+    head_section = "\n".join(header_parts)
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     xray_lines = [
@@ -185,35 +205,17 @@ def format_lounge_turn_html(
         xray_lines.append("\n🩺 <b>Precision Phrasing & Flow Polish:</b>")
         for d in res.diagnostics[:3]:
             xray_lines.append(
-                f"• <i>{html.escape(d.user_said)}</i> ➔ ✅ <b>{html.escape(d.native_fix)}</b>\n"
-                f"  └ <code>{html.escape(d.category)}</code> {html.escape(d.why_note)}"
+                f"• <s>{html.escape(d.user_said)}</s> ➔ ✅ <code>{html.escape(d.native_fix)}</code>\n"
+                f"  └ {html.escape(d.category)} <i>{html.escape(d.why_note)}</i>"
             )
 
     if res.lexical_upgrades:
         xray_lines.append("\n💎 <b>Spoken Expressions to Steal (Tap ⭐ Save 1/2/3):</b>")
-        for idx, up in enumerate(res.lexical_upgrades[:3], start=1):
-            b2_foil_str = getattr(up, "b2_foil", "")
-            foil_line = (
-                f"  • 🔄 <b>B2 vs. C2:</b> <s>{html.escape(b2_foil_str)}</s> ➔ <b>{html.escape(up.chunk)}</b>\n"
-                if b2_foil_str else ""
-            )
-            xray_lines.append(
-                f"\n<b>({idx}) {html.escape(up.chunk)}</b> ({html.escape(up.register_tag)})\n"
-                f"{foil_line}"
-                f"  • 💡 <b>Nuance:</b> {html.escape(up.explanation)}\n"
-                f"  • 🎯 <b>When to use:</b> {html.escape(up.trigger)}\n"
-                f"  • 🔗 <b>Pattern:</b> <code>{html.escape(up.pattern)}</code>\n"
-                f"  • 💬 <b>Follow-up:</b> <i>\"{html.escape(up.followup)}\"</i>\n"
-                f"  • 🗽 <b>In Context:</b> <i>\"{html.escape(up.example)}\"</i>"
-            )
+        for i, u in enumerate(res.lexical_upgrades[:3], 1):
+            xray_lines.append(format_upgrade_card_html(i, u.model_dump()))
 
-    if stealth_count > 0:
-        xray_lines.append(
-            f"\n✨ <i>Notice the italics above? {stealth_count} expression(s) from your Vault fit this topic naturally!</i>"
-        )
-
-    expandable_body = "\n".join([line for line in xray_lines if line is not None])
-    return f"{top_section}<blockquote expandable>{expandable_body}</blockquote>"
+    xray_body = "\n".join([line for line in xray_lines if line is not None])
+    return f"{head_section}\n\n<blockquote expandable>{xray_body}</blockquote>"
 
 
 def send_srs_card_prompt(chat_id: int, user_id: int, card: Dict[str, Any], edit_msg_id: int = 0):
@@ -1222,7 +1224,7 @@ if bot:
             active_uptakes = db.detect_and_record_active_uptake(uid, res.transcription)
 
             db.append_history(uid, "user", f"[Voice]: {res.transcription}")
-            db.append_history(uid, "assistant", res.lounge_reply)
+            db.append_history(uid, "assistant", re.sub(r"<[^>]+>", "", res.lounge_reply or ""))
             db.record_diagnostics(uid, [d.model_dump() for d in res.diagnostics])
             if stealth_ids:
                 db.increment_stealth_done(stealth_ids)
@@ -1438,7 +1440,7 @@ if bot:
                 active_uptakes = db.detect_and_record_active_uptake(uid, text)
 
             db.append_history(uid, "user", text)
-            db.append_history(uid, "assistant", res.lounge_reply)
+            db.append_history(uid, "assistant", re.sub(r"<[^>]+>", "", res.lounge_reply or ""))
             db.record_diagnostics(uid, [d.model_dump() for d in res.diagnostics])
             if stealth_ids:
                 db.increment_stealth_done(stealth_ids)
@@ -1453,7 +1455,7 @@ if bot:
                 token_key=token_key,
                 items=upgrades_dicts,
                 audio_clean_text=get_active_recast(res, user.get('preferred_register', 'articulate')),
-                user_transcript_text=res.mirror_clean_target or text,
+                user_transcript_text=res.rewrite_articulate or res.mirror_clean_target or text,
                 host_reply_text=turns_json,
                 active_persona=active_cast_key
             )
