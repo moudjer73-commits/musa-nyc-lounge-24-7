@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-keyboards.py — Clean, Immersive Club Keyboards for Musa's NYC Lounge
-Includes Devil's Advocate Sparring, Contrastive Stress Lab, and Spoken Fluency Audit.
+keyboards.py — Interactive Club Keyboards for Musa's NYC Lounge
+Includes:
+- 1-Tap Trio & Individual Host Selector Bar (Trio, Marcus, Chloe, Jake)
+- Long-Form Duo & Trio Podcast Studio Menu (NotebookLM Style)
+- Pushed-Output 'Take 2 (Retry)' Button & Dynamic Persona Audio Controls
+- Devil's Advocate Sparring, Contrastive Stress Lab & Spoken Fluency Audit
 """
 from typing import Dict, Any
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import REGISTERS_MAP
+from config import REGISTERS_MAP, PERSONAS
 
 
 class LoungeKeyboards:
@@ -15,9 +19,21 @@ class LoungeKeyboards:
         mode = user.get("current_mode", "spontaneous_chat")
         reg_key = user.get("preferred_register", "articulate")
         reg_label = REGISTERS_MAP.get(reg_key, "🎙️ Articulate")
+        active_persona = user.get("active_persona", "trio")
 
         def _m(target: str, label: str) -> str:
             return f"✅ {label}" if mode == target else label
+
+        def _p(target: str, label: str) -> str:
+            return f"✅ {label}" if active_persona == target else label
+
+        # Top Bar: 1-Tap Host / Trio Selector
+        kb.row(
+            InlineKeyboardButton(_p("trio", "🗽 Trio"), callback_data="persona:trio"),
+            InlineKeyboardButton(_p("marcus", "🧔‍♂️ Marcus"), callback_data="persona:marcus"),
+            InlineKeyboardButton(_p("chloe", "👩🏼‍💼 Chloe"), callback_data="persona:chloe"),
+            InlineKeyboardButton(_p("jake", "🧢 Jake"), callback_data="persona:jake")
+        )
 
         # Row 1: Spontaneous Banter & Devil's Advocate Sparring
         kb.add(
@@ -38,9 +54,9 @@ class LoungeKeyboards:
         kb.row(
             InlineKeyboardButton("🎲 Spark a Fresh Topic or Scenario", callback_data="action:spark_topic")
         )
-        # Row 5: Radio Lounge & Phrase Finder/Miner
+        # Row 5: Podcast Lounge (Trio/Duo) & Phrase Finder/Miner
         kb.add(
-            InlineKeyboardButton("🎙️ The Radio Lounge", callback_data="menu:podcast"),
+            InlineKeyboardButton("🎙️ Podcast Lounge (Trio/Duo)", callback_data="menu:podcast"),
             InlineKeyboardButton("🔎 Phrase Finder & Miner", callback_data="menu:miner_lookup")
         )
         # Row 6: Speaking Workouts & Daily Review
@@ -68,13 +84,24 @@ class LoungeKeyboards:
         return kb
 
     @staticmethod
-    def studio_prompt_bar(mode: str) -> InlineKeyboardMarkup:
+    def studio_prompt_bar(mode: str, active_persona: str = "trio") -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=2)
+        p_labels = {
+            "trio": "🗽 Trio Table",
+            "marcus": "🧔‍♂️ Marcus",
+            "chloe": "👩🏼‍💼 Chloe",
+            "jake": "🧢 Jake"
+        }
+        p_badge = p_labels.get(active_persona, "🗽 Trio Table")
+
         kb.add(
             InlineKeyboardButton("🎲 Spark Another Topic", callback_data="action:spark_topic"),
-            InlineKeyboardButton("🎚️ Switch Vibe", callback_data="action:cycle_register")
+            InlineKeyboardButton(f"👥 Host: {p_badge}", callback_data="action:cycle_persona")
         )
-        kb.row(InlineKeyboardButton("🏠 Club Main Menu", callback_data="menu:home"))
+        kb.add(
+            InlineKeyboardButton("🎚️ Switch Vibe", callback_data="action:cycle_register"),
+            InlineKeyboardButton("🏠 Club Main Menu", callback_data="menu:home")
+        )
         return kb
 
     @staticmethod
@@ -82,13 +109,20 @@ class LoungeKeyboards:
         token_key: str,
         num_upgrades: int = 3,
         has_user_voice: bool = False,
-        has_host_voice: bool = True
+        has_host_voice: bool = True,
+        persona_key: str = "marcus"
     ) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
 
+        p_short = {
+            "marcus": "🧔‍♂️ Marcus",
+            "chloe": "👩🏼‍💼 Chloe",
+            "jake": "🧢 Jake"
+        }.get((persona_key or "marcus").lower(), "🎧 Host")
+
         audio_btns = []
         if has_host_voice:
-            audio_btns.append(InlineKeyboardButton("🎧 Host Voice", callback_data=f"host_tts:{token_key}"))
+            audio_btns.append(InlineKeyboardButton(f"🎧 {p_short}", callback_data=f"host_tts:{token_key}"))
         audio_btns.append(InlineKeyboardButton("🗣️ My Recast", callback_data=f"tts:{token_key}"))
         if has_user_voice:
             audio_btns.append(InlineKeyboardButton("🪞 Voice Mirror", callback_data=f"mirror:{token_key}"))
@@ -102,8 +136,9 @@ class LoungeKeyboards:
             kb.row(*save_btns)
 
         kb.row(
+            InlineKeyboardButton("🎙️ Take 2 (Retry)", callback_data=f"take2:{token_key}"),
             InlineKeyboardButton("🎲 New Topic", callback_data="action:spark_topic"),
-            InlineKeyboardButton("🎚️ Vibe", callback_data="action:cycle_register"),
+            InlineKeyboardButton("👥 Host", callback_data="action:cycle_persona"),
             InlineKeyboardButton("🏠 Menu", callback_data="menu:home")
         )
         return kb
@@ -116,12 +151,12 @@ class LoungeKeyboards:
             return f"📍 {label}" if active_chapter == key else label
 
         kb.add(
-            InlineKeyboardButton(_c("overview", "📖 Overview & Controls"), callback_data="guide:overview"),
+            InlineKeyboardButton(_c("overview", "📖 Overview & The Trio"), callback_data="guide:overview"),
             InlineKeyboardButton(_c("ch1_xray", "🔬 1. Notes, Pivot & Mirror"), callback_data="guide:ch1_xray")
         )
         kb.add(
             InlineKeyboardButton(_c("ch2_studios", "🗽 2. The 6 Club Rooms"), callback_data="guide:ch2_studios"),
-            InlineKeyboardButton(_c("ch3_audio_podcast", "🎙️ 3. Accent & Radio Show"), callback_data="guide:ch3_audio_podcast")
+            InlineKeyboardButton(_c("ch3_audio_podcast", "🎙️ 3. Trio & Duo Podcast"), callback_data="guide:ch3_audio_podcast")
         )
         kb.add(
             InlineKeyboardButton(_c("ch4_miner_drills", "🎯 4. Finder & Workouts"), callback_data="guide:ch4_miner_drills"),
@@ -134,9 +169,12 @@ class LoungeKeyboards:
     def podcast_menu() -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
-            InlineKeyboardButton("🎧 Record Episode Using My Saved Phrases", callback_data="pod:generate_auto"),
-            InlineKeyboardButton("✍️ Record Episode on a Custom Topic", callback_data="mode:podcast_custom_topic"),
-            InlineKeyboardButton("🎙️ 'Be the Guest' (Live On-Air Interview)", callback_data="mode:podcast_guest"),
+            InlineKeyboardButton("🗽 Trio Roundtable on My Vault (3+ Min: All 3 Hosts)", callback_data="pod:trio_vault"),
+            InlineKeyboardButton("🎙️ Duo Deep-Dive on My Vault (3+ Min: Marcus & Chloe)", callback_data="pod:duo_mc"),
+            InlineKeyboardButton("☕ Duo Street Banter on My Vault (3+ Min: Chloe & Jake)", callback_data="pod:duo_cj"),
+            InlineKeyboardButton("✍️ Custom Topic — Trio Roundtable (3+ Min)", callback_data="mode:podcast_custom_trio"),
+            InlineKeyboardButton("✍️ Custom Topic — Duo Deep-Dive (3+ Min)", callback_data="mode:podcast_custom_duo"),
+            InlineKeyboardButton("🎤 'Be the Guest' (Live On-Air Interview with the Trio)", callback_data="mode:podcast_guest"),
             InlineKeyboardButton("🔙 Back to Club Menu", callback_data="menu:home")
         )
         return kb
@@ -214,6 +252,19 @@ class LoungeKeyboards:
             InlineKeyboardButton(f"{'✅ ' if cur_lvl == lv else ''}{label}", callback_data=f"set:level:{lv}")
             for lv, label in levels
         ])
+
+        active_persona = user.get("active_persona", "trio")
+        personas_row = [
+            ("trio", "🗽 Trio"),
+            ("marcus", "🧔‍♂️ Marcus"),
+            ("chloe", "👩🏼‍💼 Chloe"),
+            ("jake", "🧢 Jake")
+        ]
+        kb.row(*[
+            InlineKeyboardButton(f"{'✅ ' if active_persona == pk else ''}{plabel}", callback_data=f"persona:{pk}")
+            for pk, plabel in personas_row
+        ])
+
         eng_only = bool(user.get("english_only", 1))
         eng_label = "🔒 100% English Immersion: ON" if eng_only else "🔓 Brief Arabic Notes: ALLOWED"
         kb.row(InlineKeyboardButton(eng_label, callback_data="set:toggle_eng"))
