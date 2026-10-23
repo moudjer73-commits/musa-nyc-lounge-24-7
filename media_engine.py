@@ -26,7 +26,7 @@ from config import (
 
 logger = logging.getLogger("MusaNYCLounge.Media")
 
-MEDIA_TASK_SEMAPHORE = threading.BoundedSemaphore(2)
+MEDIA_TASK_SEMAPHORE = threading.BoundedSemaphore(4)
 
 
 class LoungeMediaEngine:
@@ -77,7 +77,7 @@ class LoungeMediaEngine:
 
         async def _synthesize():
             comm = edge_tts.Communicate(clean_t, voice=voice, rate=rate)
-            await comm.save(out_mp3)
+            await asyncio.wait_for(comm.save(out_mp3), timeout=16.0)
 
         for attempt in range(2):
             try:
@@ -96,7 +96,7 @@ class LoungeMediaEngine:
             "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
             out_wav
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
         return res.returncode == 0 and os.path.exists(out_wav)
 
     @staticmethod
@@ -108,7 +108,7 @@ class LoungeMediaEngine:
             "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
             out_wav
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
         return res.returncode == 0 and os.path.exists(out_wav)
 
     @staticmethod
@@ -119,7 +119,7 @@ class LoungeMediaEngine:
             "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
             out_wav
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
         return res.returncode == 0 and os.path.exists(out_wav)
 
     @classmethod
@@ -143,7 +143,7 @@ class LoungeMediaEngine:
                     "-c:a", "libopus", "-b:a", "64k", "-vbr", "on",
                     out_ogg
                 ]
-                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
                 if res.returncode == 0 and os.path.exists(out_ogg):
                     return out_ogg
                 return raw_mp3
@@ -202,7 +202,7 @@ class LoungeMediaEngine:
                     "-c:a", "libopus", "-b:a", "64k", "-vbr", "on",
                     final_ogg
                 ]
-                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
                 if res.returncode == 0 and os.path.exists(final_ogg):
                     return final_ogg
                 return None
@@ -261,7 +261,7 @@ class LoungeMediaEngine:
                     "-c:a", "libmp3lame", "-q:a", "2",
                     final_mp3
                 ]
-                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
                 if res.returncode == 0 and os.path.exists(final_mp3):
                     return final_mp3
                 return None

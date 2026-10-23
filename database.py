@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 # -*- coding: utf-8 -*-
 """
 database.py — Dual-Database Engine with Expanded Spoken Corpus,
@@ -63,18 +64,31 @@ class LoungeDatabase:
         self.init_schema()
         self.init_corpus_fts5()
 
-    def _conn(self) -> sqlite3.Connection:
+    @contextmanager
+    def _conn(self):
         conn = sqlite3.connect(self.user_db_path, timeout=30, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-    def _corpus_conn(self) -> sqlite3.Connection:
+    @contextmanager
+    def _corpus_conn(self):
         conn = sqlite3.connect(self.corpus_db_path, timeout=30, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def init_schema(self):
         with self._lock, self._conn() as conn:

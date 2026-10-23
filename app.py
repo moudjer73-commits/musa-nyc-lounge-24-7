@@ -49,7 +49,7 @@ START_TIME = time.time()
 
 db = LoungeDatabase(user_db_path=USER_DB_PATH, corpus_db_path=CORPUS_DB_PATH)
 ai_engine = NYCLoungeAI(api_key=GEMINI_API_KEY, db=db)
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True, num_threads=4) if BOT_TOKEN else None
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True, num_threads=16) if BOT_TOKEN else None
 
 
 # =====================================================================
@@ -1207,7 +1207,14 @@ def main():
         logger.warning(f"Startup note: {e}")
 
     logger.info("✅ Club doors are open and polling!")
-    bot.infinity_polling(timeout=30, long_polling_timeout=25, skip_pending=False)
+    while True:
+        try:
+            bot.remove_webhook()
+            time.sleep(1)
+            bot.infinity_polling(timeout=30, long_polling_timeout=20, skip_pending=True)
+        except Exception as poll_err:
+            logger.warning(f"Polling loop recovery after error: {poll_err}")
+            time.sleep(5)
 
 
 if __name__ == "__main__":

@@ -220,15 +220,28 @@ class NYCLoungeAI:
                         except Exception:
                             pass
 
-                    resp = client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=types.GenerateContentConfig(**cfg_kwargs)
-                    )
+                    try:
+                        resp = client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=types.GenerateContentConfig(**cfg_kwargs)
+                        )
+                    except Exception:
+                        cfg_kwargs.pop("thinking_config", None)
+                        resp = client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=types.GenerateContentConfig(**cfg_kwargs)
+                        )
+
                     if getattr(resp, "parsed", None) is not None:
                         return resp.parsed
-                    if getattr(resp, "text", None):
-                        return schema_cls.model_validate_json(resp.text)
+                    raw_txt = getattr(resp, "text", "") or ""
+                    if raw_txt:
+                        raw_txt = raw_txt.strip()
+                        if raw_txt.startswith("```"):
+                            raw_txt = raw_txt.strip("`").removeprefix("json").strip()
+                        return schema_cls.model_validate_json(raw_txt)
                 except Exception as e:
                     last_err = e
                     err_str = str(e)
