@@ -87,15 +87,9 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(
-        description="🧔‍♂️ Marcus's 🎙️ Articulate recast of the user's message."
-    )
-    rewrite_casual: str = Field(
-        description="🧢 Jake's ☕ Casual recast of the user's message."
-    )
-    rewrite_witty: str = Field(
-        description="👩🏼‍💼 Chloe's 🎭 Witty recast of the user's message."
-    )
+    rewrite_articulate: str = Field(description="Alternative 1 (Smooth & Natural): A natural native recast of the member's message strictly in the member's ACTIVE VIBE (same register, NO register shifting).")
+    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal): A second distinct native recast using rich collocations/phrasal verbs, ALSO strictly in the member's ACTIVE VIBE.")
+    rewrite_witty: str = Field(description="Alternative 3 (Short & Punchy): A third concise, high-impact native recast, ALSO strictly in the member's ACTIVE VIBE.")
     self_repair_pivot: str = Field(
         default="",
         description="A natural mid-sentence self-repair or pivot showing how a native speaker would smoothly adjust this thought on the fly."
@@ -472,7 +466,7 @@ class NYCLoungeAI:
             f"- {self._level_calibration_guide(level)}\n"
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
-            f"- Your `lounge_reply`, `self_repair_pivot`, `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly match {active_vibe_badge} without mixing registers.\n"
+            f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `self_repair_pivot`, `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
             f"- {lang_rule}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
@@ -487,7 +481,7 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide the 3 Vibe rewrites, `self_repair_pivot`, `mirror_clean_target`, `acoustic_prosody_xray`, `diagnostics`, and 3 `lexical_upgrades`."
+                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `self_repair_pivot`, `mirror_clean_target`, `acoustic_prosody_xray`, `diagnostics`, and 3 `lexical_upgrades`."
             )
         else:
             contents.append(

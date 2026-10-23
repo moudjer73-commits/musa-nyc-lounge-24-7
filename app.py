@@ -171,13 +171,14 @@ def format_lounge_turn_html(
     else:
         top_section += f"{p_icon} {reply_clean}\n\n"
 
+    vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     xray_lines = [
         "🔬 <b>Coaching Notes, Rhythm & C1/C2 Expressions (Tap to Expand)</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        "🎭 <b>Your Thought Recast by the Trio:</b>",
-        f"• <b>🧔‍♂️ Marcus (🎙️ Articulate):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
-        f"• <b>🧢 Jake (☕ Casual):</b> <code>{html.escape(res.rewrite_casual)}</code>",
-        f"• <b>👩🏼‍💼 Chloe (🎭 Witty):</b> <code>{html.escape(res.rewrite_witty)}</code>",
+        f"🎭 <b>3 Native Alternatives ({vibe_label} Mode):</b>",
+        f"• <b>Option 1 (Natural):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
+        f"• <b>Option 2 (Idiomatic):</b> <code>{html.escape(res.rewrite_casual)}</code>",
+        f"• <b>Option 3 (Punchy):</b> <code>{html.escape(res.rewrite_witty)}</code>",
         f"• <b>🔄 Mid-Sentence Pivot:</b> <i>{html.escape(res.self_repair_pivot)}</i>" if getattr(res, "self_repair_pivot", "") else "",
         "",
         f"🎧 <b>American Rhythm, Nuclear Stress & Linking Map:</b>\n{html.escape(res.acoustic_prosody_xray)}"
