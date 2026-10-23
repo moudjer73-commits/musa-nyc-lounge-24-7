@@ -372,6 +372,10 @@ class NYCLoungeAI:
         return "ACTIVE ROOM: 🗣️ NYC SPONTANEOUS BANTER. Engage in genuine, unscripted New York conversation strictly locked to the member's ACTIVE VIBE."
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         uid = user["user_id"]
         target_mode = mode or user.get("current_mode", "spontaneous_chat")
         level = user.get("level", "C1")
@@ -514,6 +518,10 @@ class NYCLoungeAI:
         return res, used_stealth_ids
 
     def explore_collocations_live(self, user: Dict[str, Any], query_word: str) -> CollocationExplorerSchema:
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         level = user.get("level", "C1")
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
@@ -558,6 +566,10 @@ class NYCLoungeAI:
         )
 
     def generate_fluency_audit(self, user: Dict[str, Any]) -> str:
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         uid = user["user_id"]
         stats = self.db.get_user_stats(uid)
         vault = self.db.get_user_vault(uid, limit=10)
@@ -598,6 +610,10 @@ class NYCLoungeAI:
             return "📊 <b>Your Spoken Fluency Snapshot</b>\nKeep sending voice notes in NYC Banter!"
 
     def mine_text_and_subtext(self, user: Dict[str, Any], source_text: str) -> LoungeTurnResponse:
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         level = user.get("level", "C1")
         active_persona = user.get("active_persona", "trio")
         system_prompt = (
@@ -613,6 +629,10 @@ class NYCLoungeAI:
         return self._finalize_chat_turns(res, active_persona=active_persona, user_text=source_text)
 
     def generate_podcast_episode(self, user: Dict[str, Any], custom_topic: str = "") -> PodcastEpisodeSchema:
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         uid = user["user_id"]
         level = user.get("level", "C1")
         pref_reg = user.get("preferred_register", "articulate")
@@ -655,6 +675,10 @@ class NYCLoungeAI:
         return ep
 
     def build_active_drill(self, user: Dict[str, Any], drill_type: str) -> Dict[str, Any]:
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         uid = user["user_id"]
         level = user.get("level", "C1")
         pref_reg = user.get("preferred_register", "articulate")
