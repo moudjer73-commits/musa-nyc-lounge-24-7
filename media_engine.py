@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-media_engine.py — NotebookLM-Style Trio Podcast Producer (Parallel Async Synthesis,
-FFmpeg Silence Trimming & Stereo Spatial Panning), Studio-Normalized Voice Mirror,
-Printable PDF Phrasebook & Anki Deck Exporter.
+media_engine.py — Studio Audio & Document Engine for Musa's NYC Lounge
+Features:
+- Dual-Format Podcast Producer: Supports both Duo (2 Hosts) & Trio (3 Hosts: Marcus, Chloe, Jake)
+- Long-Form Episode Engine (3+ minutes / 30–45 rapid & deep-dive turns)
+- Concurrent Async TTS Synthesis (asyncio.gather) with Auto-Retry
+- 4-Tier Dynamic Micro-Pacing & FFmpeg Dead-Air Silence Trimming
+- Adaptive Spatial Stereo Panning (Duo 2-Mic Balance vs. Trio 3-Seat Table)
+- Automatic Timestamp [MM:SS] Tracking for Noticing Hypothesis
+- Loudness-Normalized Side-by-Side Voice Mirror (1.0x + 0.85x)
+- Printable PDF Phrasebook & Anki Flashcard Exporter
 """
 import os
 import re
@@ -10,6 +17,7 @@ import csv
 import uuid
 import time
 import html
+import wave
 import asyncio
 import logging
 import threading
@@ -21,13 +29,18 @@ import edge_tts
 
 from config import (
     TEMP_DIR,
-    VOICE_MALE_HOST,
-    HOSTS_MAP
+    PERSONAS,
+    DEFAULT_PERSONA
 )
 
 logger = logging.getLogger("MusaNYCLounge.Media")
 
 MEDIA_TASK_SEMAPHORE = threading.BoundedSemaphore(4)
+
+# Backwards-compatible voice constants
+VOICE_MALE_HOST: str = PERSONAS["marcus"]["voice"]
+VOICE_FEMALE_HOST: str = PERSONAS["chloe"]["voice"]
+VOICE_JAKE_HOST: str = PERSONAS["jake"]["voice"]
 
 
 class LoungeMediaEngine:
@@ -40,7 +53,7 @@ class LoungeMediaEngine:
                 pass
 
     @staticmethod
-    def sweep_old_temp_files(max_age_seconds: int = 1800):
+    def sweep_old_temp_files(max_age_seconds: int = 2400):
         now = time.time()
         if not os.path.exists(TEMP_DIR):
             return
@@ -53,27 +66,29 @@ class LoungeMediaEngine:
                 pass
 
     @staticmethod
+    def resolve_persona_voice(speaker_key: str) -> Dict[str, str]:
+        key = (speaker_key or "").strip().lower()
+        if key in ("male_host", "marcus", "andrew", "host_1"):
+            p = PERSONAS["marcus"]
+            return {"key": "marcus", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
+        if key in ("female_host", "chloe", "ava", "host_2"):
+            p = PERSONAS["chloe"]
+            return {"key": "chloe", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
+        if key in ("jake", "brian", "casual_host", "host_3"):
+            p = PERSONAS["jake"]
+            return {"key": "jake", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
+        p = PERSONAS.get(DEFAULT_PERSONA, PERSONAS["marcus"])
+        return {"key": "marcus", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
+
+    @staticmethod
     def clean_text_for_tts(text: str) -> str:
         if not text:
             return ""
         t = re.sub(r"<[^>]+>", "", text)
         t = re.sub(r"\[[^\]]*\]", "", t)
-        # Strip speaker prefix labels if present in multi-host text
-        t = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", t, flags=re.IGNORECASE | re.MULTILINE)
-        t = re.sub(r"[*_`~#>🗽🎙️☕🎭🔬🎧🩺💎🌊🧔‍♂️👩🏼‍💼🧢🔥✨🔄]", "", t)
+        t = re.sub(r"[*_`~#>🗽🎙️☕🎭🔬🎧🩺💎🌊🧔‍♂️👩🏼‍💼🧢🔥🎯]", "", t)
         t = re.sub(r"\s+", " ", t).strip()
         return t
-
-    @staticmethod
-    def resolve_host_voice(speaker_key: str) -> str:
-        key = (speaker_key or "").lower().strip()
-        if "marcus" in key or "male" in key:
-            return HOSTS_MAP["marcus"]["voice"]
-        if "jake" in key or "casual" in key:
-            return HOSTS_MAP["jake"]["voice"]
-        if "chloe" in key or "female" in key:
-            return HOSTS_MAP["chloe"]["voice"]
-        return HOSTS_MAP.get(key, {}).get("voice", VOICE_MALE_HOST)
 
     @staticmethod
     def _run_async(coro):
@@ -84,63 +99,139 @@ class LoungeMediaEngine:
             loop.close()
 
     @classmethod
-    def _edge_tts_to_file(cls, text: str, out_mp3: str, voice: str = VOICE_MALE_HOST, rate: str = "+0%") -> bool:
+    async def _async_edge_tts_to_file(
+        cls,
+        text: str,
+        out_mp3: str,
+        voice: str = VOICE_MALE_HOST,
+        rate: str = "+0%",
+        pitch: str = "+0Hz"
+    ) -> bool:
         clean_t = cls.clean_text_for_tts(text)
         if not clean_t:
             return False
 
-        async def _synthesize():
-            comm = edge_tts.Communicate(clean_t, voice=voice, rate=rate)
-            await asyncio.wait_for(comm.save(out_mp3), timeout=18.0)
-
-        for attempt in range(2):
+        for attempt in range(3):
             try:
-                cls._run_async(_synthesize())
+                comm = edge_tts.Communicate(clean_t, voice=voice, rate=rate, pitch=pitch)
+                await asyncio.wait_for(comm.save(out_mp3), timeout=30.0)
                 if os.path.exists(out_mp3) and os.path.getsize(out_mp3) > 100:
                     return True
             except Exception as e:
+                try:
+                    comm_fb = edge_tts.Communicate(clean_t, voice=voice, rate=rate)
+                    await asyncio.wait_for(comm_fb.save(out_mp3), timeout=30.0)
+                    if os.path.exists(out_mp3) and os.path.getsize(out_mp3) > 100:
+                        return True
+                except Exception:
+                    pass
                 logger.warning(f"Voice synthesis attempt {attempt + 1} note: {e}")
-                time.sleep(0.4)
+                await asyncio.sleep(0.5 * (attempt + 1))
         return False
 
-    @staticmethod
-    def _to_standard_wav(in_path: str, out_wav: str, normalize_loudness: bool = False) -> bool:
-        cmd = ["ffmpeg", "-y", "-i", in_path]
-        if normalize_loudness:
-            cmd.extend(["-af", "dynaudnorm=f=150:g=15:p=0.92"])
-        cmd.extend(["-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", out_wav])
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
-        return res.returncode == 0 and os.path.exists(out_wav)
+    @classmethod
+    def _edge_tts_to_file(
+        cls,
+        text: str,
+        out_mp3: str,
+        voice: str = VOICE_MALE_HOST,
+        rate: str = "+0%",
+        pitch: str = "+0Hz"
+    ) -> bool:
+        return cls._run_async(
+            cls._async_edge_tts_to_file(text, out_mp3, voice=voice, rate=rate, pitch=pitch)
+        )
 
     @staticmethod
-    def _to_podcast_turn_wav(in_path: str, out_wav: str, pan: float = 0.0, pad_after: float = 0.12) -> bool:
+    def _get_wav_duration(wav_path: str) -> float:
+        try:
+            with wave.open(wav_path, "rb") as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                return frames / float(rate) if rate > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _to_trimmed_podcast_wav(
+        in_path: str,
+        out_wav: str,
+        pan_filter: str = "pan=stereo|c0=0.50*c0|c1=0.50*c0",
+        pad_after: float = 0.15
+    ) -> bool:
         """
-        Strips leading/trailing dead air from Edge-TTS output, applies subtle stereo spatial panning
-        (Marcus left, Chloe center, Jake right), and adds a tight natural breath gap.
+        Trims leading/trailing dead air from Edge-TTS output using FFmpeg's
+        silenceremove + areverse filter, applies adaptive stereo spatial panning
+        (for either Duo or Trio layout), and adds a calibrated micro-gap.
         """
-        left_gain = max(0.35, min(1.0, 0.85 - (pan * 0.45)))
-        right_gain = max(0.35, min(1.0, 0.85 + (pan * 0.45)))
         af_chain = (
-            "silenceremove=start_periods=1:start_duration=0.01:start_threshold=-45dB,"
-            "areverse,silenceremove=start_periods=1:start_duration=0.01:start_threshold=-45dB,areverse,"
-            f"apad=pad_dur={pad_after:.2f},"
-            f"pan=stereo|c0={left_gain:.2f}*c0|c1={right_gain:.2f}*c0"
+            "silenceremove=start_periods=1:start_silence=0.02:start_threshold=-44dB,"
+            "areverse,"
+            "silenceremove=start_periods=1:start_silence=0.03:start_threshold=-44dB,"
+            "areverse,"
+            f"{pan_filter},"
+            f"apad=pad_dur={pad_after:.2f}"
         )
+
         cmd = [
             "ffmpeg", "-y", "-i", in_path,
             "-af", af_chain,
             "-ar", "24000", "-ac", "2", "-c:a", "pcm_s16le",
             out_wav
         ]
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
-        return res.returncode == 0 and os.path.exists(out_wav)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        if res.returncode == 0 and os.path.exists(out_wav) and os.path.getsize(out_wav) > 200:
+            return True
+
+        # Safe fallback without silenceremove if clip was an ultra-short reaction
+        cmd_fb = [
+            "ffmpeg", "-y", "-i", in_path,
+            "-af", f"{pan_filter},apad=pad_dur={pad_after:.2f}",
+            "-ar", "24000", "-ac", "2", "-c:a", "pcm_s16le",
+            out_wav
+        ]
+        res_fb = subprocess.run(cmd_fb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        return res_fb.returncode == 0 and os.path.exists(out_wav)
 
     @staticmethod
-    def _generate_chime_wav(out_wav: str, freq: int = 880, duration: float = 0.22) -> bool:
+    def _to_normalized_mono_wav(in_path: str, out_wav: str, normalize_user: bool = False) -> bool:
+        """
+        Converts audio to 24kHz mono WAV. For user voice notes, applies dynamic
+        loudness normalization and trims leading/trailing silence for the Voice Mirror.
+        """
+        if normalize_user:
+            af_chain = (
+                "highpass=f=80,"
+                "dynaudnorm=f=150:g=15,"
+                "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-42dB,"
+                "areverse,"
+                "silenceremove=start_periods=1:start_silence=0.08:start_threshold=-42dB,"
+                "areverse"
+            )
+            cmd = [
+                "ffmpeg", "-y", "-i", in_path,
+                "-af", af_chain,
+                "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
+                out_wav
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
+            if res.returncode == 0 and os.path.exists(out_wav) and os.path.getsize(out_wav) > 200:
+                return True
+
+        cmd_std = [
+            "ffmpeg", "-y", "-i", in_path,
+            "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
+            out_wav
+        ]
+        res_std = subprocess.run(cmd_std, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
+        return res_std.returncode == 0 and os.path.exists(out_wav)
+
+    @staticmethod
+    def _generate_chime_wav(out_wav: str, freq: int = 880, duration: float = 0.20) -> bool:
         cmd = [
             "ffmpeg", "-y",
             "-f", "lavfi", "-i", f"sine=frequency={freq}:duration={duration}:sample_rate=24000",
-            "-af", "afade=t=in:st=0:d=0.03,afade=t=out:st=0.15:d=0.07,apad=pad_dur=0.22,volume=0.35",
+            "-af", "afade=t=in:st=0:d=0.03,afade=t=out:st=0.13:d=0.07,apad=pad_dur=0.22,volume=0.32",
             "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
             out_wav
         ]
@@ -152,16 +243,25 @@ class LoungeMediaEngine:
         cls,
         text: str,
         voice: str = VOICE_MALE_HOST,
-        rate: str = "+0%"
+        rate: str = "+0%",
+        persona_key: str = ""
     ) -> Optional[str]:
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:10]
         raw_mp3 = os.path.join(TEMP_DIR, f"tts_{uid}.mp3")
         out_ogg = os.path.join(TEMP_DIR, f"tts_{uid}.ogg")
 
+        pitch = "+0Hz"
+        if persona_key:
+            p_info = cls.resolve_persona_voice(persona_key)
+            voice = p_info["voice"]
+            if rate == "+0%":
+                rate = p_info["rate"]
+            pitch = p_info["pitch"]
+
         with MEDIA_TASK_SEMAPHORE:
             try:
-                if not cls._edge_tts_to_file(text, raw_mp3, voice=voice, rate=rate):
+                if not cls._edge_tts_to_file(text, raw_mp3, voice=voice, rate=rate, pitch=pitch):
                     return None
                 cmd = [
                     "ffmpeg", "-y", "-i", raw_mp3,
@@ -181,15 +281,19 @@ class LoungeMediaEngine:
         cls,
         user_voice_path: str,
         target_us_sentence: str,
-        voice: str = VOICE_MALE_HOST
+        voice: str = VOICE_MALE_HOST,
+        persona_key: str = ""
     ) -> Optional[str]:
         """
-        Studio-Calibrated SLM Voice Mirror:
-        Merges [Loudness-Normalized User Voice] -> [Chime] -> [Native 1.0x] -> [Chime] -> [Slow Study 0.85x]
+        Merges with studio loudness leveling:
+        [Normalized User Voice] -> [Chime] -> [Native 1.0x] -> [Chime] -> [Slow Study 0.85x]
         """
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:10]
         temp_files: List[str] = []
+
+        if persona_key:
+            voice = cls.resolve_persona_voice(persona_key)["voice"]
 
         user_wav = os.path.join(TEMP_DIR, f"m_user_{uid}.wav")
         chime_wav = os.path.join(TEMP_DIR, f"m_chime_{uid}.wav")
@@ -204,17 +308,17 @@ class LoungeMediaEngine:
 
         with MEDIA_TASK_SEMAPHORE:
             try:
-                if not cls._to_standard_wav(user_voice_path, user_wav, normalize_loudness=True):
+                if not cls._to_normalized_mono_wav(user_voice_path, user_wav, normalize_user=True):
                     return None
                 if not cls._generate_chime_wav(chime_wav):
                     return None
                 if not cls._edge_tts_to_file(target_us_sentence, fast_mp3, voice=voice, rate="+0%"):
                     return None
-                if not cls._to_standard_wav(fast_mp3, fast_wav, normalize_loudness=True):
+                if not cls._to_normalized_mono_wav(fast_mp3, fast_wav, normalize_user=False):
                     return None
-                if not cls._edge_tts_to_file(target_us_sentence, slow_mp3, voice=voice, rate="-16%"):
+                if not cls._edge_tts_to_file(target_us_sentence, slow_mp3, voice=voice, rate="-15%"):
                     return None
-                if not cls._to_standard_wav(slow_mp3, slow_wav, normalize_loudness=True):
+                if not cls._to_normalized_mono_wav(slow_mp3, slow_wav, normalize_user=False):
                     return None
 
                 sequence = [user_wav, chime_wav, fast_wav, chime_wav, slow_wav]
@@ -239,13 +343,73 @@ class LoungeMediaEngine:
                 for tf in temp_files:
                     cls.cleanup_file(tf)
 
-    @classmethod
-    def produce_dual_host_podcast(cls, episode: Any) -> Optional[str]:
+    @staticmethod
+    def _compute_turn_rate(base_rate: str, pacing: str) -> str:
+        try:
+            base_val = int(base_rate.replace("%", "").replace("+", ""))
+        except Exception:
+            base_val = 0
+
+        p = (pacing or "normal").lower()
+        if "fast" in p or "interject" in p or "excited" in p:
+            base_val += 6
+        elif "slow" in p or "thoughtful" in p or "emphasis" in p:
+            base_val -= 3
+        sign = "+" if base_val >= 0 else ""
+        return f"{sign}{base_val}%"
+
+    @staticmethod
+    def _compute_pad_after(text: str, pacing: str) -> float:
         """
-        NotebookLM-Style Multi-Host Audio Producer (Supports Marcus, Chloe & Jake):
-        - Synthesizes all turns concurrently via asyncio.gather
-        - Trims dead Edge-TTS padding and applies tight turn-taking gaps (0.06s for fast overlaps, 0.14s normal)
-        - Applies stereo spatial panning so the 3 hosts sit across a realistic studio soundstage
+        4-Tier Dynamic Micro-Pacing for 3+ minute episodes so fast interjections overlap
+        naturally while deep analytical turns leave a realistic breathing beat.
+        """
+        stripped = (text or "").strip()
+        p = (pacing or "normal").lower()
+        word_cnt = len(stripped.split())
+
+        if stripped.endswith("—") or stripped.endswith("--") or "fast" in p or "interject" in p:
+            return 0.05
+        if word_cnt <= 6:
+            return 0.09
+        if "slow" in p or "thoughtful" in p or word_cnt >= 28:
+            return 0.24
+        return 0.16
+
+    @staticmethod
+    def _build_speaker_pan_map(speaker_keys_in_episode: List[str], requested_mode: str = "auto") -> Dict[str, str]:
+        """
+        Assigns spatial stereo positioning based on whether the episode is a
+        2-Host Duo show (Left-Center vs Right-Center) or a 3-Host Trio table
+        (Marcus Left, Chloe Center, Jake Right).
+        """
+        unique_speakers = []
+        for s in speaker_keys_in_episode:
+            if s not in unique_speakers:
+                unique_speakers.append(s)
+
+        is_duo = (requested_mode == "duo") or (requested_mode == "auto" and len(unique_speakers) == 2)
+        if is_duo and len(unique_speakers) >= 2:
+            return {
+                unique_speakers[0]: "pan=stereo|c0=0.58*c0|c1=0.42*c0",
+                unique_speakers[1]: "pan=stereo|c0=0.42*c0|c1=0.58*c0"
+            }
+
+        # Default Trio 3-seat Manhattan table
+        return {
+            "marcus": "pan=stereo|c0=0.62*c0|c1=0.38*c0",
+            "chloe": "pan=stereo|c0=0.50*c0|c1=0.50*c0",
+            "jake": "pan=stereo|c0=0.38*c0|c1=0.62*c0"
+        }
+
+    @classmethod
+    def produce_podcast(cls, episode: Any, format_mode: str = "auto") -> Optional[str]:
+        """
+        NotebookLM-Style Long-Form Audio Producer (Supports both Duo & Trio formats, 3+ mins).
+        - Synthesizes up to 45 turns concurrently via asyncio.gather (Semaphore=6)
+        - Trims Edge-TTS dead air and injects 4-tier dynamic conversational pacing
+        - Applies Duo or Trio spatial stereo panning
+        - Tracks exact [MM:SS] timestamps and total episode duration
         """
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:10]
@@ -255,29 +419,257 @@ class LoungeMediaEngine:
         if not script_lines:
             return None
 
-        concat_txt = os.path.join(TEMP_DIR, f"p_list_{uid}.txt")
-        final_mp3 = os.path.join(TEMP_DIR, f"nyc_trio_lounge_{uid}.mp3")
-        temp_files.append(concat_txt)
+        target_chunks = (
+            getattr(episode, "target_chunks_covered", None)
+            or (episode.get("target_chunks_covered") if isinstance(episode, dict) else [])
+            or []
+        )
 
-        pacing_rate_map = {
-            "fast_interjection": "+7%",
-            "excited": "+6%",
-            "normal": "+2%",
-            "thoughtful": "-2%"
-        }
-        pacing_gap_map = {
-            "fast_interjection": 0.05,
-            "excited": 0.08,
-            "normal": 0.13,
-            "thoughtful": 0.18
-        }
+        concat_txt = os.path.join(TEMP_DIR, f"p_list_{uid}.txt")
+        final_mp3 = os.path.join(TEMP_DIR, f"nyc_lounge_podcast_{uid}.mp3")
+        temp_files.append(concat_txt)
 
         with MEDIA_TASK_SEMAPHORE:
             try:
-                turn_specs = []
-                for idx, turn in enumerate(script_lines):
-                    raw_speaker = (getattr(turn, "speaker", None) or (turn.get("speaker") if isinstance(turn, dict) else "marcus") or "marcus").lower()
-                    text = getattr(turn, "text", None) or (turn.get("text") if isinstance(turn, dict) else "")
-                    pacing = (getattr(turn, "pacing", None) or (turn.get("pacing") if isinstance(turn, dict) else "normal") or "normal").lower()
+                resolved_speakers = []
+                for turn in script_lines:
+                    raw_sp = getattr(turn, "speaker", None) or (turn.get("speaker") if isinstance(turn, dict) else "marcus")
+                    resolved_speakers.append(cls.resolve_persona_voice(raw_sp)["key"])
 
-                    if "chloe" in raw_speaker or "female" in raw_speaker:
+                pan_map = cls._build_speaker_pan_map(resolved_speakers, requested_mode=format_mode)
+
+                tasks_meta = []
+                for idx, turn in enumerate(script_lines):
+                    raw_speaker = getattr(turn, "speaker", None) or (turn.get("speaker") if isinstance(turn, dict) else "marcus")
+                    text = getattr(turn, "text", None) or (turn.get("text") if isinstance(turn, dict) else "")
+                    pacing = getattr(turn, "pacing", None) or (turn.get("pacing") if isinstance(turn, dict) else "normal")
+
+                    p_info = cls.resolve_persona_voice(raw_speaker)
+                    sp_key = p_info["key"]
+                    final_rate = cls._compute_turn_rate(p_info["rate"], pacing)
+                    pad_after = cls._compute_pad_after(text, pacing)
+                    pan_filter = pan_map.get(sp_key, "pan=stereo|c0=0.50*c0|c1=0.50*c0")
+
+                    seg_mp3 = os.path.join(TEMP_DIR, f"p_seg_{uid}_{idx}.mp3")
+                    seg_wav = os.path.join(TEMP_DIR, f"p_seg_{uid}_{idx}.wav")
+                    temp_files.extend([seg_mp3, seg_wav])
+
+                    tasks_meta.append({
+                        "idx": idx,
+                        "speaker_key": sp_key,
+                        "text": text,
+                        "voice": p_info["voice"],
+                        "rate": final_rate,
+                        "pitch": p_info["pitch"],
+                        "mp3": seg_mp3,
+                        "wav": seg_wav,
+                        "pan_filter": pan_filter,
+                        "pad_after": pad_after
+                    })
+
+                async def _synthesize_all_turns():
+                    sem = asyncio.Semaphore(6)
+
+                    async def _worker(meta_item):
+                        async with sem:
+                            return await cls._async_edge_tts_to_file(
+                                meta_item["text"],
+                                meta_item["mp3"],
+                                voice=meta_item["voice"],
+                                rate=meta_item["rate"],
+                                pitch=meta_item["pitch"]
+                            )
+
+                    return await asyncio.gather(*[_worker(m) for m in tasks_meta])
+
+                synth_results = cls._run_async(_synthesize_all_turns())
+
+                wav_segments: List[str] = []
+                cumulative_sec: float = 0.0
+                chunk_timestamps: Dict[str, str] = {}
+                turn_timestamps: List[str] = []
+
+                for meta_item, ok in zip(tasks_meta, synth_results):
+                    mm = int(cumulative_sec // 60)
+                    ss = int(cumulative_sec % 60)
+                    ts_label = f"{mm:02d}:{ss:02d}"
+                    turn_timestamps.append(ts_label)
+
+                    if ok and cls._to_trimmed_podcast_wav(
+                        meta_item["mp3"],
+                        meta_item["wav"],
+                        pan_filter=meta_item["pan_filter"],
+                        pad_after=meta_item["pad_after"]
+                    ):
+                        wav_segments.append(meta_item["wav"])
+                        low_txt = meta_item["text"].lower()
+                        for ch in target_chunks:
+                            ch_clean = ch.strip().lower()
+                            if ch_clean and ch not in chunk_timestamps:
+                                stem_words = [w for w in ch_clean.split() if len(w) > 3]
+                                if ch_clean in low_txt or (stem_words and all(w[:4] in low_txt for w in stem_words)):
+                                    chunk_timestamps[ch] = ts_label
+
+                        cumulative_sec += cls._get_wav_duration(meta_item["wav"])
+
+                if not wav_segments:
+                    return None
+
+                total_mm = int(cumulative_sec // 60)
+                total_ss = int(cumulative_sec % 60)
+                duration_label = f"{total_mm:02d}:{total_ss:02d}"
+
+                try:
+                    setattr(episode, "chunk_timestamps", chunk_timestamps)
+                    setattr(episode, "turn_timestamps", turn_timestamps)
+                    setattr(episode, "total_duration_sec", int(cumulative_sec))
+                    setattr(episode, "duration_label", duration_label)
+                except Exception:
+                    if isinstance(episode, dict):
+                        episode["chunk_timestamps"] = chunk_timestamps
+                        episode["turn_timestamps"] = turn_timestamps
+                        episode["total_duration_sec"] = int(cumulative_sec)
+                        episode["duration_label"] = duration_label
+
+                with open(concat_txt, "w", encoding="utf-8") as f:
+                    for w in wav_segments:
+                        f.write(f"file '{w}'\n")
+
+                # Studio master encoding with high-efficiency VBR MP3 and 90s timeout for 3+ min shows
+                cmd = [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", concat_txt,
+                    "-c:a", "libmp3lame", "-q:a", "2",
+                    final_mp3
+                ]
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+                if res.returncode == 0 and os.path.exists(final_mp3):
+                    return final_mp3
+                return None
+            except Exception as e:
+                logger.error(f"Podcast production error ({format_mode}): {e}")
+                return None
+            finally:
+                for tf in temp_files:
+                    cls.cleanup_file(tf)
+
+    @classmethod
+    def produce_trio_podcast(cls, episode: Any) -> Optional[str]:
+        """Produces a 3-Host Trio episode (Marcus, Chloe, Jake)."""
+        return cls.produce_podcast(episode, format_mode="trio")
+
+    @classmethod
+    def produce_dual_host_podcast(cls, episode: Any) -> Optional[str]:
+        """Produces a 2-Host Duo episode (or auto-detects Duo vs Trio from script)."""
+        return cls.produce_podcast(episode, format_mode="auto")
+
+    @classmethod
+    def export_vault_pdf(
+        cls,
+        user: Dict[str, Any],
+        vault_items: List[Dict[str, Any]],
+        stats: Dict[str, Any]
+    ) -> Optional[str]:
+        cls.sweep_old_temp_files()
+        uid = uuid.uuid4().hex[:8]
+        pdf_path = os.path.join(TEMP_DIR, f"Musa_NYC_Lounge_Notebook_{uid}.pdf")
+
+        cards_html = []
+        for idx, item in enumerate(vault_items, 1):
+            b2_foil = item.get("b2_foil", "")
+            foil_line = (
+                f"<div><b>🔄 Flat B2 vs. Native C2:</b> <s>{html.escape(b2_foil)}</s> ➔ <b>{html.escape(item.get('chunk', ''))}</b></div>"
+                if b2_foil else ""
+            )
+            prod_cnt = int(item.get("productive_count", 0))
+            mastery_badge = f" | 🔥 Used Actively: {prod_cnt}x" if prod_cnt > 0 else ""
+
+            cards_html.append(f"""
+            <div class="card">
+                <div class="card-header">
+                    <span class="chunk">{idx}. {html.escape(item.get('chunk', ''))}</span>
+                    <span class="badge">{html.escape(item.get('register_tag', ''))}{mastery_badge}</span>
+                </div>
+                <p class="meaning"><b>Nuance & Meaning:</b> {html.escape(item.get('explanation', ''))}</p>
+                <div class="frame-grid">
+                    {foil_line}
+                    <div><b>🎯 When to Reach For It:</b> {html.escape(item.get('trigger_context', ''))}</div>
+                    <div><b>🔗 Colligation & Pattern:</b> <code>{html.escape(item.get('co_text_pattern', ''))}</code></div>
+                    <div><b>💬 Natural Follow-up:</b> <i>"{html.escape(item.get('typical_followup', ''))}"</i></div>
+                </div>
+                <p class="example"><b>🗽 In Conversation:</b> <i>"{html.escape(item.get('example_sentence', ''))}"</i></p>
+            </div>
+            """)
+
+        html_doc = f"""<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                @page {{ size: A4; margin: 18mm; }}
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; line-height: 1.5; }}
+                h1 {{ color: #0f172a; margin-bottom: 4px; font-size: 22px; }}
+                .subtitle {{ color: #475569; font-size: 13px; margin-bottom: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }}
+                .card {{ border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px 15px; margin-bottom: 14px; background: #f8fafc; page-break-inside: avoid; }}
+                .card-header {{ display: flex; justify-content: space-between; margin-bottom: 6px; }}
+                .chunk {{ font-size: 16px; font-weight: 700; color: #0f172a; }}
+                .badge {{ font-size: 12px; color: #0369a1; font-weight: 600; margin-left: 10px; }}
+                .meaning {{ margin: 4px 0; font-size: 13px; }}
+                .frame-grid {{ font-size: 12.5px; background: #ffffff; border-left: 3px solid #0284c7; padding: 6px 10px; margin: 6px 0; }}
+                .example {{ margin: 6px 0 0 0; font-size: 13px; color: #334155; }}
+                code {{ background: #e2e8f0; padding: 1px 4px; border-radius: 4px; }}
+                s {{ color: #94a3b8; }}
+            </style>
+        </head>
+        <body>
+            <h1>🗽 Musa's NYC Lounge — Personal C1/C2 Phrasebook</h1>
+            <div class="subtitle">
+                Member: <b>{html.escape(user.get('full_name') or 'Member')}</b> |
+                Collected Expressions: <b>{stats.get('total_vault', len(vault_items))}</b> |
+                Actively Produced: <b>{stats.get('productive_mastered', 0)}</b> |
+                Date: <b>{datetime.utcnow().strftime('%Y-%m-%d')}</b>
+            </div>
+            {''.join(cards_html)}
+        </body>
+        </html>"""
+
+        with MEDIA_TASK_SEMAPHORE:
+            try:
+                from weasyprint import HTML
+                HTML(string=html_doc).write_pdf(pdf_path)
+                if os.path.exists(pdf_path):
+                    return pdf_path
+            except Exception as e:
+                logger.error(f"PDF Booklet error: {e}")
+            return None
+
+    @classmethod
+    def export_vault_anki_csv(cls, vault_items: List[Dict[str, Any]]) -> Optional[str]:
+        cls.sweep_old_temp_files()
+        uid = uuid.uuid4().hex[:8]
+        csv_path = os.path.join(TEMP_DIR, f"Musa_NYC_Lounge_Flashcards_{uid}.csv")
+        try:
+            with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f, delimiter=";")
+                for item in vault_items:
+                    chunk = item.get("chunk", "")
+                    reg = item.get("register_tag", "")
+                    trig = item.get("trigger_context", "")
+                    b2_foil = item.get("b2_foil", "")
+                    cloze = item.get("cloze_sentence") or item.get("example_sentence", "").replace(chunk, "______")
+
+                    foil_prompt = f"<br><small>🔄 Upgrade from: <i>{b2_foil}</i></small>" if b2_foil else ""
+                    front = f"[{reg}] (When: {trig}){foil_prompt}<br><br><b>{cloze}</b>"
+                    back = (
+                        f"<b>{chunk}</b> ({reg})<br><br>"
+                        f"<b>Nuance:</b> {item.get('explanation', '')}<br>"
+                        f"<b>🎯 When to use:</b> {trig}<br>"
+                        f"<b>🔗 Pattern:</b> <code>{item.get('co_text_pattern', '')}</code><br>"
+                        f"<b>💬 Follow-up:</b> <i>{item.get('typical_followup', '')}</i><br><br>"
+                        f"<b>🗽 Example:</b> <i>{item.get('example_sentence', '')}</i>"
+                    )
+                    writer.writerow([front, back, "Musa_NYC_Lounge"])
+            return csv_path if os.path.exists(csv_path) else None
+        except Exception as e:
+            logger.error(f"Flashcard CSV error: {e}")
+            return None
