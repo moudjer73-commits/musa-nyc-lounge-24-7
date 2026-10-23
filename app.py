@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """
 app.py — Main Entrypoint, Handlers & 5.3-Hour GitHub Actions Relay Watchdog
-Musa's NYC Lounge (100% Gemini-Powered, Modular Dual-DB Architecture)
+Musa's NYC Lounge (100% Gemini-3-Flash Generative Engine, Modular Dual-DB Architecture)
 """
 import os
+import re
 import sys
 import time
 import uuid
 import html
 import logging
 import threading
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 import telebot
 
@@ -45,11 +46,10 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True, num_threads=4
 
 
 # =====================================================================
-# 1. UI Formatters & Welcome Banner
+# 1. Safe HTML & Telegram Message Helpers
 # =====================================================================
-
 def sanitize_ai_html(raw_text: str) -> str:
-    """Escapes stray < or > from AI output while preserving valid <i>, <b>, and <code> tags."""
+    """Escapes stray angle brackets from AI output while preserving valid <i>, <b>, and <code> tags."""
     if not raw_text:
         return ""
     placeholders = {
@@ -63,23 +63,19 @@ def sanitize_ai_html(raw_text: str) -> str:
     t = html.escape(t)
     for tag, ph in placeholders.items():
         t = t.replace(ph, tag)
-    # Close unclosed <i> tag if AI forgot closing tag
     if t.count("<i>") > t.count("</i>"):
         t += "</i>" * (t.count("<i>") - t.count("</i>"))
     if t.count("<b>") > t.count("</b>"):
         t += "</b>" * (t.count("<b>") - t.count("</b>"))
+    if t.count("<code>") > t.count("</code>"):
+        t += "</code>" * (t.count("<code>") - t.count("</code>"))
     return t
 
-
-
-
-def safe_edit_text_wrapper(text, chat_id, message_id, reply_markup=None):
-    return safe_edit_text(chat_id, message_id, text, reply_markup=reply_markup)
 
 def safe_edit_text(chat_id: int, message_id: int, text: str, reply_markup=None):
     """Safely edits a message or falls back to sending a new message if editing is not possible."""
     try:
-        return safe_edit_text_wrapper(text, chat_id, message_id, reply_markup=reply_markup)
+        return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup)
     except Exception as e:
         err_str = str(e).lower()
         if "message is not modified" in err_str:
@@ -87,8 +83,6 @@ def safe_edit_text(chat_id: int, message_id: int, text: str, reply_markup=None):
         try:
             return bot.send_message(chat_id, text, reply_markup=reply_markup)
         except Exception:
-            # Strip HTML tags as ultimate fallback if an entity error ever occurs
-            import re
             plain = re.sub(r"<[^>]+>", "", text)
             return bot.send_message(chat_id, plain, parse_mode=None, reply_markup=reply_markup)
 
@@ -227,13 +221,13 @@ if bot:
                 with open(USER_DB_PATH, "wb") as f:
                     f.write(downloaded)
                 db.init_schema()
-                safe_edit_text_wrapper(
-                    "✅ <b>Database successfully restored and migrated!</b>",
-                    message.chat.id, status_msg.message_id
+                safe_edit_text(
+                    message.chat.id, status_msg.message_id,
+                    "✅ <b>Database successfully restored and migrated!</b>"
                 )
                 db.backup_to_telegram(bot, caption_note="📌 Manual DB Restore Pin")
             except Exception as e:
-                safe_edit_text_wrapper(f"❌ Restore failed: {e}", message.chat.id, status_msg.message_id)
+                safe_edit_text(message.chat.id, status_msg.message_id, f"❌ Restore failed: {e}")
 
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callbacks(call):
@@ -253,9 +247,9 @@ if bot:
             if data.startswith("guide:"):
                 chapter_key = data.split(":", 1)[1]
                 chapter_html = GUIDE_CHAPTERS.get(chapter_key, GUIDE_CHAPTERS["overview"])
-                safe_edit_text_wrapper(
-                    chapter_html,
+                safe_edit_text(
                     call.message.chat.id, call.message.message_id,
+                    chapter_html,
                     reply_markup=LoungeKeyboards.guide_navigation_kb(chapter_key)
                 )
                 bot.answer_callback_query(call.id, "📖 Guide Chapter Loaded")
@@ -263,37 +257,37 @@ if bot:
 
             # --- 2. Main Navigation Menus ---
             if data == "menu:home":
-                safe_edit_text_wrapper(
-                    build_welcome_banner(user),
+                safe_edit_text(
                     call.message.chat.id, call.message.message_id,
+                    build_welcome_banner(user),
                     reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
                 )
                 bot.answer_callback_query(call.id)
 
             elif data == "menu:podcast":
-                safe_edit_text_wrapper(
+                safe_edit_text(
+                    call.message.chat.id, call.message.message_id,
                     "🎙️ <b>Musa's NYC Lounge — Dual-Host Podcast Studio</b>\n\n"
                     "Our New York hosts (<b>Andrew & Ava</b>) dynamically script and record a lively episode calibrated to your level, weaving in your Vault chunks and pausing mid-show to unpack the pragmatic subtext:",
-                    call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.podcast_menu()
                 )
                 bot.answer_callback_query(call.id)
 
             elif data == "menu:miner_lookup":
-                safe_edit_text_wrapper(
+                safe_edit_text(
+                    call.message.chat.id, call.message.message_id,
                     "🔬 <b>Native Text Miner & Instant FTS5 Collocation Corpus</b>\n\n"
                     "• <b>Instant FTS5 Lookup (under 5ms):</b> Send 1–3 words to query the SQLite FTS5 Corpus & your Vault.\n"
                     "• <b>Native Text Miner:</b> Paste any article, dialogue, or quote to extract 3-Part Lexical Frames and decode its pragmatic subtext:",
-                    call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.miner_lookup_menu()
                 )
                 bot.answer_callback_query(call.id)
 
             elif data == "menu:drills":
-                safe_edit_text_wrapper(
-                    f"🎯 <b>100% Generative Active Output & Prosody Gym (Level {user['level']})</b>\n\n"
-                    "Every workout below is dynamically generated on the spot by Gemini 2.5 to match your CEFR level, Vault, and recurring weaknesses:",
+                safe_edit_text(
                     call.message.chat.id, call.message.message_id,
+                    f"🎯 <b>100% Generative Active Output & Prosody Gym (Level {user['level']})</b>\n\n"
+                    "Every workout below is dynamically generated on the spot by Gemini to match your CEFR level, Vault, and recurring weaknesses:",
                     reply_markup=LoungeKeyboards.drills_menu()
                 )
                 bot.answer_callback_query(call.id)
@@ -306,18 +300,19 @@ if bot:
                     for i, v in enumerate(vault_items, 1)
                 ]) if vault_items else "<i>Your vault is currently empty. Tap [⭐ Save 1/2/3] under any reply to collect frames!</i>"
 
-                safe_edit_text_wrapper(
+                safe_edit_text(
+                    call.message.chat.id, call.message.message_id,
                     f"📓 <b>My 3-Part Lexical Vault & Exports</b>\n"
                     f"Total Saved: <code>{stats['total_vault']}</code> | Due SRS: <code>{stats['due_srs']}</code> | Contextually Acquired: <code>{stats['stealth_mastered']}</code>\n\n"
                     f"<b>Recently Saved Frames:</b>\n{preview}",
-                    call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.vault_menu()
                 )
                 bot.answer_callback_query(call.id)
 
             elif data == "menu:settings":
                 stats = db.get_user_stats(uid)
-                safe_edit_text_wrapper(
+                safe_edit_text(
+                    call.message.chat.id, call.message.message_id,
                     f"⚙️ <b>Lounge Calibration & Telemetry</b>\n\n"
                     f"• Active Level: <code>{user['level']}</code> (All AI scenarios & drills adapt to this level)\n"
                     f"• Preferred Register: <code>{REGISTERS_MAP.get(user['preferred_register'], '[🎙️ Articulate]')}</code>\n"
@@ -325,16 +320,15 @@ if bot:
                     f"• Active Weaknesses: <code>{stats['active_errors']}</code> | Mastered Fixes: <code>{stats['mastered_errors']}</code>\n"
                     f"• Today's Turns: <code>{user['daily_count']} / {user['daily_limit']}</code>\n\n"
                     f"<i>Select your CEFR level below (C1/C2 locks 100% English Immersion):</i>",
-                    call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.settings_menu(user)
                 )
                 bot.answer_callback_query(call.id)
 
             elif data == "menu:admin" and uid == ADMIN_ID:
-                safe_edit_text_wrapper(
+                safe_edit_text(
+                    call.message.chat.id, call.message.message_id,
                     "🛡️ <b>Founder Admin & 24/7 Relay Control Panel</b>\n\n"
                     "Generate friend invite codes, manage your whitelist, trigger an immediate pinned DB backup, or upload any <code>.db</code> file directly to chat to restore:",
-                    call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.admin_menu()
                 )
                 bot.answer_callback_query(call.id)
@@ -347,20 +341,19 @@ if bot:
                     f"🎲 <b>Inventing a fresh, unscripted NYC scenario calibrated to Level <code>{user['level']}</code>...</b>"
                 )
                 spark_html = ai_engine.generate_studio_spark(user)
-                safe_edit_text_wrapper(
-                    spark_html,
+                safe_edit_text(
                     call.message.chat.id, wait_msg.message_id,
+                    spark_html,
                     reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"))
                 )
 
-            # --- 4. Mode Switching ---
+            # --- 4. Instant Mode Switching ---
             elif data.startswith("mode:"):
                 new_mode = data.split(":", 1)[1]
                 db.update_user(uid, current_mode=new_mode)
                 user = db.get_user(uid)
                 bot.answer_callback_query(call.id, f"✅ Studio Activated: {new_mode}")
 
-                # Modes that need direct instructions vs generative studio sparks
                 if new_mode in ("fast_lookup", "chunk_miner", "podcast_custom_topic", "admin_add_user", "admin_del_user"):
                     static_prompts = {
                         "fast_lookup": "⚡ <b>Instant SQLite FTS5 Collocation Lookup Activated!</b>\nSend 1 to 3 words now for an instant (under 5ms) search across the FTS5 Corpus and your Vault.",
@@ -369,47 +362,40 @@ if bot:
                         "admin_add_user": "➕ Send the numeric <b>Telegram ID</b> of the friend you want to whitelist:",
                         "admin_del_user": "➖ Send the numeric <b>Telegram ID</b> you want to remove from the whitelist:"
                     }
-                    bot.send_message(
-                        call.message.chat.id,
+                    safe_edit_text(
+                        call.message.chat.id, call.message.message_id,
                         static_prompts[new_mode],
                         reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
                     )
-                                else:
+                else:
                     studio_banners = {
                         "spontaneous_chat": (
-                            f"🗣️ <b>NYC Spontaneous Banter Activated (Level {user['level']})!</b>
-"
+                            f"🗣️ <b>NYC Spontaneous Banter Activated (Level {user['level']})!</b>\n\n"
                             "Send a voice note or text message on anything—or tap <code>🎲 New AI Prompt / Scenario</code> below to spark a fresh topic!"
                         ),
                         "storytelling_gym": (
-                            f"🎭 <b>Storytelling & Wit Gym Activated (Level {user['level']})!</b>
-"
+                            f"🎭 <b>Storytelling & Wit Gym Activated (Level {user['level']})!</b>\n\n"
                             "Narrate a real or made-up story (voice or text) to practice Historical Present & punchlines—or tap <code>🎲 New AI Prompt / Scenario</code> for a story hook!"
                         ),
                         "register_lab": (
-                            f"🎛️ <b>Register Shifter Lab Activated (Level {user['level']})!</b>
-"
-                            "Send any thought or sentence to transform it across <b>[🎙️ Articulate]</b>, <b>[☕ Casual]</b>, and <b>[🎭 Witty]</b>—or tap <code>🎲 New AI Prompt</code>!"
+                            f"🎛️ <b>Register Shifter Lab Activated (Level {user['level']})!</b>\n\n"
+                            "Send any thought or sentence to transform it across <b>[🎙️ Articulate]</b>, <b>[☕ Casual]</b>, and <b>[🎭 Witty]</b>—or tap <code>🎲 New AI Prompt / Scenario</code>!"
                         ),
                         "subtext_decoder": (
-                            f"🕵️‍♂️ <b>Subtext & Irony Decoder Activated (Level {user['level']})!</b>
-"
-                            "Send any phrase or social moment to decode its unspoken American subtext—or tap <code>🎲 New AI Prompt</code> for a subtext riddle!"
+                            f"🕵️‍♂️ <b>Subtext & Irony Decoder Activated (Level {user['level']})!</b>\n\n"
+                            "Send any phrase or social moment to decode its unspoken American subtext—or tap <code>🎲 New AI Prompt / Scenario</code> for a subtext riddle!"
                         ),
                         "situation_gambit": (
-                            f"⚡ <b>Situation-to-Gambit Translator Activated (Level {user['level']})!</b>
-"
+                            f"⚡ <b>Situation-to-Gambit Translator Activated (Level {user['level']})!</b>\n\n"
                             "Describe any social or workplace situation (in English or Arabic) to get the exact native American gambits!"
                         ),
                         "podcast_guest": (
-                            f"🎙️ <b>Live Podcast ('You Are the Guest') Activated (Level {user['level']})!</b>
-"
+                            f"🎙️ <b>Live Podcast ('You Are the Guest') Activated (Level {user['level']})!</b>\n\n"
                             "Tap <code>🎲 New AI Prompt / Scenario</code> for the host's opening question, or send a voice note to jump right in!"
                         )
                     }
                     safe_edit_text(
-                        call.message.chat.id,
-                        call.message.message_id,
+                        call.message.chat.id, call.message.message_id,
                         studio_banners.get(new_mode, f"✅ Studio `{new_mode}` ready!"),
                         reply_markup=LoungeKeyboards.studio_prompt_bar(new_mode)
                     )
@@ -495,7 +481,7 @@ if bot:
                 wait_msg = bot.send_message(
                     call.message.chat.id,
                     f"🎙️ <b>NYC Podcast Studio is On Air (Level {user['level']})...</b>\n"
-                    "1️⃣ Gemini 2.5 is scripting witty banter between <b>Andrew & Ava</b> weaving in your Vault frames...\n"
+                    "1️⃣ Gemini is scripting witty banter between <b>Andrew & Ava</b> weaving in your Vault frames...\n"
                     "2️⃣ Mixing neural voices via <code>FFmpeg</code> (~15s)."
                 )
                 bot.send_chat_action(call.message.chat.id, "record_voice")
@@ -542,7 +528,10 @@ if bot:
                         call.message.chat.id, full_caption,
                         reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False)
                     )
-                bot.delete_message(call.message.chat.id, wait_msg.message_id)
+                try:
+                    bot.delete_message(call.message.chat.id, wait_msg.message_id)
+                except Exception:
+                    pass
 
             # --- 7. Generative Active Drills & Weakness Profile ---
             elif data.startswith("drill:"):
@@ -562,7 +551,7 @@ if bot:
                         kb.add(telebot.types.InlineKeyboardButton(f"✅ Mastered: {w['native_fix'][:18]}", callback_data=f"master:{w['id']}"))
                     kb.add(telebot.types.InlineKeyboardButton("🔥 Drill These in Forced Output", callback_data="drill:forced_output"))
                     kb.add(telebot.types.InlineKeyboardButton("🔙 Back to Drills", callback_data="menu:drills"))
-                    safe_edit_text_wrapper("\n".join(lines), call.message.chat.id, call.message.message_id, reply_markup=kb)
+                    safe_edit_text(call.message.chat.id, call.message.message_id, "\n".join(lines), reply_markup=kb)
                     bot.answer_callback_query(call.id)
                     return
 
@@ -579,9 +568,9 @@ if bot:
                 }
                 db.update_user(uid, current_mode=mode_map.get(drill_type, "spontaneous_chat"))
                 drill_data = ai_engine.build_active_drill(user, drill_type)
-                safe_edit_text_wrapper(
-                    drill_data["text"],
+                safe_edit_text(
                     call.message.chat.id, wait_msg.message_id,
+                    drill_data["text"],
                     reply_markup=LoungeKeyboards.studio_prompt_bar(mode_map.get(drill_type, "spontaneous_chat"))
                 )
 
@@ -633,7 +622,7 @@ if bot:
                     f"✅ <b>Full Example:</b>\n<i>\"{html.escape(card['example_sentence'])}\"</i>\n\n"
                     f"👇 <b>How effortless was your recall?</b>"
                 )
-                safe_edit_text_wrapper(ans_text, call.message.chat.id, call.message.message_id, reply_markup=LoungeKeyboards.srs_grade_kb(card_id))
+                safe_edit_text(call.message.chat.id, call.message.message_id, ans_text, reply_markup=LoungeKeyboards.srs_grade_kb(card_id))
                 bot.answer_callback_query(call.id)
 
             elif data.startswith("srs:grade:"):
@@ -643,18 +632,18 @@ if bot:
                 nxt_card = db.get_due_srs_card(uid)
                 if nxt_card:
                     cloze = nxt_card.get("cloze_sentence") or nxt_card.get("example_sentence", "").replace(nxt_card["chunk"], "______")
-                    safe_edit_text_wrapper(
+                    safe_edit_text(
+                        call.message.chat.id, call.message.message_id,
                         f"🧠 <b>Next SRS Card:</b>\n"
                         f"🎚️ <b>Register:</b> {html.escape(nxt_card['register_tag'])}\n"
                         f"🎯 <b>Trigger:</b> {html.escape(nxt_card['trigger_context'])}\n\n"
                         f"<i>\"{html.escape(cloze)}\"</i>",
-                        call.message.chat.id, call.message.message_id,
                         reply_markup=LoungeKeyboards.srs_reveal_kb(nxt_card["id"])
                     )
                 else:
-                    safe_edit_text_wrapper(
-                        "🎉 <b>Awesome job! You've finished all due SRS cards for today.</b>",
+                    safe_edit_text(
                         call.message.chat.id, call.message.message_id,
+                        "🎉 <b>Awesome job! You've finished all due SRS cards for today.</b>",
                         reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
                     )
 
@@ -707,10 +696,13 @@ if bot:
                 db.update_user(uid, level=new_lv)
                 user = db.get_user(uid)
                 bot.answer_callback_query(call.id, f"✅ Level calibrated to {new_lv}")
-                bot.edit_message_reply_markup(
-                    call.message.chat.id, call.message.message_id,
-                    reply_markup=LoungeKeyboards.settings_menu(user)
-                )
+                try:
+                    bot.edit_message_reply_markup(
+                        call.message.chat.id, call.message.message_id,
+                        reply_markup=LoungeKeyboards.settings_menu(user)
+                    )
+                except Exception:
+                    pass
 
             elif data == "set:toggle_eng":
                 cur_eng = bool(user.get("english_only", 1))
@@ -719,10 +711,13 @@ if bot:
                     return
                 db.update_user(uid, english_only=(0 if cur_eng else 1))
                 user = db.get_user(uid)
-                bot.edit_message_reply_markup(
-                    call.message.chat.id, call.message.message_id,
-                    reply_markup=LoungeKeyboards.settings_menu(user)
-                )
+                try:
+                    bot.edit_message_reply_markup(
+                        call.message.chat.id, call.message.message_id,
+                        reply_markup=LoungeKeyboards.settings_menu(user)
+                    )
+                except Exception:
+                    pass
                 bot.answer_callback_query(call.id, "✅ Immersion preference updated.")
 
             elif data == "admin:gen_invite" and uid == ADMIN_ID:
@@ -754,7 +749,7 @@ if bot:
             bot.answer_callback_query(call.id, "⚠️ Action could not be completed.")
 
     # =====================================================================
-    # 3. Raw Voice Input Handler -> Gemini 2.5 Native Audio
+    # 3. Raw Voice Input Handler -> Gemini Native Audio
     # =====================================================================
     @bot.message_handler(content_types=["voice", "audio"])
     def handle_voice_input(message):
@@ -807,19 +802,19 @@ if bot:
             )
 
             formatted_html = format_lounge_turn_html(res, is_voice=True, stealth_count=len(stealth_ids))
-            safe_edit_text_wrapper(
-                formatted_html,
+            safe_edit_text(
                 message.chat.id,
                 status_msg.message_id,
+                formatted_html,
                 reply_markup=LoungeKeyboards.turn_action_bar(
                     token_key, len(res.lexical_upgrades), has_user_voice=True
                 )
             )
         except Exception as e:
             logger.error(f"Voice processing error: {e}")
-            safe_edit_text_wrapper(
-                f"⚠️ Error analyzing voice note: <code>{html.escape(str(e)[:180])}</code>",
-                message.chat.id, status_msg.message_id
+            safe_edit_text(
+                message.chat.id, status_msg.message_id,
+                f"⚠️ Error analyzing voice note: <code>{html.escape(str(e)[:180])}</code>"
             )
 
     # =====================================================================
@@ -929,9 +924,12 @@ if bot:
                         message.chat.id, full_caption,
                         reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False)
                     )
-                bot.delete_message(message.chat.id, wait_msg.message_id)
+                try:
+                    bot.delete_message(message.chat.id, wait_msg.message_id)
+                except Exception:
+                    pass
             except Exception as e:
-                safe_edit_text_wrapper(f"⚠️ Podcast production error: {e}", message.chat.id, wait_msg.message_id)
+                safe_edit_text(message.chat.id, wait_msg.message_id, f"⚠️ Podcast production error: {e}")
             return
 
         # --- D. Standard Turn or Native Text Miner ---
@@ -961,19 +959,19 @@ if bot:
             )
 
             formatted_html = format_lounge_turn_html(res, is_voice=False, stealth_count=len(stealth_ids))
-            safe_edit_text_wrapper(
-                formatted_html,
+            safe_edit_text(
                 message.chat.id,
                 status_msg.message_id,
+                formatted_html,
                 reply_markup=LoungeKeyboards.turn_action_bar(
                     token_key, len(res.lexical_upgrades), has_user_voice=False
                 )
             )
         except Exception as e:
             logger.error(f"Text turn error: {e}")
-            safe_edit_text_wrapper(
-                f"⚠️ Processing error: <code>{html.escape(str(e)[:180])}</code>",
-                message.chat.id, status_msg.message_id
+            safe_edit_text(
+                message.chat.id, status_msg.message_id,
+                f"⚠️ Processing error: <code>{html.escape(str(e)[:180])}</code>"
             )
 
 
@@ -1031,13 +1029,13 @@ def relay_lifecycle_watchdog():
 
 def main():
     if not BOT_TOKEN:
-        logger.error("❌ BOT_TOKEN is empty! Make sure secrets are passed to `env:` in your GitHub Workflow.")
+        logger.error("❌ BOT_TOKEN is empty!")
         sys.exit(1)
     if not GEMINI_API_KEY:
-        logger.error("❌ GEMINI_API_KEY is empty! Make sure secrets are passed to `env:` in your GitHub Workflow.")
+        logger.error("❌ GEMINI_API_KEY is empty!")
         sys.exit(1)
 
-    logger.info("🗽 Starting Musa's NYC Lounge (Modular v3.0 — 100% Gemini Generative Edition)...")
+    logger.info("🗽 Starting Musa's NYC Lounge (Modular v3.1 — Gemini-3-Flash Generative Engine)...")
 
     restored = db.restore_from_telegram_pin(bot)
     if not restored:
@@ -1054,7 +1052,7 @@ def main():
             u_admin = db.get_user(ADMIN_ID, "Admin", "Musa")
             bot.send_message(
                 ADMIN_ID,
-                "🗽 <b>Musa's NYC Lounge v3.0 (Modular & 100% Generative) is NOW LIVE!</b>\n\n" + build_welcome_banner(u_admin),
+                "🗽 <b>Musa's NYC Lounge v3.1 (Gemini-3-Flash Live) is NOW ONLINE!</b>\n\n" + build_welcome_banner(u_admin),
                 reply_markup=LoungeKeyboards.main_menu(u_admin, is_admin=True)
             )
     except Exception as e:
