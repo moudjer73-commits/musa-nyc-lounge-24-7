@@ -261,49 +261,32 @@ class NYCLoungeAI:
                 return h
         return None
 
-    @classmethod
-    def _persona_routing_directive(cls, active_persona: str, mode: str, user_text: str = "") -> str:
-        preset = CAST_PRESETS.get(active_persona, CAST_PRESETS["trio"])
-        hosts = list(preset["hosts"])
-        count = preset["count"]
-        called_host = cls._detect_addressed_host(user_text)
-
-        if count == 3:
-            lead_note = (
-                f"- IMPORTANT: Musa directly addressed `{called_host.capitalize()}` in his message, so `{called_host}` MUST speak FIRST in Turn 1, and then the other two hosts jump in right after!"
-                if called_host else
-                "- Turn 1: Have the most fitting host react directly to Musa's message first."
-            )
+    def _persona_routing_directive(self, active_persona: str, mode: str, user_text: str = "") -> str:
+        if active_persona == "marcus":
             return (
-                "ACTIVE TABLE CAST: 🗽 3-HOST TRIO ROUNDTABLE (`marcus`, `chloe`, AND `jake`).\n"
-                "- MANDATORY SCHEMA RULE: Populate `chat_turns` with 3 to 4 conversational turns where ALL THREE hosts (`marcus`, `chloe`, and `jake`) speak!\n"
-                f"{lead_note}\n"
-                "- Turn 2: A second host jumps in ('Wait, hold on—', 'See, I'm with Jake on this...', etc.) adding a contrasting angle or story.\n"
-                "- Turn 3: The third host synthesizes the subtext or teases the others and tosses an engaging follow-up question back to Musa.\n"
-                "- Do NOT put speaker names inside `ChatBubbleLine.text` (the `speaker` field handles that)."
+                "ACTIVE HOST: 🧔‍♂️ Marcus ONLY (`speaker='marcus'`). Speak strictly in the member's ACTIVE VIBE. "
+                "Sound like a real human reacting in real time—use natural spoken rhythm, pick up on the subtext of what the member said, "
+                "recalibrate mid-sentence only when a thought genuinely shifts, and avoid stiff interviewer questions."
             )
-        elif count == 2:
-            if called_host and called_host not in hosts:
-                hosts = [called_host, hosts[0]]
-            elif called_host and hosts[0] != called_host:
-                hosts = [called_host, [h for h in hosts if h != called_host][0]]
-            h1, h2 = hosts[0], hosts[1]
-            p1, p2 = PERSONAS[h1], PERSONAS[h2]
+        if active_persona == "chloe":
             return (
-                f"ACTIVE TABLE CAST: 👥 2-HOST DUO BANTER (`{h1}` and `{h2}` ONLY).\n"
-                f"- Host 1 (Leads first): {p1['title']} — {p1['style_desc']}\n"
-                f"- Host 2: {p2['title']} — {p2['style_desc']}\n"
-                f"- MANDATORY SCHEMA RULE: Populate `chat_turns` with 2 to 3 interactive turns strictly alternating between `{h1}` and `{h2}`!\n"
-                f"- Have `{h1}` and `{h2}` react both to Musa and to each other naturally, ending with a question for Musa."
+                "ACTIVE HOST: 👩🏼‍💼 Chloe ONLY (`speaker='chloe'`). Speak strictly in the member's ACTIVE VIBE. "
+                "Sound like a real human reacting in real time—latch onto specific details the member mentioned, use authentic spoken syntax, "
+                "and keep the handoff effortless."
             )
-        else:
-            h1 = called_host if called_host else hosts[0]
-            p1 = PERSONAS.get(h1, PERSONAS["marcus"])
+        if active_persona == "jake":
             return (
-                f"ACTIVE TABLE CAST: 👤 1-ON-1 SOLO CHAT WITH {p1['title']} (`{h1}` ONLY).\n"
-                f"- Persona Style: {p1['style_desc']}\n"
-                f"- MANDATORY SCHEMA RULE: Populate `chat_turns` with exactly 1 rich, engaging turn where `speaker` is '{h1}'."
+                "ACTIVE HOST: 🧢 Jake ONLY (`speaker='jake'`). Speak strictly in the member's ACTIVE VIBE. "
+                "Sound like a real human reacting in real time—warm, immediate, building directly on the member's point without sounding scripted."
             )
+        return (
+            "ACTIVE CAST: 🗽 THE NYC TRIO (Marcus, Chloe, and Jake). "
+            "Include 2 or 3 hosts in `chat_turns` (`speaker` in ['marcus', 'chloe', 'jake']). "
+            "CRITICAL HUMAN TABLE DYNAMICS: "
+            "(1) ALL hosts MUST speak in the exact SAME ACTIVE VIBE selected by the member—never assign different registers to different hosts. "
+            "(2) Vary turn lengths naturally: e.g., one host drops a quick 4-to-8 word reaction or co-completion, and the next host riffs on it or offers a slightly different angle. "
+            "(3) Have them react to each other AND the member simultaneously, finishing thoughts or gently challenging an assumption, then hand the floor back naturally without sounding like a formal interview."
+        )
 
     @staticmethod
     def _finalize_chat_turns(res: LoungeTurnResponse, active_persona: str, user_text: str = "") -> LoungeTurnResponse:
@@ -439,7 +422,7 @@ class NYCLoungeAI:
         weakness_str = "; ".join([f"Watch for '{w['user_said']}' -> Prefer '{w['native_fix']}'" for w in weaknesses]) if weaknesses else "None"
 
         rag_hits = self.db.get_rag_collocations_for_context(user_text, limit=3) if user_text else []
-        rag_str = "\n".join([f"  - {r}" for r in rag_hits]) if rag_hits else "  - Prioritize high-utility C1/C2 Spoken American collocations."
+        rag_str = "\n".join([f" - {r}" for r in rag_hits]) if rag_hits else " - Prioritize high-utility C1/C2 Spoken American collocations."
 
         history = self.db.get_history(uid, limit=6)
         hist_str = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in history]) if history else "Start of conversation."
@@ -457,7 +440,7 @@ class NYCLoungeAI:
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
             f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
-            f"- SPONTANEOUS HOST PIVOTS: Do NOT follow any fixed count or quota for mid-sentence pivots; weave them into `chat_turns` (matching {active_vibe_badge}) whenever a thought naturally shifts mid-stream, as long as it never disrupts the spontaneity of the dialogue.\n"
+            f"- REAL HUMAN FLOW & ZERO-QUOTA PIVOTS: Use asymmetric turn lengths, co-construction (latching directly onto each other's words), gentle nuance/pushback, spoken American syntax (ellipsis/fronting), non-interrogative handoffs, and natural mid-sentence recalibrations (strictly in {active_vibe_badge}) with zero numerical quota—only when a thought genuinely shifts mid-stream without disrupting spontaneity.\n"
             f"- {lang_rule}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
@@ -472,19 +455,19 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `mirror_clean_target`, phrasing-only `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
+                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `mirror_clean_target`, phrasing-only `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` and `self_repair_pivot` empty."
             )
         else:
             contents.append(
                 f"MEMBER MESSAGE:\n{user_text}\n\n"
-                "Populate `chat_turns` with the active cast (1, 2, or 3 hosts) and provide phrasing-only `diagnostics` (NO pronunciation/vowel/IPA comments) and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
+                "Populate `chat_turns` with the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, and provide phrasing-only `diagnostics` (NO pronunciation/vowel/IPA comments) and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` and `self_repair_pivot` empty."
             )
 
         res: LoungeTurnResponse = self._call_structured(
             contents=contents,
             schema_cls=LoungeTurnResponse,
             system_instruction=system_prompt,
-            temperature=0.72,
+            temperature=0.74,
             max_output_tokens=4096
         )
 
@@ -641,18 +624,20 @@ class NYCLoungeAI:
             f"- {topic_prompt}\n"
             f"- Candidate Vault Phrases (weave in ONLY the ones that fit the topic 100% naturally; ignore any that feel forced): {vault_chunks}\n"
             f"- Target Phrasing Upgrades (use organically if relevant): {weak_fixes}\n"
-            "- Write an 8 to 10 turn unscripted-feeling dialogue between `male_host` (Andrew) and `female_host` (Ava).\n"
-            "- REAL HUMAN FLOW & UNFORCED PIVOTS: Make them sound like two real people thinking out loud in real time. "
-            "Without any fixed quota or numerical limit, let the hosts naturally recalibrate or pivot mid-sentence "
-            f"(matching the {vibe_badge} vibe) whenever the flow of thought genuinely calls for it, provided it never disrupts the spontaneity of their conversation.\n"
-            "- NO DIDACTIC META-PAUSES: Never pause the conversation to lecture or say 'I love how you used that phrase.' Keep the illusion of a real, spontaneous NYC podcast 100% intact."
+            "- Write a 10 to 12 turn unscripted-feeling dialogue between `male_host` (Andrew) and `female_host` (Ava).\n"
+            "- AUTHENTIC HUMAN MICRO-DYNAMICS FOR AUDIO:\n"
+            "  1. ASYMMETRIC CADENCE: Mix short, punchy 3-to-7 word reactive turns ('Wait, hold on—seriously?', 'No, that is spot on.', 'Okay, hear me out though.') with longer storytelling or analytical turns so the audio rhythm breathes like a real studio recording.\n"
+            "  2. CO-CONSTRUCTION & OVERLAPPING THOUGHTS: Let one host pick up the exact thread or finish the other host's point mid-stream.\n"
+            "  3. NUANCED BANTER & PLAYFUL PUSHBACK: Don't make them agree 100% automatically; let them challenge a premise, refine an angle, or callback to an earlier joke in the episode.\n"
+            "  4. THINKING OUT LOUD (ZERO QUOTA): Without any fixed quota or numerical limit, let the hosts naturally recalibrate or pivot mid-sentence whenever the flow of thought genuinely calls for it, without ever disrupting spontaneity.\n"
+            "  5. NO DIDACTIC META-PAUSES: Never pause the conversation to lecture or say 'I love how you used that phrase.' Keep the illusion of a real, spontaneous NYC podcast 100% intact."
         )
 
         ep: PodcastEpisodeSchema = self._call_structured(
-            contents=[f"Record the complete Dual-Host NYC Radio episode strictly in {vibe_badge} mode with 100% natural human flow now."],
+            contents=[f"Record the complete Dual-Host NYC Radio episode strictly in {vibe_badge} mode with 100% authentic human conversational dynamics now."],
             schema_cls=PodcastEpisodeSchema,
             system_instruction=system_prompt,
-            temperature=0.76
+            temperature=0.78
         )
         for u in ep.key_takeaways:
             u.register_tag = vibe_badge
