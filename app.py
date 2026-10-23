@@ -980,6 +980,25 @@ if bot:
                 err_id = int(data.split(":", 1)[1])
                 db.mark_weakness_mastered(err_id)
                 bot.answer_callback_query(call.id, "🎉 Checked off your list!")
+                weaknesses = db.get_weaknesses(uid, limit=6)
+                if not weaknesses:
+                    safe_edit_text(
+                        call.message.chat.id, call.message.message_id,
+                        "🎉 <b>All clean! You've polished and checked off every habit on your list.</b>",
+                        reply_markup=LoungeKeyboards.drills_menu()
+                    )
+                else:
+                    lines = ["🩺 <b>Speaking Habits You're Polishing:</b>\n"]
+                    kb = telebot.types.InlineKeyboardMarkup(row_width=2)
+                    for w in weaknesses:
+                        lines.append(
+                            f"• <i>{html.escape(w['user_said'])}</i> ➔ ✅ <b>{html.escape(w['native_fix'])}</b>\n"
+                            f"  └ <code>{html.escape(w['category'])}</code> {html.escape(w['why_note'])}"
+                        )
+                        kb.add(telebot.types.InlineKeyboardButton(f"✅ Got It: {w['native_fix'][:18]}", callback_data=f"master:{w['id']}"))
+                    kb.add(telebot.types.InlineKeyboardButton("🔥 Practice These in a 3-Phrase Challenge", callback_data="drill:forced_output"))
+                    kb.add(telebot.types.InlineKeyboardButton("🔙 Back to Workouts", callback_data="menu:drills"))
+                    safe_edit_text(call.message.chat.id, call.message.message_id, "\n".join(lines), reply_markup=kb)
 
             # --- 8. Daily Phrase Review (Active & Self-Graded) ---
             elif data == "srs:next":
@@ -1199,6 +1218,8 @@ if bot:
                 audio_bytes=audio_bytes,
                 audio_mime="audio/ogg"
             )
+            if mode in ("weakness_drill", "shadowing_drill"):
+                db.update_user(uid, current_mode="spontaneous_chat")
 
             active_uptakes = db.detect_and_record_active_uptake(uid, res.transcription)
 
@@ -1335,7 +1356,7 @@ if bot:
                 explorer = ai_engine.explore_collocations_live(user, text)
                 token_key = uuid.uuid4().hex[:10]
                 frames_dicts = [f.model_dump() for f in explorer.collocation_frames]
-                first_ex = explorer.collocation_frames[0].example if explorer.collocation_frames else text
+                first_ex = ' ... '.join([f.example for f in explorer.collocation_frames[:4]]) if explorer.collocation_frames else text
                 db.store_atomic_batch(uid, token_key, frames_dicts, audio_clean_text=first_ex)
 
                 lines = [
@@ -1365,9 +1386,7 @@ if bot:
                 safe_edit_text(
                     message.chat.id, wait_msg.message_id,
                     "\n".join(lines),
-                    reply_markup=LoungeKeyboards.turn_action_bar(
-                        token_key, len(explorer.collocation_frames[:4]), has_user_voice=False, has_host_voice=False
-                    )
+                    reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(explorer.collocation_frames[:4]), has_user_voice=False, has_host_voice=False, has_recast_voice=True, recast_label='🔊 Hear Examples')
                 )
             except Exception as e:
                 logger.error(f"Collocation explorer error: {e}")

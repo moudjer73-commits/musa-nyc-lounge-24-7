@@ -605,54 +605,45 @@ class NYCLoungeAI:
         )
         return self._finalize_chat_turns(res, active_persona=active_persona, user_text=source_text)
 
-    def generate_podcast_episode(
-        self,
-        user: Dict[str, Any],
-        custom_topic: str = "",
-        format_mode: str = "trio",
-        duo_pair: str = "marcus_chloe"
-    ) -> PodcastEpisodeSchema:
+    def generate_podcast_episode(self, user: Dict[str, Any], custom_topic: str = "") -> PodcastEpisodeSchema:
         uid = user["user_id"]
         level = user.get("level", "C1")
-        vault = self.db.get_user_vault(uid, limit=7)
-        weaknesses = self.db.get_weaknesses(uid, limit=4)
+        pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        vault = self.db.get_user_vault(uid, limit=5)
+        weaknesses = self.db.get_weaknesses(uid, limit=3)
 
         vault_chunks = [v["chunk"] for v in vault]
         weak_fixes = [w["native_fix"] for w in weaknesses]
 
-        if format_mode == "duo":
-            if duo_pair == "chloe_jake":
-                cast_directive = "PODCAST FORMAT: 🎙️ DUO DEEP-DIVE (2 Hosts ONLY: `chloe` and `jake`). DO NOT use `marcus`."
-            else:
-                cast_directive = "PODCAST FORMAT: 🎙️ DUO DEEP-DIVE (2 Hosts ONLY: `marcus` and `chloe`). DO NOT use `jake`."
-        else:
-            cast_directive = "PODCAST FORMAT: 🗽 TRIO ROUNDTABLE (All 3 Hosts: `marcus`, `chloe`, and `jake`)."
-
         topic_prompt = (
-            f"CENTRAL TOPIC REQUESTED BY MUSA: '{custom_topic}'."
+            f"Topic requested by listener: '{custom_topic}'."
             if custom_topic else
-            "Invent a captivating New York cultural dilemma or everyday social friction that sparks genuine debate."
+            "Invent a lively, captivating New York cultural observation, everyday dilemma, or real-life story."
         )
 
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"ACTIVE STUDIO: 🎙️ THE NYC RADIO LOUNGE (NOTEBOOK-LM STYLE 3+ MIN DEEP DIVE).\n"
+            "ACTIVE ROOM: 🎙️ THE RADIO LOUNGE (Andrew & Ava).\n"
+            f"- STRICT VIBE LOCK FOR BOTH HOSTS ({vibe_badge}): {vibe_rules}\n"
+            f"- Both Andrew and Ava MUST speak strictly in the {vibe_badge} register throughout the entire show, and all 3 `key_takeaways` MUST match {vibe_badge}.\n"
             f"- {self._level_calibration_guide(level)}\n"
-            f"- {cast_directive}\n"
             f"- {topic_prompt}\n"
-            f"- Member's Saved Vault Phrases to weave in naturally (aim for 5 to 6): {vault_chunks}\n"
-            f"- Target Phrasing Upgrades: {weak_fixes}\n"
-            "Write 28 to 36 dynamic turns (~500–650 words) mixing short fast interjections (`pacing='fast_interjection'`) with substantive points (`pacing='normal'`) and reflective nuances (`pacing='thoughtful_slow'`)."
+            f"- Member's Saved Vault Phrases to weave in naturally (if empty, choose 3 fresh expressions): {vault_chunks}\n"
+            f"- Target Phrasing Upgrades to reinforce: {weak_fixes}\n"
+            "- Write an 8 to 10 turn dialogue between `male_host` (Andrew) and `female_host` (Ava).\n"
+            "- Twice during the conversation, have the hosts briefly pause ('Wait, I love how you put that...') to highlight why a target phrase works so well in that exact moment before continuing."
         )
 
         ep: PodcastEpisodeSchema = self._call_structured(
-            contents=[f"Produce the full 3+ minute {format_mode.upper()} NYC Lounge episode now."],
+            contents=[f"Record the complete Dual-Host NYC Radio episode strictly in {vibe_badge} mode now."],
             schema_cls=PodcastEpisodeSchema,
             system_instruction=system_prompt,
-            temperature=0.80,
-            max_output_tokens=8192
+            temperature=0.78
         )
-        ep.format_mode = format_mode
+        for u in ep.key_takeaways:
+            u.register_tag = vibe_badge
         return ep
 
     def build_active_drill(self, user: Dict[str, Any], drill_type: str) -> Dict[str, Any]:

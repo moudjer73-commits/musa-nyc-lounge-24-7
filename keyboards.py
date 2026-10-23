@@ -131,20 +131,20 @@ class LoungeKeyboards:
         num_upgrades: int = 3,
         has_user_voice: bool = False,
         has_host_voice: bool = True,
-        persona_key: str = "trio"
+        has_recast_voice: bool = True,
+        recast_label: str = "🗣️ My Recast"
     ) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
 
-        cast_info = CAST_PRESETS.get(persona_key, CAST_PRESETS.get("marcus"))
-        host_btn_label = f"🎧 Hear {cast_info['short']}" if cast_info else "🎧 Hear Host"
-
         audio_btns = []
         if has_host_voice:
-            audio_btns.append(InlineKeyboardButton(host_btn_label, callback_data=f"host_tts:{token_key}"))
-        audio_btns.append(InlineKeyboardButton("🗣️ My Recast", callback_data=f"tts:{token_key}"))
+            audio_btns.append(InlineKeyboardButton("🎧 Host Voice", callback_data=f"host_tts:{token_key}"))
+        if has_recast_voice:
+            audio_btns.append(InlineKeyboardButton(recast_label, callback_data=f"tts:{token_key}"))
         if has_user_voice:
             audio_btns.append(InlineKeyboardButton("🪞 Voice Mirror", callback_data=f"mirror:{token_key}"))
-        kb.row(*audio_btns)
+        if audio_btns:
+            kb.row(*audio_btns)
 
         save_btns = [
             InlineKeyboardButton(f"⭐ Save ({i})", callback_data=f"save:{token_key}:{i}")
