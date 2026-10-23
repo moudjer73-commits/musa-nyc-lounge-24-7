@@ -1174,7 +1174,8 @@ class LoungeKeyboards:
             InlineKeyboardButton("⚙️ Settings & Stats", callback_data="menu:settings")
         )
         kb.add(
-            InlineKeyboardButton("🔄 Reset Session Memory", callback_data="action:clear_chat")
+            InlineKeyboardButton("📖 Lounge User Guide", callback_data="menu:guide"),
+            InlineKeyboardButton("🔄 Reset Memory", callback_data="action:clear_chat")
         )
         if is_admin:
             kb.add(InlineKeyboardButton("🛡️ Founder Admin & Backup", callback_data="menu:admin"))
@@ -1320,6 +1321,11 @@ def is_authorized(user_id: int, username: str = "", full_name: str = "") -> bool
     return bool(u.get("is_whitelisted", 0))
 
 
+
+def build_user_guide_html() -> str:
+    return "📖 <b>Musa's NYC Lounge — Official Master Guide</b>\n━━━━━━━━━━━━━━━━━━━━\nWelcome to your private New York conversational club for C1/C2 Spoken American Mastery. Tap any section below to expand its full guide:\n\n<blockquote expandable>🔬 <b>1. How Every Turn Works (2-Layer UI & Stealth Flood)</b>\n• <b>Top Layer (Natural Banter):</b> The host replies naturally to your point. Words in <i>italics</i> are your saved vault chunks secretly woven into the conversation (<b>Stealth Input Flood</b>) for effortless acquisition.\n• <b>Collapsible X-Ray:</b> Tap the box to reveal your <b>Register Shifter</b> ([🎙️ Articulate], [☕ Casual], [🎭 Witty]), <b>Connected Speech Prosody</b> (Flap-T, Schwa, Linking), <b>Surgical Diagnostics</b>, and <b>3-Part Lexical Frames</b>.\n• <b>Atomic Action Bar:</b>\n  └ <code>🔊 US Native Audio</code>: Hear the clean American rewrite.\n  └ <code>🪞 Acoustic Mirror</code>: (Voice notes) Merges your original voice + chime + natural US pace + slow-mo study pace (-16%) into one track.\n  └ <code>⭐ Save (1/2/3)</code>: Atomically saves only the specific numbered chunk to your Vault & SRS.</blockquote>\n\n<blockquote expandable>🗽 <b>2. The 5 Core NYC Studios</b>\n• <b>🗣️ NYC Banter:</b> Unscripted, witty everyday conversation on any topic.\n• <b>🎭 Storytelling Gym:</b> Master narrative pacing, Historical Present (<i>'So I walk in...'</i>), setups, and punchlines.\n• <b>🎛️ Register Lab:</b> Instantly transform any thought across Podcast/Articulate, Street/Casual, and Dry/Witty registers.\n• <b>🕵️\u200d♂️ Subtext Decoder:</b> Unpack American irony, understatement, and unspoken pragmatic meaning between the lines.\n• <b>⚡ Situation Gambits:</b> Describe any social moment or feeling to get the exact native conversational gambits for that second.</blockquote>\n\n<blockquote expandable>🎙️ <b>3. Podcast Studio, Text Miner & Active Drills</b>\n• <b>🎙️ Dual-Host Podcast (Andrew & Ava):</b> Generates a full MP3 episode weaving in your Vault chunks and recurring weaknesses, with mid-show pause moments unpacking the vibe.\n• <b>🔬 Text Miner & SQLite Corpus:</b> Send 1–3 words for instant collocation lookup, or paste an article/dialogue to extract its best 3-Part Lexical Frames.\n• <b>🔥 Forced Output Challenge:</b> Challenges you to use 3 target chunks in a single voice note or reply.\n• <b>🎙️ US Shadowing & 👂 Micro-Dictation:</b> Train your ear and vocal tract on fast connected speech reductions.</blockquote>\n\n<blockquote expandable>🧠 <b>4. 3-Part Lexical Vault, SM-2 SRS & Exports</b>\n• <b>3-Part Frame:</b> Every saved chunk stores: 1) 🎯 <b>Trigger</b> (when natives reach for it), 2) 🔗 <b>Pattern</b> (collocations/polarity), and 3) 💬 <b>Typical Follow-up</b>.\n• <b>🧠 Smart SRS Review:</b> Built-in SM-2 spaced repetition with Cloze deletion cards and audio playback.\n• <b>📓 Vault Exports:</b> Export your entire collection anytime as a styled <b>PDF Report</b> or an <b>Anki CSV Deck</b>.</blockquote>\n\n<blockquote expandable>⏱️ <b>5. Recommended 15-Minute Daily C2 Routine</b>\n1️⃣ <b>Morning (3 mins):</b> Clear your due cards in <code>🧠 Smart SRS Review</code> & generate a quick episode in <code>🎙️ Podcast Studio</code>.\n2️⃣ <b>Midday (7 mins):</b> Drop 2–3 voice notes in <code>🗣️ NYC Banter</code> or <code>🎭 Storytelling Gym</code>, tap <code>🪞 Acoustic Mirror</code> to compare your rhythm, and tap <code>⭐ Save</code> on new chunks.\n3️⃣ <b>Evening (5 mins):</b> Complete one <code>🔥 Forced Output Challenge</code> in <code>🎯 Active & Audio Drills</code> to lock active fluency.</blockquote>"
+
+
 def build_welcome_banner(user: Dict[str, Any]) -> str:
     stats = db.get_user_stats(user["user_id"])
     mode_names = {
@@ -1349,6 +1355,18 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
 
 
 if bot:
+    @bot.message_handler(commands=["guide", "help"])
+    def cmd_guide(message):
+        uid = message.from_user.id
+        if not is_authorized(uid, message.from_user.username or "", message.from_user.first_name or ""):
+            return
+        user = db.get_user(uid)
+        bot.send_message(
+            message.chat.id,
+            build_user_guide_html(),
+            reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
+        )
+
     @bot.message_handler(commands=["start", "menu", "lounge"])
     def cmd_start(message):
         uid = message.from_user.id
@@ -1407,6 +1425,15 @@ if bot:
 
         try:
             # --- 1. Menu Navigation ---
+            if data == "menu:guide":
+                bot.edit_message_text(
+                    build_user_guide_html(),
+                    call.message.chat.id, call.message.message_id,
+                    reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
+                )
+                bot.answer_callback_query(call.id, "📖 Master Guide Opened")
+                return
+
             if data == "menu:home":
                 bot.edit_message_text(
                     build_welcome_banner(user),
@@ -2059,6 +2086,7 @@ def sync_bot_profile_metadata():
         )
         bot.set_my_commands([
             telebot.types.BotCommand("start", "🗽 Enter Musa's NYC Lounge & Main Menu"),
+            telebot.types.BotCommand("guide", "📖 Complete User Guide & Daily Routine"),
             telebot.types.BotCommand("lounge", "🎛️ Open Interactive Modes & Studio"),
             telebot.types.BotCommand("menu", "🏠 Show Quick Dashboard")
         ])
