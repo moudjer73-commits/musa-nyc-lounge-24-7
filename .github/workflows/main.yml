@@ -1,6 +1,8 @@
 name: Musa NYC Lounge 24-7 Relay
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
   schedule:
     - cron: '15 */5 * * *'
@@ -48,4 +50,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh workflow run "Musa NYC Lounge 24-7 Relay" --repo ${{ github.repository }} || true
+          gh workflow run main.yml --repo ${{ github.repository }} || true
