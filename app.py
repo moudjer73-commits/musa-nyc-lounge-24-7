@@ -374,16 +374,43 @@ if bot:
                         static_prompts[new_mode],
                         reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
                     )
-                else:
-                    # Dynamically generate a fresh level-matched scenario/prompt right away!
-                    wait_msg = bot.send_message(
+                                else:
+                    studio_banners = {
+                        "spontaneous_chat": (
+                            f"🗣️ <b>NYC Spontaneous Banter Activated (Level {user['level']})!</b>
+"
+                            "Send a voice note or text message on anything—or tap <code>🎲 New AI Prompt / Scenario</code> below to spark a fresh topic!"
+                        ),
+                        "storytelling_gym": (
+                            f"🎭 <b>Storytelling & Wit Gym Activated (Level {user['level']})!</b>
+"
+                            "Narrate a real or made-up story (voice or text) to practice Historical Present & punchlines—or tap <code>🎲 New AI Prompt / Scenario</code> for a story hook!"
+                        ),
+                        "register_lab": (
+                            f"🎛️ <b>Register Shifter Lab Activated (Level {user['level']})!</b>
+"
+                            "Send any thought or sentence to transform it across <b>[🎙️ Articulate]</b>, <b>[☕ Casual]</b>, and <b>[🎭 Witty]</b>—or tap <code>🎲 New AI Prompt</code>!"
+                        ),
+                        "subtext_decoder": (
+                            f"🕵️‍♂️ <b>Subtext & Irony Decoder Activated (Level {user['level']})!</b>
+"
+                            "Send any phrase or social moment to decode its unspoken American subtext—or tap <code>🎲 New AI Prompt</code> for a subtext riddle!"
+                        ),
+                        "situation_gambit": (
+                            f"⚡ <b>Situation-to-Gambit Translator Activated (Level {user['level']})!</b>
+"
+                            "Describe any social or workplace situation (in English or Arabic) to get the exact native American gambits!"
+                        ),
+                        "podcast_guest": (
+                            f"🎙️ <b>Live Podcast ('You Are the Guest') Activated (Level {user['level']})!</b>
+"
+                            "Tap <code>🎲 New AI Prompt / Scenario</code> for the host's opening question, or send a voice note to jump right in!"
+                        )
+                    }
+                    safe_edit_text(
                         call.message.chat.id,
-                        f"🗽 <b>Entering Studio & generating a live Level-<code>{user['level']}</code> opening prompt...</b>"
-                    )
-                    spark_html = ai_engine.generate_studio_spark(user, mode=new_mode)
-                    safe_edit_text_wrapper(
-                        spark_html,
-                        call.message.chat.id, wait_msg.message_id,
+                        call.message.message_id,
+                        studio_banners.get(new_mode, f"✅ Studio `{new_mode}` ready!"),
                         reply_markup=LoungeKeyboards.studio_prompt_bar(new_mode)
                     )
 

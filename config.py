@@ -49,9 +49,11 @@ PERIODIC_BACKUP_SECONDS: int = 7200  # Every 2 hours
 
 # Gemini Model Fallback Chain (100% Gemini, zero Groq)
 GEMINI_MODELS_CHAIN: List[str] = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.5-pro"
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite"
 ]
 
 # Edge-TTS US Neural Voices

@@ -1,3 +1,4 @@
+import time
 # -*- coding: utf-8 -*-
 """
 ai_engine.py — 100% Generative Gemini 2.5 Native Audio & Linguistic Brain
@@ -137,7 +138,34 @@ class NYCLoungeAI:
             raise RuntimeError("GEMINI_API_KEY is not configured.")
         key = self.keys_pool[self._key_idx % len(self.keys_pool)]
         self._key_idx = (self._key_idx + 1) % len(self.keys_pool)
-        return genai.Client(api_key=key)
+        return genai.Client(api_key=key, http_options={"timeout": 25000})
+
+    def _get_active_models(self, client: genai.Client) -> List[str]:
+        if not hasattr(self, "_dead_models_until"):
+            self._dead_models_until: Dict[str, float] = {}
+        if not hasattr(self, "_discovered_models"):
+            self._discovered_models: List[str] = list(GEMINI_MODELS_CHAIN)
+
+        now = time.time()
+        avail = [m for m in self._discovered_models if self._dead_models_until.get(m, 0) < now]
+        if avail:
+            return avail
+
+        found = []
+        try:
+            for m in client.models.list():
+                sn = (getattr(m, "name", "") or "").replace("models/", "")
+                low = sn.lower()
+                bad_w = ("image", "imagen", "veo", "embedding", "aqa", "tts", "audio", "learnlm", "robotics", "computer-use", "gemma")
+                if "gemini" in low and not any(b in low for b in bad_w):
+                    found.append(sn)
+        except Exception:
+            pass
+        if found:
+            # Prioritize flash models first
+            found.sort(key=lambda x: (0 if "3-flash" in x else (1 if "flash" in x else 2)))
+            self._discovered_models = found[:6]
+        return self._discovered_models
 
     def _call_structured(
         self,
@@ -146,20 +174,29 @@ class NYCLoungeAI:
         system_instruction: str,
         temperature: float = 0.72
     ) -> Any:
+        import time
         last_err = None
-        for _ in range(max(1, len(self.keys_pool))):
+        for _ in range(max(1, min(2, len(self.keys_pool)))):
             client = self._get_client()
-            for model_name in GEMINI_MODELS_CHAIN:
+            models_to_try = self._get_active_models(client)
+            for model_name in models_to_try:
                 try:
+                    cfg_kwargs: Dict[str, Any] = {
+                        "system_instruction": system_instruction,
+                        "temperature": temperature,
+                        "response_mime_type": "application/json",
+                        "response_schema": schema_cls
+                    }
+                    if "flash" in model_name.lower() and "thinking" not in model_name.lower():
+                        try:
+                            cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                        except Exception:
+                            pass
+
                     resp = client.models.generate_content(
                         model=model_name,
                         contents=contents,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_instruction,
-                            temperature=temperature,
-                            response_mime_type="application/json",
-                            response_schema=schema_cls
-                        )
+                        config=types.GenerateContentConfig(**cfg_kwargs)
                     )
                     if getattr(resp, "parsed", None) is not None:
                         return resp.parsed
@@ -167,7 +204,10 @@ class NYCLoungeAI:
                         return schema_cls.model_validate_json(resp.text)
                 except Exception as e:
                     last_err = e
-                    logger.warning(f"Model {model_name} attempt failed: {e}")
+                    err_str = str(e)
+                    if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                        self._dead_models_until[model_name] = time.time() + 86400
+                    logger.warning(f"Model {model_name} attempt failed: {err_str[:120]}")
                     continue
         raise RuntimeError(f"AI Engine unavailable after fallback attempts: {last_err}")
 
