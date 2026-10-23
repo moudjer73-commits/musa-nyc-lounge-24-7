@@ -180,7 +180,7 @@ GUIDE_CHAPTERS: Dict[str, str] = {
     "ch4_miner_drills": (
         "🎯 <b>Chapter 4: FTS5 Corpus Lookup, Text Miner & Generative AI Drills</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. ⚡ Instant SQLite FTS5 Collocation Lookup (<5ms):</b>\n"
+        "<b>1. ⚡ Instant SQLite FTS5 Collocation Lookup (under 5ms):</b>\n"
         "Open <code>🔬 Text Miner & Corpus</code> ➔ <code>Instant SQLite Lookup</code> and type 1–3 words. Searches both the FTS5 Corpus and your personal Vault in milliseconds.\n\n"
         "<b>2. 🔬 Native Text & Subtext Miner:</b>\n"
         "Paste any paragraph from a book, article, movie script, or email. The bot extracts the 3 best native chunks as full 3-Part Frames with atomic <code>⭐ Save</code> buttons.\n\n"

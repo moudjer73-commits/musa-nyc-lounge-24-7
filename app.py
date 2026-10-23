@@ -47,6 +47,30 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True, num_threads=4
 # =====================================================================
 # 1. UI Formatters & Welcome Banner
 # =====================================================================
+
+def sanitize_ai_html(raw_text: str) -> str:
+    """Escapes stray < or > from AI output while preserving valid <i>, <b>, and <code> tags."""
+    if not raw_text:
+        return ""
+    placeholders = {
+        "<i>": "___OPEN_I___", "</i>": "___CLOSE_I___",
+        "<b>": "___OPEN_B___", "</b>": "___CLOSE_B___",
+        "<code>": "___OPEN_C___", "</code>": "___CLOSE_C___"
+    }
+    t = raw_text
+    for tag, ph in placeholders.items():
+        t = t.replace(tag, ph)
+    t = html.escape(t)
+    for tag, ph in placeholders.items():
+        t = t.replace(ph, tag)
+    # Close unclosed <i> tag if AI forgot closing tag
+    if t.count("<i>") > t.count("</i>"):
+        t += "</i>" * (t.count("<i>") - t.count("</i>"))
+    if t.count("<b>") > t.count("</b>"):
+        t += "</b>" * (t.count("<b>") - t.count("</b>"))
+    return t
+
+
 def is_authorized(user_id: int, username: str = "", full_name: str = "") -> bool:
     u = db.get_user(user_id, username, full_name)
     if user_id == ADMIN_ID or ADMIN_ID == 0:
@@ -89,7 +113,7 @@ def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False, ste
     if is_voice and res.transcription:
         top_section += f"🎙️ <i>\"{html.escape(res.transcription)}\"</i>\n\n"
 
-    top_section += f"🗽 {res.lounge_reply}\n\n"
+    top_section += f"🗽 {sanitize_ai_html(res.lounge_reply)}\n\n"
 
     xray_lines = [
         "🔬 <b>NYC Linguistic & Acoustic X-Ray (Tap to Expand)</b>",
@@ -236,7 +260,7 @@ if bot:
             elif data == "menu:miner_lookup":
                 bot.edit_message_text(
                     "🔬 <b>Native Text Miner & Instant FTS5 Collocation Corpus</b>\n\n"
-                    "• <b>Instant FTS5 Lookup (<5ms):</b> Send 1–3 words to query the SQLite FTS5 Corpus & your Vault.\n"
+                    "• <b>Instant FTS5 Lookup (under 5ms):</b> Send 1–3 words to query the SQLite FTS5 Corpus & your Vault.\n"
                     "• <b>Native Text Miner:</b> Paste any article, dialogue, or quote to extract 3-Part Lexical Frames and decode its pragmatic subtext:",
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.miner_lookup_menu()
@@ -317,7 +341,7 @@ if bot:
                 # Modes that need direct instructions vs generative studio sparks
                 if new_mode in ("fast_lookup", "chunk_miner", "podcast_custom_topic", "admin_add_user", "admin_del_user"):
                     static_prompts = {
-                        "fast_lookup": "⚡ <b>Instant SQLite FTS5 Collocation Lookup Activated!</b>\nSend 1 to 3 words now for an instant (<5ms) search across the FTS5 Corpus and your Vault.",
+                        "fast_lookup": "⚡ <b>Instant SQLite FTS5 Collocation Lookup Activated!</b>\nSend 1 to 3 words now for an instant (under 5ms) search across the FTS5 Corpus and your Vault.",
                         "chunk_miner": "🔬 <b>Native Text & Subtext Miner Activated!</b>\nPaste any English paragraph, dialogue, or article to extract 3-Part Lexical Frames and unpack its subtext.",
                         "podcast_custom_topic": "✍️ <b>Custom Podcast Producer:</b>\nType any topic, dilemma, or scenario you want <b>Andrew & Ava</b> to debate on-air while weaving in your Vault chunks:",
                         "admin_add_user": "➕ Send the numeric <b>Telegram ID</b> of the friend you want to whitelist:",
