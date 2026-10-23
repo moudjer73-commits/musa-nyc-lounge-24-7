@@ -376,7 +376,7 @@ class LoungeDatabase:
                 (user_id, chunk_str)
             ).fetchone()
             if exists:
-                return f"{chunk_str} (موجود مسبقاً)"
+                return f"{chunk_str} (Already in Vault)"
 
             conn.execute("""
                 INSERT INTO lexical_vault (
@@ -614,7 +614,7 @@ class NYCLoungeAI:
     def _call_structured(self, prompt_parts: list, schema_cls, sys_instruction: str):
         """يستدعي النموذج الأساسي مع التبديل التلقائي للنموذج الاحتياطي عند الحاجة"""
         if not self.client:
-            raise RuntimeError("GEMINI_API_KEY غير مضبوط في متغيرات البيئة.")
+            raise RuntimeError("GEMINI_API_KEY is not configured.")
 
         for model_name in (PRIMARY_MODEL, FALLBACK_MODEL):
             try:
@@ -632,7 +632,7 @@ class NYCLoungeAI:
                     return schema_cls.model_validate_json(resp.text)
             except Exception as e:
                 logger.warning(f"Model {model_name} structured call warning: {e}")
-        raise RuntimeError("تعذر الحصول على استجابة منظمة من Gemini API.")
+        raise RuntimeError("Failed to get structured response from Gemini API.")
 
     def _call_free_text(self, prompt_parts: list, sys_instruction: str) -> str:
         if not self.client:
@@ -651,7 +651,7 @@ class NYCLoungeAI:
                     return resp.text
             except Exception as e:
                 logger.warning(f"Model {model_name} text call warning: {e}")
-        return "⚠️ حدث خطأ مؤقت في الاتصال بمحرك الذكاء الاصطناعي."
+        return "⚠️ Temporary connection issue with the AI engine."
 
     def process_lounge_turn(
         self,
@@ -834,7 +834,7 @@ Return ONLY the clean English sentence, nothing else (10 to 16 words).
 """
             clean_sent = self._call_free_text([prompt], NYC_LOUNGE_SYSTEM_CORE).strip().strip('"')
             return {
-                "text": "👂 <b>Micro-Dictation (Bottom-Up Listening Decoding)</b>\n\nاستمع جيداً للمقطع الصوتي المرفق بالسرعة الأمريكية الطبيعية، واكتب الجملة الكاملة التي سمعتها ليكشف لك البوت الاختزالات الصوتية الخفية فيها:",
+                "text": "👂 <b>Micro-Dictation (Bottom-Up Listening Decoding)</b>\n\nListen closely to the natural-speed US audio clip below, then type out the exact full sentence you heard to decode its connected speech reductions:",
                 "tts_target": clean_sent
             }
 
@@ -1089,25 +1089,23 @@ class LoungeMediaEngine:
 
 
 # =====================================================================
-# 7. منسق الرسائل التفاعلية والاقتباس القابل للطي (Expandable Blockquote UI)
+# 7. Interactive Formatter & Expandable Blockquote UI (100% English)
 # =====================================================================
 def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False) -> str:
     """
-    يفصل انسيابية الحوار العفوي في الأعلى عن المجهر اللغوي والصوتي المطوي في الأسفل
-    باستخدام <blockquote expandable> الخاص بتيليجرام.
+    Keeps spontaneous NYC conversation flowing cleanly at the top,
+    while tucking the deep linguistic & acoustic X-Ray inside a collapsible blockquote.
     """
     top_section = ""
     if is_voice and res.transcription:
         top_section += f"🎙️ <i>\"{html.escape(res.transcription)}\"</i>\n\n"
 
-    # الرد الطبيعي العفوي في الأعلى
     top_section += f"🗽 {res.lounge_reply}\n\n"
 
-    # بناء القسم المطوي (المجهر اللغوي والصوتي + محول السجلات + الإطارات الثلاثية المرقمة للحفظ الذري)
     xray_lines = [
-        "🔬 <b>NYC Linguistic & Acoustic X-Ray (اضغط للفتح)</b>",
+        "🔬 <b>NYC Linguistic & Acoustic X-Ray (Tap to Expand)</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        "🎭 <b>Register Shifter (كيف يقولها الأمريكي بـ 3 نبرات):</b>",
+        "🎭 <b>Register Shifter (3 Native American Vibes):</b>",
         f"• <b>[🎙️ Articulate]:</b> <code>{html.escape(res.rewrite_articulate)}</code>",
         f"• <b>[☕ Casual]:</b> <code>{html.escape(res.rewrite_casual)}</code>",
         f"• <b>[🎭 Witty]:</b> <code>{html.escape(res.rewrite_witty)}</code>",
@@ -1124,7 +1122,7 @@ def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False) -> 
             )
 
     if res.lexical_upgrades:
-        xray_lines.append("\n💎 <b>3-Part Lexical Frames (اضغط الزر المرقم بالأسفل للحفظ الذري):</b>")
+        xray_lines.append("\n💎 <b>3-Part Lexical Frames (Tap numbered buttons below to save):</b>")
         for idx, up in enumerate(res.lexical_upgrades[:3], start=1):
             xray_lines.append(
                 f"\n<b>({idx}) {html.escape(up.chunk)}</b> {html.escape(up.register_tag)}\n"
@@ -1137,8 +1135,9 @@ def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False) -> 
     expandable_body = "\n".join(xray_lines)
     return f"{top_section}<blockquote expandable>{expandable_body}</blockquote>"
 
+
 # =====================================================================
-# 8. مصنع لوحات الأزرار التفاعلية (Inline Keyboards Factory)
+# 8. Inline Keyboards Factory (100% English UI)
 # =====================================================================
 class LoungeKeyboards:
     @staticmethod
@@ -1151,57 +1150,56 @@ class LoungeKeyboards:
             return f"✅ {label}" if mode == target else label
 
         kb.add(
-            InlineKeyboardButton(_m("spontaneous_chat", "🗣️ دردشة نيويورك العفوية"), callback_data="mode:spontaneous_chat"),
-            InlineKeyboardButton(_m("storytelling_gym", "🎭 نادي السرد والمفارقات"), callback_data="mode:storytelling_gym")
+            InlineKeyboardButton(_m("spontaneous_chat", "🗣️ NYC Banter"), callback_data="mode:spontaneous_chat"),
+            InlineKeyboardButton(_m("storytelling_gym", "🎭 Storytelling Gym"), callback_data="mode:storytelling_gym")
         )
         kb.add(
-            InlineKeyboardButton(_m("register_lab", "🎛️ مختبر السجلات اللغوية"), callback_data="mode:register_lab"),
-            InlineKeyboardButton(_m("subtext_decoder", "🕵️‍♂️ كاشف المعنى المبطن"), callback_data="mode:subtext_decoder")
+            InlineKeyboardButton(_m("register_lab", "🎛️ Register Lab"), callback_data="mode:register_lab"),
+            InlineKeyboardButton(_m("subtext_decoder", "🕵️‍♂️ Subtext Decoder"), callback_data="mode:subtext_decoder")
         )
         kb.add(
-            InlineKeyboardButton(_m("situation_gambit", "⚡ مُسعف المواقف اللحظية"), callback_data="mode:situation_gambit"),
-            InlineKeyboardButton("🎙️ استوديو البودكاست", callback_data="menu:podcast")
+            InlineKeyboardButton(_m("situation_gambit", "⚡ Situation Gambits"), callback_data="mode:situation_gambit"),
+            InlineKeyboardButton("🎙️ Podcast Studio", callback_data="menu:podcast")
         )
         kb.add(
-            InlineKeyboardButton("🔬 مُشرّح النصوص والبحث", callback_data="menu:miner_lookup"),
-            InlineKeyboardButton("🎯 التدريب النشط والصوتيات", callback_data="menu:drills")
+            InlineKeyboardButton("🔬 Text Miner & Corpus", callback_data="menu:miner_lookup"),
+            InlineKeyboardButton("🎯 Active & Audio Drills", callback_data="menu:drills")
         )
         kb.add(
-            InlineKeyboardButton("🧠 المراجعة الذكية (SRS)", callback_data="srs:next"),
-            InlineKeyboardButton("📓 مفكرتي والتصدير", callback_data="menu:vault")
+            InlineKeyboardButton("🧠 Smart SRS Review", callback_data="srs:next"),
+            InlineKeyboardButton("📓 My Vault & Export", callback_data="menu:vault")
         )
         kb.add(
-            InlineKeyboardButton(f"🎚️ النبرة: {reg.capitalize()}", callback_data="action:cycle_register"),
-            InlineKeyboardButton("⚙️ الإعدادات وإحصائياتي", callback_data="menu:settings")
+            InlineKeyboardButton(f"🎚️ Vibe: {reg.capitalize()}", callback_data="action:cycle_register"),
+            InlineKeyboardButton("⚙️ Settings & Stats", callback_data="menu:settings")
         )
         kb.add(
-            InlineKeyboardButton("🔄 تصفير ذاكرة الحوار", callback_data="action:clear_chat")
+            InlineKeyboardButton("🔄 Reset Session Memory", callback_data="action:clear_chat")
         )
         if is_admin:
-            kb.add(InlineKeyboardButton("🛡️ لوحة المشرف والنسخ الاحتياطي", callback_data="menu:admin"))
+            kb.add(InlineKeyboardButton("🛡️ Founder Admin & Backup", callback_data="menu:admin"))
         return kb
 
     @staticmethod
     def turn_action_bar(token_key: str, num_upgrades: int = 3, has_user_voice: bool = False) -> InlineKeyboardMarkup:
-        """شريط الأزرار الذرية أسفل كل رد من البوت (نطق/مرآة صوتية + حفظ ذري مرقم + القائمة)"""
         kb = InlineKeyboardMarkup(row_width=3)
         audio_btns = [
-            InlineKeyboardButton("🔊 نطق أمريكي", callback_data=f"tts:{token_key}")
+            InlineKeyboardButton("🔊 US Native Audio", callback_data=f"tts:{token_key}")
         ]
         if has_user_voice:
-            audio_btns.append(InlineKeyboardButton("🪞 المرآة الصوتية", callback_data=f"mirror:{token_key}"))
+            audio_btns.append(InlineKeyboardButton("🪞 Acoustic Mirror", callback_data=f"mirror:{token_key}"))
         kb.row(*audio_btns)
 
         save_btns = [
-            InlineKeyboardButton(f"⭐ حفظ ({i})", callback_data=f"save:{token_key}:{i}")
+            InlineKeyboardButton(f"⭐ Save ({i})", callback_data=f"save:{token_key}:{i}")
             for i in range(1, min(num_upgrades, 3) + 1)
         ]
         if save_btns:
             kb.row(*save_btns)
 
         kb.row(
-            InlineKeyboardButton("🎚️ تبديل النبرة", callback_data="action:cycle_register"),
-            InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="menu:home")
+            InlineKeyboardButton("🎚️ Shift Vibe", callback_data="action:cycle_register"),
+            InlineKeyboardButton("🏠 Lounge Menu", callback_data="menu:home")
         )
         return kb
 
@@ -1209,10 +1207,10 @@ class LoungeKeyboards:
     def podcast_menu() -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
-            InlineKeyboardButton("🎧 توليد حلقة بودكاست من مفكرتي وأخطائي", callback_data="pod:generate_auto"),
-            InlineKeyboardButton("✍️ توليد حلقة حول موضوع أكتبه الآن", callback_data="mode:podcast_custom_topic"),
-            InlineKeyboardButton("🎙️ وضع «أنت الضيف» (حوار إذاعي مباشر)", callback_data="mode:podcast_guest"),
-            InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="menu:home")
+            InlineKeyboardButton("🎧 Generate Episode from My Vault & Weaknesses", callback_data="pod:generate_auto"),
+            InlineKeyboardButton("✍️ Generate Episode on a Custom Topic", callback_data="mode:podcast_custom_topic"),
+            InlineKeyboardButton("🎙️ 'You Are the Guest' (Live Show Banter)", callback_data="mode:podcast_guest"),
+            InlineKeyboardButton("🔙 Back to Lounge Menu", callback_data="menu:home")
         )
         return kb
 
@@ -1220,9 +1218,9 @@ class LoungeKeyboards:
     def miner_lookup_menu() -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
-            InlineKeyboardButton("⚡ البحث الفوري في قاعدة المتلازمات (SQLite)", callback_data="mode:fast_lookup"),
-            InlineKeyboardButton("🔬 مُشرّح النصوص الأصلية (Chunk & Subtext Miner)", callback_data="mode:chunk_miner"),
-            InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="menu:home")
+            InlineKeyboardButton("⚡ Instant SQLite Collocation Lookup", callback_data="mode:fast_lookup"),
+            InlineKeyboardButton("🔬 Native Text & Subtext Miner", callback_data="mode:chunk_miner"),
+            InlineKeyboardButton("🔙 Back to Lounge Menu", callback_data="menu:home")
         )
         return kb
 
@@ -1230,12 +1228,12 @@ class LoungeKeyboards:
     def drills_menu() -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
-            InlineKeyboardButton("🔥 تحدي التوظيف الإجباري (Forced Output)", callback_data="drill:forced_output"),
-            InlineKeyboardButton("🎙️ تدريب المحاكاة الصوتية (US Shadowing)", callback_data="drill:shadowing"),
-            InlineKeyboardButton("👂 فك شفرة السمع السريع (Micro-Dictation)", callback_data="drill:micro_dictation"),
-            InlineKeyboardButton("🩺 علاج نقاط ضعفي المتكررة", callback_data="drill:weakness_list"),
-            InlineKeyboardButton("🧭 اختبار تحديد المستوى التكيّفي", callback_data="drill:diagnostic_test"),
-            InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="menu:home")
+            InlineKeyboardButton("🔥 Forced Output Challenge (3 Chunks)", callback_data="drill:forced_output"),
+            InlineKeyboardButton("🎙️ US Connected Speech Shadowing", callback_data="drill:shadowing"),
+            InlineKeyboardButton("👂 Fast Micro-Dictation Decoder", callback_data="drill:micro_dictation"),
+            InlineKeyboardButton("🩺 My Recurring Weakness Profile", callback_data="drill:weakness_list"),
+            InlineKeyboardButton("🧭 Adaptive Level Diagnostic Test", callback_data="drill:diagnostic_test"),
+            InlineKeyboardButton("🔙 Back to Lounge Menu", callback_data="menu:home")
         )
         return kb
 
@@ -1243,23 +1241,23 @@ class LoungeKeyboards:
     def srs_reveal_kb(card_id: int) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup()
         kb.row(
-            InlineKeyboardButton("👁️ إظهار الإجابة والإطار الثلاثي", callback_data=f"srs:reveal:{card_id}"),
-            InlineKeyboardButton("🔊 استماع", callback_data=f"srs:tts:{card_id}")
+            InlineKeyboardButton("👁️ Reveal Answer & 3-Part Frame", callback_data=f"srs:reveal:{card_id}"),
+            InlineKeyboardButton("🔊 Listen", callback_data=f"srs:tts:{card_id}")
         )
-        kb.row(InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="menu:home"))
+        kb.row(InlineKeyboardButton("🏠 Lounge Menu", callback_data="menu:home"))
         return kb
 
     @staticmethod
     def srs_grade_kb(card_id: int) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
         kb.row(
-            InlineKeyboardButton("🔴 صعب (غداً)", callback_data=f"srs:grade:{card_id}:1"),
-            InlineKeyboardButton("🟡 جيد", callback_data=f"srs:grade:{card_id}:3"),
-            InlineKeyboardButton("🟢 سهل", callback_data=f"srs:grade:{card_id}:5")
+            InlineKeyboardButton("🔴 Hard (1d)", callback_data=f"srs:grade:{card_id}:1"),
+            InlineKeyboardButton("🟡 Good", callback_data=f"srs:grade:{card_id}:3"),
+            InlineKeyboardButton("🟢 Easy", callback_data=f"srs:grade:{card_id}:5")
         )
         kb.row(
-            InlineKeyboardButton("🔊 نطق المثال", callback_data=f"srs:tts:{card_id}"),
-            InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="menu:home")
+            InlineKeyboardButton("🔊 Play Example", callback_data=f"srs:tts:{card_id}"),
+            InlineKeyboardButton("🏠 Lounge Menu", callback_data="menu:home")
         )
         return kb
 
@@ -1267,12 +1265,12 @@ class LoungeKeyboards:
     def vault_menu() -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=2)
         kb.add(
-            InlineKeyboardButton("📄 تصدير تقرير PDF", callback_data="export:pdf"),
-            InlineKeyboardButton("🗂️ تصدير بطاقات Anki CSV", callback_data="export:anki")
+            InlineKeyboardButton("📄 Export PDF Report", callback_data="export:pdf"),
+            InlineKeyboardButton("🗂️ Export Anki CSV Deck", callback_data="export:anki")
         )
         kb.add(
-            InlineKeyboardButton("🧠 بدء جلسة مراجعة SRS", callback_data="srs:next"),
-            InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="menu:home")
+            InlineKeyboardButton("🧠 Start SRS Session", callback_data="srs:next"),
+            InlineKeyboardButton("🔙 Lounge Menu", callback_data="menu:home")
         )
         return kb
 
@@ -1286,29 +1284,29 @@ class LoungeKeyboards:
             for lv in levels
         ])
         eng_only = bool(user.get("english_only", 1))
-        eng_label = "🔒 الانغماس الإنجليزي الكامل: مُفعّل" if eng_only else "🔓 شرح عربي مساند: مسموح"
+        eng_label = "🔒 Strict English Immersion: ON" if eng_only else "🔓 Bilingual Hints: ALLOWED"
         kb.row(InlineKeyboardButton(eng_label, callback_data="set:toggle_eng"))
-        kb.row(InlineKeyboardButton("🧭 بدء اختبار تشخيص المستوى", callback_data="drill:diagnostic_test"))
-        kb.row(InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="menu:home"))
+        kb.row(InlineKeyboardButton("🧭 Run Adaptive Diagnostic Test", callback_data="drill:diagnostic_test"))
+        kb.row(InlineKeyboardButton("🔙 Back to Lounge Menu", callback_data="menu:home"))
         return kb
 
     @staticmethod
     def admin_menu() -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=2)
         kb.add(
-            InlineKeyboardButton("💾 نسخ احتياطي فوري وتثبيت", callback_data="admin:backup_now"),
-            InlineKeyboardButton("👥 قائمة الأصدقاء المسموحين", callback_data="admin:list_users")
+            InlineKeyboardButton("💾 Backup & Pin DB Now", callback_data="admin:backup_now"),
+            InlineKeyboardButton("👥 Whitelisted Members", callback_data="admin:list_users")
         )
         kb.add(
-            InlineKeyboardButton("➕ إضافة صديق بالـ ID", callback_data="mode:admin_add_user"),
-            InlineKeyboardButton("➖ إزالة صديق بالـ ID", callback_data="mode:admin_del_user")
+            InlineKeyboardButton("➕ Add Member by ID", callback_data="mode:admin_add_user"),
+            InlineKeyboardButton("➖ Remove Member by ID", callback_data="mode:admin_del_user")
         )
-        kb.add(InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="menu:home"))
+        kb.add(InlineKeyboardButton("🔙 Back to Lounge Menu", callback_data="menu:home"))
         return kb
 
 
 # =====================================================================
-# 9. تهيئة الكائنات الرئيسية ومعالجات التيليجرام (Bot & Handlers)
+# 9. Core Objects & Telegram Handlers (100% English)
 # =====================================================================
 db = LoungeDatabase(DB_PATH)
 ai_engine = NYCLoungeAI(GEMINI_API_KEY, db)
@@ -1325,15 +1323,15 @@ def is_authorized(user_id: int, username: str = "", full_name: str = "") -> bool
 def build_welcome_banner(user: Dict[str, Any]) -> str:
     stats = db.get_user_stats(user["user_id"])
     mode_names = {
-        "spontaneous_chat": "🗣️ دردشة نيويورك العفوية",
-        "storytelling_gym": "🎭 نادي السرد والمفارقات",
-        "register_lab": "🎛️ مختبر السجلات اللغوية",
-        "subtext_decoder": "🕵️‍♂️ كاشف المعنى المبطن والتهكم",
-        "situation_gambit": "⚡ مُسعف المواقف اللحظية",
-        "fast_lookup": "⚡ البحث المعجمي الفوري (SQLite)",
-        "chunk_miner": "🔬 مُشرّح النصوص الأصلية",
-        "podcast_guest": "🎙️ استوديو البودكاست (أنت الضيف)",
-        "podcast_custom_topic": "✍️ تأليف بودكاست مخصص"
+        "spontaneous_chat": "🗣️ NYC Spontaneous Banter",
+        "storytelling_gym": "🎭 Storytelling & Wit Gym",
+        "register_lab": "🎛️ Register Shifter Lab",
+        "subtext_decoder": "🕵️‍♂️ Subtext & Irony Decoder",
+        "situation_gambit": "⚡ Social Situation Gambits",
+        "fast_lookup": "⚡ Instant SQLite Collocation Lookup",
+        "chunk_miner": "🔬 Native Text & Subtext Miner",
+        "podcast_guest": "🎙️ Podcast Studio (You're the Guest)",
+        "podcast_custom_topic": "✍️ Custom Podcast Producer"
     }
     cur_mode = mode_names.get(user.get("current_mode", "spontaneous_chat"), user.get("current_mode"))
     reg_badge = REGISTERS_INFO.get(user.get("preferred_register", "articulate"), "🎙️ Articulate")
@@ -1346,7 +1344,7 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
         f"🎚️ <b>Register Vibe:</b> {reg_badge}\n"
         f"📊 <b>Vault:</b> <code>{stats['total_vault']}</code> chunks | 🧠 <b>Due SRS:</b> <code>{stats['due_srs']}</code> | 🩺 <b>Weaknesses:</b> <code>{stats['active_errors']}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 <i>أرسل رسالة صوتية أو نصية مباشرة للتفاعل، أو اختر أداة من الأزرار بالأسفل:</i>"
+        f"💡 <i>Drop a voice note or text message anytime to jump right in, or pick a studio below:</i>"
     )
 
 
@@ -1361,7 +1359,7 @@ if bot:
             bot.reply_to(
                 message,
                 f"🔒 <b>Musa's NYC Lounge is a Private Club.</b>\n"
-                f"أرسل معرّفك التالي لصديقك (Musa) لتفعيل حسابك:\n<code>{uid}</code>"
+                f"Share your Telegram ID below with Musa to get whitelisted:\n<code>{uid}</code>"
             )
             return
 
@@ -1374,13 +1372,12 @@ if bot:
 
     @bot.message_handler(content_types=["document"])
     def handle_document_restore(message):
-        """يتيح للمشرف استعادة قاعدة البيانات فوراً بمجرد إرسال ملف .db للبوت"""
         uid = message.from_user.id
         if uid != ADMIN_ID:
             return
         doc = message.document
         if doc and doc.file_name and doc.file_name.endswith(".db"):
-            status_msg = bot.reply_to(message, "⏳ <b>جاري استعادة قاعدة البيانات من الملف المرفق...</b>")
+            status_msg = bot.reply_to(message, "⏳ <b>Restoring SQLite database from uploaded file...</b>")
             try:
                 file_info = bot.get_file(doc.file_id)
                 downloaded = bot.download_file(file_info.file_path)
@@ -1388,12 +1385,12 @@ if bot:
                     f.write(downloaded)
                 db.init_schema()
                 bot.edit_message_text(
-                    "✅ <b>تمت استعادة قاعدة البيانات وتحديث الجداول بنجاح!</b>",
+                    "✅ <b>Database successfully restored and schema verified!</b>",
                     message.chat.id, status_msg.message_id
                 )
                 db.backup_to_telegram(bot, caption_note="📌 Manual DB Restore Pin")
             except Exception as e:
-                bot.edit_message_text(f"❌ فشل استعادة الملف: {e}", message.chat.id, status_msg.message_id)
+                bot.edit_message_text(f"❌ Restore failed: {e}", message.chat.id, status_msg.message_id)
 
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callbacks(call):
@@ -1402,14 +1399,14 @@ if bot:
         fname = call.from_user.first_name or "Friend"
 
         if not is_authorized(uid, uname, fname):
-            bot.answer_callback_query(call.id, "🔒 غير مصرح لك باستخدام البوت.", show_alert=True)
+            bot.answer_callback_query(call.id, "🔒 Private Club: Access Denied.", show_alert=True)
             return
 
         user = db.get_user(uid, uname, fname)
         data = call.data or ""
 
         try:
-            # --- 1. التنقل بين القوائم ---
+            # --- 1. Menu Navigation ---
             if data == "menu:home":
                 bot.edit_message_text(
                     build_welcome_banner(user),
@@ -1421,7 +1418,7 @@ if bot:
             elif data == "menu:podcast":
                 bot.edit_message_text(
                     "🎙️ <b>Musa's NYC Lounge — Dual-Host Podcast Studio</b>\n\n"
-                    "هنا يقوم المذيعان الأمريكيان (Andrew & Ava) بنقاش حيوي شيق يدمجان فيه قوالب مفكرتك وأخطاءك السابقة مع التوقف لشرح سياقها الصوتي والبلاغي:",
+                    "Our New York hosts (<b>Andrew & Ava</b>) weave your saved vault chunks and recurring fixes into lively banter, pausing mid-story to unpack pragmatic subtext:",
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.podcast_menu()
                 )
@@ -1429,9 +1426,9 @@ if bot:
 
             elif data == "menu:miner_lookup":
                 bot.edit_message_text(
-                    "🔬 <b>مُشرّح النصوص والبحث المعجمي الفوري</b>\n\n"
-                    "• <b>البحث الفوري:</b> اكتب كلمة واحدة لاستخراج متلازماتها فوراً من قاعدة البيانات.\n"
-                    "• <b>مُشرّح النصوص:</b> أرسل أي فقرة أو حوار إنجليزي يعجبك لاستخراج أثمن القوالب المعجمية والنبرة الخفية منه مع أزرار حفظ ذرية:",
+                    "🔬 <b>Native Text Miner & Instant Collocation Lookup</b>\n\n"
+                    "• <b>Instant Lookup:</b> Send 1–2 words to query the SQLite Collocation Corpus & your Vault.\n"
+                    "• <b>Native Text Miner:</b> Paste any article, dialogue, or quote to extract 3-Part Lexical Frames and decode its pragmatic subtext:",
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.miner_lookup_menu()
                 )
@@ -1439,8 +1436,8 @@ if bot:
 
             elif data == "menu:drills":
                 bot.edit_message_text(
-                    "🎯 <b>نادي التدريب النشط والصوتيات الأمريكية</b>\n\n"
-                    "اختر نوع التحدي الذي تريد خوضه الآن:",
+                    "🎯 <b>Active Output & American Prosody Gym</b>\n\n"
+                    "Pick an active linguistic or acoustic workout below:",
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.drills_menu()
                 )
@@ -1452,12 +1449,12 @@ if bot:
                 preview = "\n".join([
                     f"{i}. <b>{html.escape(v['chunk'])}</b> {html.escape(v['register_tag'])}"
                     for i, v in enumerate(vault_items, 1)
-                ]) if vault_items else "<i>مفكرتك فارغة حالياً. اضغط على أزرار [⭐ حفظ] أسفل الردود لإضافة القوالب!</i>"
+                ]) if vault_items else "<i>Your vault is currently empty. Tap [⭐ Save] under any reply to collect chunks!</i>"
 
                 bot.edit_message_text(
-                    f"📓 <b>مفكرتي الذرية والتصدير (Lexical Frames Vault)</b>\n"
-                    f"إجمالي القوالب المحفوظة: <code>{stats['total_vault']}</code> | المستحق للمراجعة اليوم: <code>{stats['due_srs']}</code>\n\n"
-                    f"<b>أحدث القوالب المضافة:</b>\n{preview}",
+                    f"📓 <b>My Atomic Lexical Vault & Exports</b>\n"
+                    f"Total Saved Chunks: <code>{stats['total_vault']}</code> | Due for SRS Today: <code>{stats['due_srs']}</code>\n\n"
+                    f"<b>Recently Saved Chunks:</b>\n{preview}",
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.vault_menu()
                 )
@@ -1466,12 +1463,12 @@ if bot:
             elif data == "menu:settings":
                 stats = db.get_user_stats(uid)
                 bot.edit_message_text(
-                    f"⚙️ <b>الإعدادات ولوحة القياس (Telemetry)</b>\n\n"
-                    f"• المستوى الحالي: <code>{user['level']}</code>\n"
-                    f"• القوالب المتقنة في المفكرة: <code>{stats['total_vault']}</code>\n"
-                    f"• نقاط الضعف قيد العلاج: <code>{stats['active_errors']}</code> | تم التغلب على: <code>{stats['mastered_errors']}</code>\n"
-                    f"• استهلاك اليوم: <code>{user['daily_count']} / {user['daily_limit']}</code>\n\n"
-                    f"<i>ملاحظة: اختيار المستوى C1 أو C2 يفعّل وضع الانغماس الإنجليزي الكامل تلقائياً:</i>",
+                    f"⚙️ <b>Lounge Settings & Telemetry</b>\n\n"
+                    f"• Current Level: <code>{user['level']}</code>\n"
+                    f"• Saved Lexical Frames: <code>{stats['total_vault']}</code>\n"
+                    f"• Active Weaknesses: <code>{stats['active_errors']}</code> | Mastered Fixes: <code>{stats['mastered_errors']}</code>\n"
+                    f"• Daily Quota Used: <code>{user['daily_count']} / {user['daily_limit']}</code>\n\n"
+                    f"<i>Note: Selecting C1 or C2 automatically locks 100% English Immersion:</i>",
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.settings_menu(user)
                 )
@@ -1479,33 +1476,33 @@ if bot:
 
             elif data == "menu:admin" and uid == ADMIN_ID:
                 bot.edit_message_text(
-                    "🛡️ <b>لوحة تحكم المشرف (Founder Admin Panel)</b>\n\n"
-                    "يمكنك من هنا إدارة قائمة الأصدقاء، أو سحب نسخة احتياطية فورية وتثبيتها، أو إرسال أي ملف <code>.db</code> للمحادثة لاستعادته مباشرة:",
+                    "🛡️ <b>Founder Admin & Relay Control Panel</b>\n\n"
+                    "Manage your private friend whitelist, trigger an immediate pinned DB backup, or upload any <code>.db</code> file directly to chat to restore:",
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.admin_menu()
                 )
                 bot.answer_callback_query(call.id)
 
-            # --- 2. تغيير الأوضاع والنبرة ---
+            # --- 2. Mode Switching & Register Cycling ---
             elif data.startswith("mode:"):
                 new_mode = data.split(":", 1)[1]
                 db.update_user(uid, current_mode=new_mode)
                 user = db.get_user(uid)
 
                 mode_prompts = {
-                    "spontaneous_chat": "🗣️ <b>وضع دردشة نيويورك العفوية مفعّل!</b>\nتحدث أو اكتب بحرية في أي موضوع؛ سيرد عليك البوت بعفوية في الأعلى ويضع المجهر اللغوي والصوتي مطوياً بالأسفل.",
-                    "storytelling_gym": "🎭 <b>نادي السرد القصصي والمفارقات مفعّل!</b>\nاحكِ موقفاً حدث معك (صوتاً أو نصاً)؛ سيعلمك البوت كيف ترويه بالمضارع الدرامي (Historical Present) مع ضبط الإيقاع والـ Punchline.",
-                    "register_lab": "🎛️ <b>مختبر السجلات اللغوية مفعّل!</b>\nأرسل أي جملة أو فكرة، ليحولها البوت فوراً عبر السجلات الثلاثة: [🎙️ Articulate] و [☕ Casual] و [🎭 Witty].",
-                    "subtext_decoder": "🕵️‍♂️ <b>كاشف المعنى المبطن والتهكم مفعّل!</b>\nأرسل أي عبارة سمعتها أو موقفاً تريد الرد عليه بذكاء وسخرية هادئة (Understatement) ليشرح لك البوت ما بين السطور.",
-                    "situation_gambit": "⚡ <b>مُسعف المواقف اللحظية مفعّل!</b>\nصف الموقف الاجتماعي أو الشعور الذي تريد إيصاله (حتى لو بالدارجة أو العربية)، ليعطيك البوت المفاتيح الحوارية الأمريكية (Gambits) الجاهزة لهذا الموقف.",
-                    "fast_lookup": "⚡ <b>البحث المعجمي الفوري مفعّل!</b>\nأرسل الآن كلمة إنجليزية واحدة أو كلمتين للبحث السريع في قاعدة بيانات المتلازمات ومفكرتك.",
-                    "chunk_miner": "🔬 <b>مُشرّح النصوص الأصلية مفعّل!</b>\nأرسل أي فقرة أو نص إنجليزي أعجبك ليستخرج البوت منه أثمن القوالب المعجمية مع أزرار حفظ ذرية.",
-                    "podcast_custom_topic": "✍️ <b>تأليف بودكاست مخصص:</b>\nأرسل الآن عنوان الموضوع أو الفكرة التي تريد من (Andrew & Ava) مناقشتها في الحلقة مع دمج كلمات مفكرتك.",
-                    "podcast_guest": "🎙️ <b>وضع «أنت الضيف» في استوديو البودكاست!</b>\nأرسل رسالة صوتية أو نصية لبدء الحوار الإذاعي المباشر مع المذيع النيويوركي.",
-                    "admin_add_user": "➕ أرسل الآن الـ <b>Telegram ID</b> الخاص بصديقك لإضافته إلى القائمة البيضاء:",
-                    "admin_del_user": "➖ أرسل الآن الـ <b>Telegram ID</b> لإزالته من القائمة البيضاء:"
+                    "spontaneous_chat": "🗣️ <b>NYC Spontaneous Banter Activated!</b>\nSend a voice note or text on anything. I'll reply naturally up top and tuck your full linguistic & acoustic X-Ray inside the expandable box below.",
+                    "storytelling_gym": "🎭 <b>Storytelling & Wit Gym Activated!</b>\nTell me about something funny, frustrating, or weird that happened recently. We'll sharpen your pacing, Historical Present, and punchlines.",
+                    "register_lab": "🎛️ <b>Register Shifter Lab Activated!</b>\nSend any thought or sentence to see how it transforms across [🎙️ Articulate], [☕ Casual], and [🎭 Witty] American registers.",
+                    "subtext_decoder": "🕵️‍♂️ <b>Subtext & Irony Decoder Activated!</b>\nDrop a phrase you heard or a tricky social moment. We'll unpack the unspoken subtext and craft a sharp, understated reply.",
+                    "situation_gambit": "⚡ <b>Social Situation Gambits Activated!</b>\nDescribe the exact social situation, reaction, or vibe you want to convey, and get the exact native American gambits for that moment.",
+                    "fast_lookup": "⚡ <b>Instant SQLite Collocation Lookup Activated!</b>\nSend 1 to 3 words now for an instant search across the collocation corpus and your personal vault.",
+                    "chunk_miner": "🔬 <b>Native Text & Subtext Miner Activated!</b>\nPaste any English paragraph, quote, or transcript to extract high-value lexical chunks and pragmatic subtext.",
+                    "podcast_custom_topic": "✍️ <b>Custom Podcast Producer:</b>\nType the topic or scenario you want <b>Andrew & Ava</b> to Riff on while weaving in your personal vault chunks:",
+                    "podcast_guest": "🎙️ <b>Podcast Studio ('You Are the Guest') Activated!</b>\nSend a voice note or text to jump right into a live on-air NYC podcast interview.",
+                    "admin_add_user": "➕ Send the numeric <b>Telegram ID</b> of the friend you want to whitelist:",
+                    "admin_del_user": "➖ Send the numeric <b>Telegram ID</b> you want to remove from the whitelist:"
                 }
-                bot.answer_callback_query(call.id, "✅ تم تفعيل الوضع!")
+                bot.answer_callback_query(call.id, "✅ Mode Activated!")
                 bot.send_message(
                     call.message.chat.id,
                     mode_prompts.get(new_mode, f"✅ Mode set to: {new_mode}"),
@@ -1518,7 +1515,7 @@ if bot:
                 nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "articulate"
                 db.update_user(uid, preferred_register=nxt)
                 user = db.get_user(uid)
-                bot.answer_callback_query(call.id, f"🎚️ تم ضبط النبرة على: {nxt.upper()}")
+                bot.answer_callback_query(call.id, f"🎚️ Preferred Vibe: {nxt.upper()}")
                 try:
                     bot.edit_message_reply_markup(
                         call.message.chat.id, call.message.message_id,
@@ -1529,24 +1526,24 @@ if bot:
 
             elif data == "action:clear_chat":
                 db.reset_history(uid)
-                bot.answer_callback_query(call.id, "🔄 تم تصفير ذاكرة الجلسة الحالية بنجاح!", show_alert=True)
+                bot.answer_callback_query(call.id, "🔄 Session conversation memory cleared!", show_alert=True)
 
-            # --- 3. الحفظ الذري والنطق الأمريكي والمرآة الصوتية ---
+            # --- 3. Atomic Save, US Native Audio & FFmpeg Acoustic Mirror ---
             elif data.startswith("save:"):
                 _, token_key, idx_str = data.split(":")
                 saved_chunk = db.save_atomic_item_to_vault(uid, token_key, int(idx_str))
                 if saved_chunk:
-                    bot.answer_callback_query(call.id, f"⭐ تم حفظ: {saved_chunk}", show_alert=False)
+                    bot.answer_callback_query(call.id, f"⭐ Saved to Vault: {saved_chunk}", show_alert=False)
                 else:
-                    bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية هذا الزر أو تم حفظه.", show_alert=True)
+                    bot.answer_callback_query(call.id, "⚠️ Item expired or already saved.", show_alert=True)
 
             elif data.startswith("tts:"):
                 token_key = data.split(":", 1)[1]
                 meta = db.get_atomic_meta(token_key)
                 if not meta or not meta.get("audio_clean_text"):
-                    bot.answer_callback_query(call.id, "⚠️ النص الصوتي غير متوفر.", show_alert=True)
+                    bot.answer_callback_query(call.id, "⚠️ Audio text unavailable.", show_alert=True)
                     return
-                bot.answer_callback_query(call.id, "🎧 جاري توليد النطق الأمريكي الطبيعي...")
+                bot.answer_callback_query(call.id, "🎧 Synthesizing US Native Audio...")
                 bot.send_chat_action(call.message.chat.id, "record_voice")
                 ogg_path = LoungeMediaEngine.synthesize_us_speech(meta["audio_clean_text"])
                 if ogg_path:
@@ -1561,9 +1558,9 @@ if bot:
                 token_key = data.split(":", 1)[1]
                 meta = db.get_atomic_meta(token_key)
                 if not meta or not meta.get("user_voice_file_id"):
-                    bot.answer_callback_query(call.id, "⚠️ المرآة الصوتية متاحة للرسائل الصوتية فقط.", show_alert=True)
+                    bot.answer_callback_query(call.id, "⚠️ Acoustic Mirror is only available for voice notes.", show_alert=True)
                     return
-                bot.answer_callback_query(call.id, "🪞 جاري دمج صوتك مع النطق الأمريكي عبر FFmpeg...")
+                bot.answer_callback_query(call.id, "🪞 Building FFmpeg Acoustic Mirror...")
                 bot.send_chat_action(call.message.chat.id, "record_voice")
 
                 user_ogg = os.path.join(TEMP_DIR, f"u_{token_key}.ogg")
@@ -1578,8 +1575,8 @@ if bot:
                             bot.send_voice(
                                 call.message.chat.id, mf,
                                 caption=(
-                                    "🪞 <b>Acoustic Mirror (Back-to-Back):</b>\n"
-                                    "1️⃣ صوتك الأصلي ➔ 🔔 ➔ 2️⃣ النطق الأمريكي الطبيعي ➔ 🔔 ➔ 3️⃣ النطق الأمريكي البطيء (-16%)\n\n"
+                                    "🪞 <b>Acoustic Mirror (Back-to-Back Comparison):</b>\n"
+                                    "1️⃣ Your Original Voice ➔ 🔔 ➔ 2️⃣ Natural US Pace ➔ 🔔 ➔ 3️⃣ Slow-Mo Study Pace (-16%)\n\n"
                                     f"🎯 <code>{html.escape(meta['audio_clean_text'])}</code>"
                                 )
                             )
@@ -1587,14 +1584,14 @@ if bot:
                 finally:
                     LoungeMediaEngine.cleanup_file(user_ogg)
 
-            # --- 4. توليد البودكاست الحواري ---
+            # --- 4. Dual-Host Podcast Studio ---
             elif data == "pod:generate_auto":
-                bot.answer_callback_query(call.id, "🎙️ جاري تأليف وتسجيل حلقة البودكاست...")
+                bot.answer_callback_query(call.id, "🎙️ Writing & recording NYC Lounge Podcast...")
                 wait_msg = bot.send_message(
                     call.message.chat.id,
-                    "🎙️ <b>استوديو البودكاست يعمل الآن...</b>\n"
-                    "1️⃣ جاري كتابة السيناريو الحواري بين <b>Andrew & Ava</b> ودمج قوالب مفكرتك...\n"
-                    "2️⃣ سيتم دمج المقاطع الصوتية عبر <code>FFmpeg</code> وإرسال الحلقة خلال ثوانٍ."
+                    "🎙️ <b>NYC Podcast Studio is On Air...</b>\n"
+                    "1️⃣ Scripting witty banter between <b>Andrew & Ava</b> using your Vault chunks...\n"
+                    "2️⃣ Mixing neural voices via <code>FFmpeg</code> (ready in ~15 seconds)."
                 )
                 bot.send_chat_action(call.message.chat.id, "record_voice")
                 ep = ai_engine.generate_podcast_episode(user)
@@ -1616,7 +1613,7 @@ if bot:
                 full_caption = (
                     f"🎙️ <b>{html.escape(ep.title)}</b>\n"
                     f"🎯 <b>Target Chunks:</b> <code>{html.escape(', '.join(ep.target_chunks_covered))}</code>\n\n"
-                    f"<blockquote expandable>📜 <b>النص الكامل للحلقة والمفاتيح المعجمية (اضغط للفتح):</b>\n\n"
+                    f"<blockquote expandable>📜 <b>Full Episode Transcript & Takeaways (Tap to Expand):</b>\n\n"
                     f"{script_html}\n\n"
                     f"💎 <b>Key Takeaways:</b>\n{takeaways_html}</blockquote>"
                 )
@@ -1642,29 +1639,29 @@ if bot:
                     )
                 bot.delete_message(call.message.chat.id, wait_msg.message_id)
 
-            # --- 5. التدريبات النشطة (Active Drills) ---
+            # --- 5. Active Drills & Weakness Profile ---
             elif data.startswith("drill:"):
                 drill_type = data.split(":", 1)[1]
                 if drill_type == "weakness_list":
                     weaknesses = db.get_weaknesses(uid, limit=6)
                     if not weaknesses:
-                        bot.answer_callback_query(call.id, "🎉 سجل نقاط ضعفك نظيف تماماً!", show_alert=True)
+                        bot.answer_callback_query(call.id, "🎉 Your error profile is completely clean!", show_alert=True)
                         return
-                    lines = ["🩺 <b>سجل نقاط ضعفك المتكررة (Smart Error Profile):</b>\n"]
+                    lines = ["🩺 <b>Your Recurring Weakness Profile:</b>\n"]
                     kb = InlineKeyboardMarkup(row_width=2)
                     for w in weaknesses:
                         lines.append(
                             f"• ❌ <i>{html.escape(w['user_said'])}</i> ➔ ✅ <b>{html.escape(w['native_fix'])}</b> "
-                            f"(تكرر {w['frequency']}x)\n  └ {html.escape(w['why_note'])}"
+                            f"(seen {w['frequency']}x)\n  └ {html.escape(w['why_note'])}"
                         )
-                        kb.add(InlineKeyboardButton(f"✅ أتقنت: {w['native_fix'][:18]}", callback_data=f"master:{w['id']}"))
-                    kb.add(InlineKeyboardButton("🔥 تحدي توظيف لعلاجها الآن", callback_data="drill:forced_output"))
-                    kb.add(InlineKeyboardButton("🔙 رجوع", callback_data="menu:drills"))
+                        kb.add(InlineKeyboardButton(f"✅ Mastered: {w['native_fix'][:18]}", callback_data=f"master:{w['id']}"))
+                    kb.add(InlineKeyboardButton("🔥 Drill These in Forced Output", callback_data="drill:forced_output"))
+                    kb.add(InlineKeyboardButton("🔙 Back to Drills", callback_data="menu:drills"))
                     bot.edit_message_text("\n".join(lines), call.message.chat.id, call.message.message_id, reply_markup=kb)
                     bot.answer_callback_query(call.id)
                     return
 
-                bot.answer_callback_query(call.id, "🎯 جاري تجهيز التمرين...")
+                bot.answer_callback_query(call.id, "🎯 Preparing your workout...")
                 mode_map = {
                     "forced_output": "weakness_drill",
                     "shadowing": "shadowing_drill",
@@ -1680,19 +1677,19 @@ if bot:
                     ogg_p = LoungeMediaEngine.synthesize_us_speech(drill_data["tts_target"])
                     if ogg_p:
                         with open(ogg_p, "rb") as vf:
-                            bot.send_voice(call.message.chat.id, vf, caption="🎧 استمع جيداً ثم أرسل إجابتك أو تسجيلك الصوتي:")
+                            bot.send_voice(call.message.chat.id, vf, caption="🎧 Listen closely, then reply with your voice note or text:")
                         LoungeMediaEngine.cleanup_file(ogg_p)
 
             elif data.startswith("master:"):
                 err_id = int(data.split(":", 1)[1])
                 db.mark_weakness_mastered(err_id)
-                bot.answer_callback_query(call.id, "🎉 ممتاز! تمت إزالتها من نقاط الضعف النشطة.")
+                bot.answer_callback_query(call.id, "🎉 Marked as mastered and removed from active weaknesses!")
 
-            # --- 6. نظام التكرار المتباعد الداخلي (In-Bot SRS) ---
+            # --- 6. In-Bot Spaced Repetition (SM-2 SRS) ---
             elif data == "srs:next":
                 card = db.get_due_srs_card(uid)
                 if not card:
-                    bot.answer_callback_query(call.id, "🎉 راجعت كل البطاقات المستحقة لليوم!", show_alert=True)
+                    bot.answer_callback_query(call.id, "🎉 All caught up! No SRS cards due right now.", show_alert=True)
                     return
                 cloze = card.get("cloze_sentence") or card.get("example_sentence", "").replace(card["chunk"], "______")
                 msg_text = (
@@ -1710,10 +1707,10 @@ if bot:
                 card_id = int(data.split(":")[2])
                 card = db.get_srs_card_by_id(card_id)
                 if not card:
-                    bot.answer_callback_query(call.id, "⚠️ البطاقة غير موجودة.")
+                    bot.answer_callback_query(call.id, "⚠️ Card not found.")
                     return
                 ans_text = (
-                    f"🧠 <b>SRS Answer Revealed:</b>\n"
+                    f"🧠 <b>SRS Answer & 3-Part Frame:</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"💎 <b>{html.escape(card['chunk'])}</b> {html.escape(card['register_tag'])}\n"
                     f"• <b>Meaning:</b> {html.escape(card['explanation'])}\n"
@@ -1721,7 +1718,7 @@ if bot:
                     f"• 🔗 <b>Pattern:</b> {html.escape(card['co_text_pattern'])}\n"
                     f"• 💬 <b>Follow-up:</b> <i>\"{html.escape(card['typical_followup'])}\"</i>\n\n"
                     f"✅ <b>Full Example:</b>\n<i>\"{html.escape(card['example_sentence'])}\"</i>\n\n"
-                    f"👇 <b>كيف كان تذكرك لهذا القالب؟</b>"
+                    f"👇 <b>How effortless was your recall?</b>"
                 )
                 bot.edit_message_text(ans_text, call.message.chat.id, call.message.message_id, reply_markup=LoungeKeyboards.srs_grade_kb(card_id))
                 bot.answer_callback_query(call.id)
@@ -1729,8 +1726,7 @@ if bot:
             elif data.startswith("srs:grade:"):
                 _, _, card_id_str, grade_str = data.split(":")
                 db.grade_srs_card(int(card_id_str), int(grade_str))
-                bot.answer_callback_query(call.id, "✅ تم تحديث موعد المراجعة القادم!")
-                # عرض البطاقة التالية تلقائياً
+                bot.answer_callback_query(call.id, "✅ Next review interval updated!")
                 nxt_card = db.get_due_srs_card(uid)
                 if nxt_card:
                     cloze = nxt_card.get("cloze_sentence") or nxt_card.get("example_sentence", "").replace(nxt_card["chunk"], "______")
@@ -1744,7 +1740,7 @@ if bot:
                     )
                 else:
                     bot.edit_message_text(
-                        "🎉 <b>أحسنت! أنهيت جميع مراجعاتك المستحقة لليوم.</b>",
+                        "🎉 <b>Awesome job! You've finished all due SRS cards for today.</b>",
                         call.message.chat.id, call.message.message_id,
                         reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
                     )
@@ -1753,51 +1749,51 @@ if bot:
                 card_id = int(data.split(":")[2])
                 card = db.get_srs_card_by_id(card_id)
                 if card:
-                    bot.answer_callback_query(call.id, "🔊 جاري توليد النطق...")
+                    bot.answer_callback_query(call.id, "🔊 Synthesizing US pronunciation...")
                     ogg_p = LoungeMediaEngine.synthesize_us_speech(card.get("example_sentence") or card["chunk"])
                     if ogg_p:
                         with open(ogg_p, "rb") as vf:
                             bot.send_voice(call.message.chat.id, vf, caption=f"🇺🇸 <b>{html.escape(card['chunk'])}</b>")
                         LoungeMediaEngine.cleanup_file(ogg_p)
 
-            # --- 7. تصدير المفكرة (PDF & Anki CSV) ---
+            # --- 7. Vault Exports (PDF & Anki CSV) ---
             elif data == "export:pdf":
                 vault_items = db.get_user_vault(uid, limit=200)
                 if not vault_items:
-                    bot.answer_callback_query(call.id, "⚠️ مفكرتك فارغة حالياً.", show_alert=True)
+                    bot.answer_callback_query(call.id, "⚠️ Your vault is empty.", show_alert=True)
                     return
-                bot.answer_callback_query(call.id, "📄 جاري تصميم تقرير PDF عبر WeasyPrint...")
+                bot.answer_callback_query(call.id, "📄 Rendering PDF via WeasyPrint...")
                 stats = db.get_user_stats(uid)
                 pdf_p = LoungeMediaEngine.export_vault_pdf(user, vault_items, stats)
                 if pdf_p:
                     with open(pdf_p, "rb") as pf:
                         bot.send_document(
                             call.message.chat.id, pf,
-                            caption="📄 <b>تقرير مفكرتك المعجمية (3-Part Lexical Frames PDF)</b>"
+                            caption="📄 <b>Musa's NYC Lounge — 3-Part Lexical Frames Vault (PDF)</b>"
                         )
                     LoungeMediaEngine.cleanup_file(pdf_p)
 
             elif data == "export:anki":
                 vault_items = db.get_user_vault(uid, limit=500)
                 if not vault_items:
-                    bot.answer_callback_query(call.id, "⚠️ مفكرتك فارغة حالياً.", show_alert=True)
+                    bot.answer_callback_query(call.id, "⚠️ Your vault is empty.", show_alert=True)
                     return
-                bot.answer_callback_query(call.id, "🗂️ جاري تجهيز ملف Anki CSV...")
+                bot.answer_callback_query(call.id, "🗂️ Generating Anki CSV deck...")
                 csv_p = LoungeMediaEngine.export_vault_anki_csv(vault_items)
                 if csv_p:
                     with open(csv_p, "rb") as cf:
                         bot.send_document(
                             call.message.chat.id, cf,
-                            caption="🗂️ <b>ملف بطاقات Anki جاهز للاستيراد (Delimiter: Semicolon ;)</b>"
+                            caption="🗂️ <b>Anki Flashcard Deck Ready for Import (Delimiter: Semicolon ;)</b>"
                         )
                     LoungeMediaEngine.cleanup_file(csv_p)
 
-            # --- 8. الإعدادات ولوحة المشرف ---
+            # --- 8. Settings & Founder Admin Actions ---
             elif data.startswith("set:level:"):
                 new_lv = data.split(":")[2]
                 db.update_user(uid, level=new_lv)
                 user = db.get_user(uid)
-                bot.answer_callback_query(call.id, f"✅ تم تحديث المستوى إلى {new_lv}")
+                bot.answer_callback_query(call.id, f"✅ Level updated to {new_lv}")
                 bot.edit_message_reply_markup(
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.settings_menu(user)
@@ -1806,7 +1802,7 @@ if bot:
             elif data == "set:toggle_eng":
                 cur_eng = bool(user.get("english_only", 1))
                 if user.get("level") in ("C1", "C2") and cur_eng:
-                    bot.answer_callback_query(call.id, "🔒 الانغماس الإنجليزي إلزامي لمستويات C1/C2!", show_alert=True)
+                    bot.answer_callback_query(call.id, "🔒 100% English Immersion is mandatory for C1/C2!", show_alert=True)
                     return
                 db.update_user(uid, english_only=(0 if cur_eng else 1))
                 user = db.get_user(uid)
@@ -1814,16 +1810,16 @@ if bot:
                     call.message.chat.id, call.message.message_id,
                     reply_markup=LoungeKeyboards.settings_menu(user)
                 )
-                bot.answer_callback_query(call.id, "✅ تم تحديث إعداد اللغة.")
+                bot.answer_callback_query(call.id, "✅ Immersion preference updated.")
 
             elif data == "admin:backup_now" and uid == ADMIN_ID:
-                bot.answer_callback_query(call.id, "💾 جاري إرسال وتثبيت النسخة الاحتياطية...")
-                db.backup_to_telegram(bot, caption_note="🛡️ Manual Admin Backup")
+                bot.answer_callback_query(call.id, "💾 Sending & pinning SQLite backup...")
+                db.backup_to_telegram(bot, caption_note="🛡️ Manual Founder Backup")
 
             elif data == "admin:list_users" and uid == ADMIN_ID:
                 wl = db.list_whitelisted()
-                txt = "👥 <b>الأصدقاء المسموح لهم في القائمة البيضاء:</b>\n\n" + "\n".join([
-                    f"• <code>{u['user_id']}</code> — {html.escape(u['full_name'] or u['username'] or 'Member')} ({u['level']}) [اليوم: {u['daily_count']}]"
+                txt = "👥 <b>Whitelisted NYC Lounge Members:</b>\n\n" + "\n".join([
+                    f"• <code>{u['user_id']}</code> — {html.escape(u['full_name'] or u['username'] or 'Member')} ({u['level']}) [Today: {u['daily_count']}]"
                     for u in wl
                 ])
                 bot.send_message(call.message.chat.id, txt, reply_markup=LoungeKeyboards.admin_menu())
@@ -1831,10 +1827,10 @@ if bot:
 
         except Exception as e:
             logger.error(f"Callback error ({data}): {e}")
-            bot.answer_callback_query(call.id, "⚠️ حدث خطأ أثناء تنفيذ الأمر.")
+            bot.answer_callback_query(call.id, "⚠️ Action could not be completed.")
 
     # =====================================================================
-    # 10. معالج الرسائل الصوتية الخام (Raw Voice Handler -> Gemini 2.5)
+    # 10. Raw Voice Handler -> Gemini 2.5 Native Audio
     # =====================================================================
     @bot.message_handler(content_types=["voice", "audio"])
     def handle_voice_input(message):
@@ -1847,13 +1843,13 @@ if bot:
             return
 
         if not db.check_and_increment_quota(uid):
-            bot.reply_to(message, "⚠️ وصلت للحد اليومي المسموح به من الرسائل.")
+            bot.reply_to(message, "⚠️ Daily interaction quota reached. Catch you tomorrow!")
             return
 
         user = db.get_user(uid, uname, fname)
         status_msg = bot.reply_to(
             message,
-            "🎧 <b>جاري الاستماع لبصمتك الصوتية وتحليل الكلام المتصل (Flap-T / Linking / Prosody)...</b>"
+            "🎧 <b>Listening to your raw voice note & analyzing US Connected Speech (Flap-T / Linking / Prosody)...</b>"
         )
         bot.send_chat_action(message.chat.id, "typing")
 
@@ -1870,14 +1866,12 @@ if bot:
                 audio_mime="audio/ogg"
             )
 
-            # تحديث سجل الحوار، الأخطاء، وطابور التشبع الخفي
             db.append_history(uid, "user", f"[Voice]: {res.transcription}")
             db.append_history(uid, "assistant", res.lounge_reply)
             db.record_diagnostics(uid, [d.model_dump() for d in res.diagnostics])
             if stealth_ids:
                 db.increment_stealth_done(stealth_ids)
 
-            # تخزين الأزرار الذرية + معرف ملف صوت المستخدم لبناء المرآة الصوتية عند الطلب
             token_key = uuid.uuid4().hex[:10]
             upgrades_dicts = [u.model_dump() for u in res.lexical_upgrades]
             db.store_atomic_batch(
@@ -1900,12 +1894,12 @@ if bot:
         except Exception as e:
             logger.error(f"Voice processing error: {e}")
             bot.edit_message_text(
-                f"⚠️ حدث خطأ أثناء تحليل الرسالة الصوتية: <code>{html.escape(str(e)[:180])}</code>",
+                f"⚠️ Error analyzing voice note: <code>{html.escape(str(e)[:180])}</code>",
                 message.chat.id, status_msg.message_id
             )
 
     # =====================================================================
-    # 11. معالج الرسائل النصية الشامل والأوضاع الخاصة (Text Handler)
+    # 11. Text Input Handler & Special Studio Modes
     # =====================================================================
     @bot.message_handler(content_types=["text"])
     def handle_text_input(message):
@@ -1924,44 +1918,43 @@ if bot:
         user = db.get_user(uid, uname, fname)
         mode = user.get("current_mode", "spontaneous_chat")
 
-        # --- أ. أوامر المشرف السريعة (إضافة / حذف صديق بالـ ID) ---
+        # --- A. Founder Quick Whitelist Management ---
         if uid == ADMIN_ID and mode in ("admin_add_user", "admin_del_user"):
             digits = "".join([c for c in text if c.isdigit()])
             if not digits:
-                bot.reply_to(message, "⚠️ يرجى إرسال أرقام الـ ID فقط.")
+                bot.reply_to(message, "⚠️ Please send a numeric Telegram ID only.")
                 return
             target_id = int(digits)
             status_val = 1 if mode == "admin_add_user" else 0
             db.set_whitelist(target_id, status=status_val)
             db.update_user(uid, current_mode="spontaneous_chat")
-            action_str = "إضافة" if status_val == 1 else "إزالة"
+            action_str = "whitelisted" if status_val == 1 else "removed from whitelist"
             bot.reply_to(
                 message,
-                f"✅ تمت {action_str} المستخدم <code>{target_id}</code> بنجاح، وعدتَ الآن لوضع الدردشة العفوية.",
+                f"✅ User <code>{target_id}</code> has been {action_str}. Switched back to NYC Banter mode.",
                 reply_markup=LoungeKeyboards.main_menu(db.get_user(uid), is_admin=True)
             )
             return
 
-        # --- ب. البحث الفوري في قاعدة بيانات المتلازمات (Fast SQLite Lookup) ---
+        # --- B. Instant SQLite Collocation Lookup ---
         if mode == "fast_lookup" and len(text.split()) <= 3:
             hits = db.lookup_collocations(text, limit=10)
             if hits:
-                out = f"⚡ <b>نتائج البحث الفوري عن <code>{html.escape(text)}</code>:</b>\n\n" + "\n".join(
+                out = f"⚡ <b>Instant Corpus & Vault Hits for <code>{html.escape(text)}</code>:</b>\n\n" + "\n".join(
                     [f"• {html.escape(h)}" for h in hits]
                 )
                 bot.reply_to(message, out)
                 return
-            # إذا لم يجد في القاعدة المحلية يكمل تلقائياً للمحلل الذكي بالأسفل
 
         if not db.check_and_increment_quota(uid):
-            bot.reply_to(message, "⚠️ وصلت للحد اليومي المسموح به.")
+            bot.reply_to(message, "⚠️ Daily interaction quota reached. Catch you tomorrow!")
             return
 
-        # --- ج. توليد حلقة بودكاست بموضوع مخصص ---
+        # --- C. Custom Podcast Episode Producer ---
         if mode == "podcast_custom_topic":
             wait_msg = bot.reply_to(
                 message,
-                f"🎙️ <b>جاري تأليف وتسجيل حلقة بودكاست حول:</b> <i>{html.escape(text)}</i>..."
+                f"🎙️ <b>Producing Dual-Host NYC Podcast on:</b> <i>{html.escape(text)}</i>..."
             )
             try:
                 db.update_user(uid, current_mode="spontaneous_chat")
@@ -1978,7 +1971,7 @@ if bot:
                 ])
                 full_caption = (
                     f"🎙️ <b>{html.escape(ep.title)}</b>\n\n"
-                    f"<blockquote expandable>📜 <b>النص الكامل للحلقة (اضغط للفتح):</b>\n\n{script_html}</blockquote>"
+                    f"<blockquote expandable>📜 <b>Full Episode Transcript (Tap to Expand):</b>\n\n{script_html}</blockquote>"
                 )
                 if mp3_path:
                     with open(mp3_path, "rb") as af:
@@ -1996,11 +1989,11 @@ if bot:
                     )
                 bot.delete_message(message.chat.id, wait_msg.message_id)
             except Exception as e:
-                bot.edit_message_text(f"⚠️ خطأ أثناء إنتاج البودكاست: {e}", message.chat.id, wait_msg.message_id)
+                bot.edit_message_text(f"⚠️ Podcast production error: {e}", message.chat.id, wait_msg.message_id)
             return
 
-        # --- د. مُشرّح النصوص الأصلية أو الدردشة العفوية والمختبرات ---
-        status_msg = bot.reply_to(message, "🗽 <b>جاري التحليل وصياغة البدائل الطبيعية...</b>")
+        # --- D. Standard Turn or Native Text Miner ---
+        status_msg = bot.reply_to(message, "🗽 <b>Crafting NYC reply & register shifts...</b>")
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
@@ -2037,32 +2030,52 @@ if bot:
         except Exception as e:
             logger.error(f"Text turn error: {e}")
             bot.edit_message_text(
-                f"⚠️ حدث خطأ أثناء المعالجة: <code>{html.escape(str(e)[:180])}</code>",
+                f"⚠️ Processing error: <code>{html.escape(str(e)[:180])}</code>",
                 message.chat.id, status_msg.message_id
             )
 
 
 # =====================================================================
-# 12. منظم دورة التناوب (5.3-Hour GitHub Relay Lifecycle Manager)
+# 12. 5.3-Hour GitHub Relay Lifecycle Manager & Auto-Profile Sync
 # =====================================================================
+def sync_bot_profile_metadata():
+    """Ensures the Telegram Bot profile (Name, About, Description, Commands) stays synced to Musa's NYC Lounge."""
+    if not bot:
+        return
+    try:
+        bot.set_my_short_description(
+            "🗽 Musa's NYC Lounge — 24/7 Spoken American English, Witty Banter, Acoustic Mirror & Dual-Host Podcast Studio."
+        )
+        bot.set_my_description(
+            "🗽 Welcome to Musa's NYC Lounge!\n\n"
+            "An authentic New York conversational club designed for C1/C2 Spoken American Mastery.\n\n"
+            "✨ Core Features:\n"
+            "• 🗣️ Unscripted NYC Banter & Storytelling Gym\n"
+            "• 🎛️ Register Shifter ([Articulate], [Casual], [Witty])\n"
+            "• 🪞 FFmpeg Acoustic Mirror (Your Voice vs. US Native)\n"
+            "• 🎙️ Dual-Host NYC Podcast Studio (Andrew & Ava)\n"
+            "• 💎 3-Part Lexical Frames, Atomic Vault & Smart SRS\n\n"
+            "Press Start to step into the Lounge!"
+        )
+        bot.set_my_commands([
+            telebot.types.BotCommand("start", "🗽 Enter Musa's NYC Lounge & Main Menu"),
+            telebot.types.BotCommand("lounge", "🎛️ Open Interactive Modes & Studio"),
+            telebot.types.BotCommand("menu", "🏠 Show Quick Dashboard")
+        ])
+    except Exception as e:
+        logger.warning(f"Profile metadata sync note: {e}")
+
+
 def relay_lifecycle_watchdog():
-    """
-    يراقب وقت تشغيل الحاوية على GitHub Actions:
-    - يقوم بنسخ احتياطي دوري كل ساعتين.
-    - عند الوصول إلى 5.3 ساعات (RELAY_MAX_RUNTIME_SECONDS)، يرسل نسخة احتياطية ختامية
-      ويثبتها في محادثة المشرف ثم يغلق البوت بسلام لتستلم الدورة التالية.
-    """
     last_periodic_backup = time.time()
     while True:
         time.sleep(25)
         elapsed = time.time() - START_TIME
 
-        # نسخ احتياطي دوري كل ساعتين للأمان
         if time.time() - last_periodic_backup >= 7200 and bot:
             db.backup_to_telegram(bot, caption_note="⏱️ Periodic 2-Hour Checkpoint")
             last_periodic_backup = time.time()
 
-        # الإغلاق الآمن عند انتهاء دورة الـ 5.3 ساعات
         if elapsed >= RELAY_MAX_RUNTIME_SECONDS:
             logger.info("⏳ 5.3-Hour Relay cycle reached. Performing final DB backup and graceful exit...")
             if bot:
@@ -2082,30 +2095,30 @@ def main():
         logger.error("❌ GEMINI_API_KEY is empty! Make sure secrets are passed to `env:` in your GitHub Workflow.")
         sys.exit(1)
 
-    logger.info("🗽 Starting Musa's NYC Lounge (24/7 Relay Architecture)...")
+    logger.info("🗽 Starting Musa's NYC Lounge (24/7 Relay Architecture - 100% English Edition)...")
 
-    # 1. استعادة قاعدة البيانات تلقائياً من آخر رسالة مثبتة في حساب المشرف
     restored = db.restore_from_telegram_pin(bot)
     if not restored:
         logger.info("ℹ️ Starting with fresh or local SQLite database.")
 
-    # 2. تشغيل المراقب الزمني لدورة الـ 5.3 ساعات في الخلفية
+    sync_bot_profile_metadata()
+
     watchdog_thread = threading.Thread(target=relay_lifecycle_watchdog, daemon=True)
     watchdog_thread.start()
 
-    # 3. بدء استقبال الرسائل بلا انقطاع
-    logger.info("✅ Bot is live and polling!")
     try:
         bot.remove_webhook()
         if ADMIN_ID:
             u_admin = db.get_user(ADMIN_ID, "Admin", "Musa")
             bot.send_message(
                 ADMIN_ID,
-                "🗽 <b>Musa's NYC Lounge is NOW LIVE (24/7 Relay)!</b>\n\n" + build_welcome_banner(u_admin),
+                "🗽 <b>Musa's NYC Lounge (100% English UI) is NOW LIVE!</b>\n\n" + build_welcome_banner(u_admin),
                 reply_markup=LoungeKeyboards.main_menu(u_admin, is_admin=True)
             )
     except Exception as e:
         logger.warning(f"Startup notify warning: {e}")
+
+    logger.info("✅ Bot is live and polling!")
     bot.infinity_polling(timeout=30, long_polling_timeout=25, skip_pending=False)
 
 
