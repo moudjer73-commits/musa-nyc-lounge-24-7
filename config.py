@@ -46,12 +46,11 @@ RELAY_MAX_RUNTIME_SECONDS: int = int(4.7 * 3600)
 PERIODIC_BACKUP_SECONDS: int = 7200
 
 GEMINI_MODELS_CHAIN: List[str] = [
-    "gemini-2.5-flash",
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-pro",
-    "gemini-3-flash",
-    "gemini-3.5-flash-lite"
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite"
 ]
 
 PERSONAS: Dict[str, Dict[str, Any]] = {
