@@ -173,19 +173,17 @@ def format_lounge_turn_html(
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     xray_lines = [
-        "🔬 <b>Coaching Notes, Rhythm & C1/C2 Expressions (Tap to Expand)</b>",
+        "🔬 <b>Coaching Notes & C1/C2 Expressions (Tap to Expand)</b>",
         "━━━━━━━━━━━━━━━━━━━━",
         f"🎭 <b>3 Native Alternatives ({vibe_label} Mode):</b>",
         f"• <b>Option 1 (Natural):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
         f"• <b>Option 2 (Idiomatic):</b> <code>{html.escape(res.rewrite_casual)}</code>",
         f"• <b>Option 3 (Punchy):</b> <code>{html.escape(res.rewrite_witty)}</code>",
-        f"• <b>🔄 Mid-Sentence Pivot:</b> <i>{html.escape(res.self_repair_pivot)}</i>" if getattr(res, "self_repair_pivot", "") else "",
-        "",
-        f"🎧 <b>American Rhythm, Nuclear Stress & Linking Map:</b>\n{html.escape(res.acoustic_prosody_xray)}"
+        f"• <b>🔄 Mid-Sentence Pivot:</b> <i>{html.escape(res.self_repair_pivot)}</i>" if getattr(res, "self_repair_pivot", "") else ""
     ]
 
     if res.diagnostics:
-        xray_lines.append("\n🩺 <b>Precision Polish & Acoustic Notes:</b>")
+        xray_lines.append("\n🩺 <b>Precision Phrasing & Flow Polish:</b>")
         for d in res.diagnostics[:3]:
             xray_lines.append(
                 f"• <i>{html.escape(d.user_said)}</i> ➔ ✅ <b>{html.escape(d.native_fix)}</b>\n"

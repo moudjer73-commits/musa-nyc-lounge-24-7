@@ -30,13 +30,11 @@ logger = logging.getLogger("MusaNYCLounge.AI")
 
 class DiagnosticItem(BaseModel):
     category: str = Field(
-        description="Clean coaching badge: '🎭 Natural Flow', '🎙️ Vowels & Rhythm', '📐 Spoken Structure', or '🎯 Collocation & Nuance'."
+        description="Pick ONE phrasing category: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'. NEVER use pronunciation/vowel categories."
     )
-    user_said: str = Field(description="The exact phrase or vocal habit noticed from the member.")
-    native_fix: str = Field(description="How an articulate New Yorker naturally phrases or pronounces it.")
-    why_note: str = Field(
-        description="Clear, insightful note on why the native collocation, pragmatic framing, or vowel/stress adjustment works better."
-    )
+    user_said: str = Field(description="Exact segment from the member's message that can be phrased more naturally.")
+    native_fix: str = Field(description="Crisp, natural spoken American phrasing upgrade (NEVER put IPA phonetic symbols like /.../ here).")
+    why_note: str = Field(description="1-sentence pragmatic or stylistic explanation of why native speakers prefer this phrasing.")
 
 
 class LexicalFrameUpgrade(BaseModel):
@@ -94,9 +92,7 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="A natural mid-sentence self-repair or pivot showing how a native speaker would smoothly adjust this thought on the fly."
     )
-    acoustic_prosody_xray: str = Field(
-        description="Detailed American Rhythm & Pronunciation Map built on `tts_clean_target`."
-    )
+    acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
     tts_clean_target: str = Field(
         description="Clean plain-text version of the recast that matches the member's ACTIVE VIBE (no brackets or phonetic symbols) ready for voice synthesis."
     )
@@ -104,10 +100,7 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="A clean, grammatically natural version of the user's sentence keeping their original word sequence for 1-to-1 Voice Mirror comparison."
     )
-    diagnostics: List[DiagnosticItem] = Field(
-        default_factory=list,
-        description="Up to 3 surgical coaching notes."
-    )
+    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="1 to 3 high-value phrasing, collocation, or spoken-structure upgrades based ONLY on what the member actually wrote/said. NEVER include pronunciation, vowel, or IPA (/.../) comments.")
     lexical_upgrades: List[LexicalFrameUpgrade] = Field(
         default_factory=list,
         description="Exactly 3 numbered Spoken American Expressions tailored to this turn, ALL 3 strictly matching the member's ACTIVE VIBE."
@@ -481,12 +474,12 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `self_repair_pivot`, `mirror_clean_target`, `acoustic_prosody_xray`, `diagnostics`, and 3 `lexical_upgrades`."
+                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `self_repair_pivot`, `mirror_clean_target`, phrasing-only `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
             )
         else:
             contents.append(
                 f"MEMBER MESSAGE:\n{user_text}\n\n"
-                "Populate `chat_turns` with the active cast (1, 2, or 3 hosts) and build `acoustic_prosody_xray` on `tts_clean_target`."
+                "Populate `chat_turns` with the active cast (1, 2, or 3 hosts) and provide phrasing-only `diagnostics` (NO pronunciation/vowel/IPA comments) and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
             )
 
         res: LoungeTurnResponse = self._call_structured(
