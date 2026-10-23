@@ -469,7 +469,7 @@ class NYCLoungeAI:
             f"- Only weave a candidate phrase into `chat_turns` if it fits this topic 100% naturally. Wrap woven phrases in `<i>phrase</i>`.\n\n"
             f"RECURRING HABITS TO WATCH FOR: {weakness_str}\n"
             f"RELEVANT COLLOCATIONS:\n{rag_str}\n\n"
-            f"RECENT CONVERSATION:\n{hist_str}"
+            f"RECENT CONVERSATION (For topic continuity ONLY — if earlier turns used a different tone, IGNORE their tone and strictly use {active_vibe_badge} now!):\n{hist_str}"
         )
 
         contents: List[Any] = []
@@ -518,6 +518,8 @@ class NYCLoungeAI:
             system_instruction=system_prompt,
             temperature=0.60
         )
+        for c in explorer.collocation_frames:
+            c.register_tag = vibe_badge
         self.db.ingest_chunks_to_corpus([c.model_dump() for c in explorer.collocation_frames])
         return explorer
 

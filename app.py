@@ -775,20 +775,19 @@ if bot:
                         reply_markup=LoungeKeyboards.studio_prompt_bar(new_mode, user.get("active_persona", "trio"))
                     )
 
-            elif data == "action:cycle_register":
+            elif data.startswith("action:cycle_register"):
                 order = ["articulate", "casual", "witty"]
                 cur = user.get("preferred_register", "articulate")
                 nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "articulate"
                 db.update_user(uid, preferred_register=nxt)
                 user = db.get_user(uid)
                 bot.answer_callback_query(call.id, f"🎚️ All club hosts locked to: {REGISTERS_MAP[nxt]}", show_alert=False)
-                try:
-                    bot.edit_message_reply_markup(
+                if data == "action:cycle_register":
+                    safe_edit_text(
                         call.message.chat.id, call.message.message_id,
+                        build_welcome_banner(user),
                         reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
                     )
-                except Exception:
-                    pass
 
             elif data == "action:clear_chat":
                 db.reset_history(uid)
@@ -1181,6 +1180,11 @@ if bot:
                         reply_markup=LoungeKeyboards.srs_grade_kb(card_id)
                     )
                     return
+
+            # --- Reset static text-only submodes if user sends a voice note ---
+            if mode in ("fast_lookup", "chunk_miner", "podcast_custom_topic", "admin_add_user", "admin_del_user"):
+                db.update_user(uid, current_mode="spontaneous_chat")
+                user = db.get_user(uid)
 
             # --- Standard Conversational & Phonetic Coaching ---
             status_msg = bot.reply_to(

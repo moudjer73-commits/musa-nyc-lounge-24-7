@@ -120,7 +120,7 @@ class LoungeKeyboards:
             InlineKeyboardButton(f"👥 Hosts: {cast_short}", callback_data="menu:cast_selector")
         )
         kb.add(
-            InlineKeyboardButton("🎚️ Switch Vibe", callback_data="action:cycle_register"),
+            InlineKeyboardButton("🎚️ Switch Vibe", callback_data="action:cycle_register_room"),
             InlineKeyboardButton("🏠 Club Main Menu", callback_data="menu:home")
         )
         return kb
