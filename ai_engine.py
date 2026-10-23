@@ -88,10 +88,7 @@ class LoungeTurnResponse(BaseModel):
     rewrite_articulate: str = Field(description="Alternative 1 (Smooth & Natural): A natural native recast of the member's message strictly in the member's ACTIVE VIBE (same register, NO register shifting).")
     rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal): A second distinct native recast using rich collocations/phrasal verbs, ALSO strictly in the member's ACTIVE VIBE.")
     rewrite_witty: str = Field(description="Alternative 3 (Short & Punchy): A third concise, high-impact native recast, ALSO strictly in the member's ACTIVE VIBE.")
-    self_repair_pivot: str = Field(
-        default="",
-        description="A natural mid-sentence self-repair or pivot showing how a native speaker would smoothly adjust this thought on the fly."
-    )
+    self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
     tts_clean_target: str = Field(
         description="Clean plain-text version of the recast that matches the member's ACTIVE VIBE (no brackets or phonetic symbols) ready for voice synthesis."
@@ -459,7 +456,8 @@ class NYCLoungeAI:
             f"- {self._level_calibration_guide(level)}\n"
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
-            f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `self_repair_pivot`, `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
+            f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
+            f"- SPONTANEOUS HOST PIVOTS: When natural in conversation, let the hosts occasionally model a smooth American mid-sentence pivot/self-repair inside `chat_turns` (matching {active_vibe_badge}) without ever forcing it or making it awkward.\n"
             f"- {lang_rule}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
@@ -474,7 +472,7 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `self_repair_pivot`, `mirror_clean_target`, phrasing-only `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
+                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `mirror_clean_target`, phrasing-only `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
             )
         else:
             contents.append(

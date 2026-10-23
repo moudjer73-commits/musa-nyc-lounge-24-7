@@ -179,7 +179,6 @@ def format_lounge_turn_html(
         f"• <b>Option 1 (Natural):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
         f"• <b>Option 2 (Idiomatic):</b> <code>{html.escape(res.rewrite_casual)}</code>",
         f"• <b>Option 3 (Punchy):</b> <code>{html.escape(res.rewrite_witty)}</code>",
-        f"• <b>🔄 Mid-Sentence Pivot:</b> <i>{html.escape(res.self_repair_pivot)}</i>" if getattr(res, "self_repair_pivot", "") else ""
     ]
 
     if res.diagnostics:
