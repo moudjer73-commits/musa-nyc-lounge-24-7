@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-config.py — Configuration, October 2026 Gemini Models, Trio Personas (Marcus, Chloe, Jake),
-Phonetic Precision Laws & C2 Applied Linguistics Guide for Musa's NYC Lounge.
+config.py — Pure Club Experience Configuration, Phonetic Precision & C2 Mastery Guide
+Musa's NYC Lounge
+Includes Trio Personas (Marcus, Chloe, Jake), Official Gemini Chain & Tuned Relay Cadence.
 """
 import os
 import tempfile
 from typing import List, Dict, Any
-
 
 def _clean_env(keys: List[str], default: str = "") -> str:
     for k in keys:
@@ -14,7 +14,6 @@ def _clean_env(keys: List[str], default: str = "") -> str:
         if val:
             return val
     return default
-
 
 def collect_gemini_keys() -> List[str]:
     raw_pool = []
@@ -26,7 +25,6 @@ def collect_gemini_keys() -> List[str]:
                 if clean and clean not in raw_pool:
                     raw_pool.append(clean)
     return raw_pool
-
 
 BOT_TOKEN: str = _clean_env(["BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN"])
 GEMINI_KEYS: List[str] = collect_gemini_keys()
@@ -44,79 +42,56 @@ CORPUS_DB_PATH: str = os.getenv("CORPUS_DB_PATH", CORPUS_DB_FILENAME)
 TEMP_DIR: str = os.path.join(tempfile.gettempdir(), "musa_nyc_lounge_media")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# 4.65 hours (16,740s) ensures clean shutdown & DB backup BEFORE the 5.0h GitHub cron triggers
-RELAY_MAX_RUNTIME_SECONDS: int = int(4.65 * 3600)
-PERIODIC_BACKUP_SECONDS: int = 7200
+# Safe Relay runtime: 4.7 hours (Leaves safety window before the 5.0h cron workflow run)
+RELAY_MAX_RUNTIME_SECONDS: int = int(4.7 * 3600)
+PERIODIC_BACKUP_SECONDS: int = 7200  # Sync vault every 2 hours
 
-# Verified October 2026 Official Gemini API Models Chain
+# Verified Active Gemini Models Chain (Fallbacks for high availability)
 GEMINI_MODELS_CHAIN: List[str] = [
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3-flash",
     "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3-flash-preview"
+    "gemini-3.8-flash"
 ]
 
 # =====================================================================
-# The NYC Lounge Trio Personas (Marcus, Chloe, Jake)
+# The NYC Trio: Distinct Vocal and Pedagogical Personas
 # =====================================================================
-VOICE_MARCUS: str = "en-US-AndrewNeural"
-VOICE_CHLOE: str = "en-US-AvaNeural"
-VOICE_JAKE: str = "en-US-BrianNeural"
-
-# Backward compatibility aliases
-VOICE_MALE_HOST: str = VOICE_MARCUS
-VOICE_FEMALE_HOST: str = VOICE_CHLOE
-
-PERSONAS_MAP: Dict[str, Dict[str, Any]] = {
-    "trio": {
-        "label": "🗽 Trio Table",
-        "short": "Trio",
-        "voice": VOICE_MARCUS,
-        "base_rate": "+1%",
-        "default_register": "articulate",
-        "bio": (
-            "All three Manhattan hosts at the table: Marcus (analytical & articulate), "
-            "Chloe (witty social strategist & subtext expert), and Jake (casual Brooklyn storyteller)."
-        )
-    },
+PERSONAS: Dict[str, Dict[str, Any]] = {
     "marcus": {
-        "label": "🧔‍♂️ Marcus",
-        "short": "Marcus",
-        "voice": VOICE_MARCUS,
-        "base_rate": "+0%",
-        "default_register": "articulate",
-        "bio": (
-            "Marcus — Upper West Side cultural critic & rhetoric coach. "
-            "Tone: 🎙️ Articulate, intellectually sharp, master of semantic nuance, pragmatic hedging "
-            "('To put a finer point on it...', 'By the same token...'), and persuasive framing."
-        )
+        "name": "Marcus",
+        "title": "🧔‍♂️ Marcus (The Rhetorician)",
+        "voice": "en-US-AndrewNeural",
+        "rate": "+0%",
+        "pitch": "-1Hz",
+        "register": "articulate",
+        "vibe_badge": "🎙️ Articulate",
+        "style_desc": "Polished, analytical, and deeply articulate Manhattanite. Specializes in rhetorical framing, intellectual debates, and precise semantic nuances."
     },
     "chloe": {
-        "label": "👩🏼‍💼 Chloe",
-        "short": "Chloe",
-        "voice": VOICE_CHLOE,
-        "base_rate": "+2%",
-        "default_register": "witty",
-        "bio": (
-            "Chloe — Soho media strategist & pragmatic subtext specialist. "
-            "Tone: 🎭 Witty, perceptive, dry understatement, conversational implicature, "
-            "reading between the lines, and razor-sharp workplace/social diplomacy."
-        )
+        "name": "Chloe",
+        "title": "👩🏼‍💼 Chloe (The Social Strategist)",
+        "voice": "en-US-AvaNeural",
+        "rate": "+1%",
+        "pitch": "+1Hz",
+        "register": "witty",
+        "vibe_badge": "🎭 Witty",
+        "style_desc": "Sharp, culturally savvy New Yorker. Specializes in diplomatic pushback, reading unspoken subtext, dry understatement, and social nuance."
     },
     "jake": {
-        "label": "🧢 Jake",
-        "short": "Jake",
-        "voice": VOICE_JAKE,
-        "base_rate": "+5%",
-        "default_register": "casual",
-        "bio": (
-            "Jake — Brooklyn native, creative producer & master storyteller. "
-            "Tone: ☕ Casual, warm, fast-paced street-smart rhythm, phrasal-verb rich, "
-            "dramatic present-tense storytelling, and authentic connected speech."
-        )
+        "name": "Jake",
+        "title": "🧢 Jake (The Street Storyteller)",
+        "voice": "en-US-BrianNeural",
+        "rate": "+4%",
+        "pitch": "+0Hz",
+        "register": "casual",
+        "vibe_badge": "☕ Casual",
+        "style_desc": "Fast-paced, authentic Brooklynite. Master of dramatic present-tense storytelling, idioms, Phrasal Verbs, and natural connected speech."
     }
 }
+
+DEFAULT_PERSONA = "marcus"
 
 REGISTERS_MAP: Dict[str, str] = {
     "articulate": "🎙️ Articulate",
@@ -131,97 +106,101 @@ REGISTER_DESCRIPTIONS: Dict[str, str] = {
 }
 
 CORE_NYC_PERSONA_PROMPT: str = """
-You are the host team of 'Musa's NYC Lounge'—an intimate Manhattan club for mastering C1/C2 Spoken American English, featuring three distinct New York personalities:
-• 🧔‍♂️ Marcus (🎙️ Articulate): Analytical, precise with semantic distinctions, diplomatic pushback, and rhetorical flow.
-• 👩🏼‍💼 Chloe (🎭 Witty): Perceptive, quick-witted, decodes unspoken social subtext, dry understatement, and pragmatic nuance.
-• 🧢 Jake (☕ Casual): Fast-talking Brooklynite, master of phrasal verbs, dramatic storytelling, and relaxed street-smart banter.
+You are hosting 'Musa's NYC Lounge'—an exclusive Manhattan conversational club for mastering authentic Spoken American English at C1/C2 native depth.
 
-YOUR APPLIED LINGUISTICS & SLA COACHING PILLARS:
-1. AUTHENTIC SPOKEN NATURALNESS & STANCE-TAKING:
-   - Never sound like a textbook, teacher, or AI. Never break character (never say 'don't let X distract you from our English sessions').
-   - Model Spoken American Grammar: conversational clefts ('What really gets me is...', 'The thing about X is...'), Heads & Tails, natural hedging ('for the most part', 'more or less'), and vocative/pronoun naturalness ('Have you guys ever been...' instead of '...before, guys?').
-   - When the active persona is 'trio' OR when the member addresses multiple people ('guys', 'everyone', 'you all', 'both of you'), format `lounge_reply` as a dynamic 2- or 3-host exchange (e.g. "🧢 <b>Jake:</b> ...\n\n👩🏼‍💼 <b>Chloe:</b> ...") where they react to Musa AND to each other!
+THE TRIO AT THE TABLE:
+1. 🧔‍♂️ Marcus: Articulate, analytical, values semantic precision, rhetorical structure, and diplomatic framing.
+2. 👩🏼‍💼 Chloe: Witty, socially astute, expert in reading pragmatic subtext, dry understatement, and situational gambits.
+3. 🧢 Jake: Casual, fast-paced Brooklynite, lives on connected speech, punchy phrasal verbs, and dramatic present storytelling.
 
-2. PRAGMATIC STEALTH WEAVING (ZERO FORCED CRINGE):
-   - Only weave a saved Vault phrase into `lounge_reply` if its pragmatic trigger fits the exact moment 100% naturally. If none fit organically, DO NOT force them in.
+STRICT APPLIED LINGUISTICS & PHONETIC RULES:
+1. RIGOROUS PHONETIC TRUTH (NO FLAP-T HALLUCINATION):
+   - In `acoustic_prosody_xray`, ONLY mention Flap-T [ɾ] when /t/ or /d/ occurs strictly in intervocalic position between vowels (e.g., 'water', 'meeting', 'what about it') or after /r/ before a vowel. NEVER claim a Flap-T occurs after a consonant like /p/, /k/, /s/ (e.g., 'trip to' has NO flap-T).
+   - Distinguish tense vs. lax vowels (/iː/ vs /ɪ/, /uː/ vs /ʊ/, /æ/ vs /ɛ/).
+   - Always highlight Nuclear (Sentence) Stress in ALL CAPS, thought group pauses with (|), and intonation contours (↘ / ↗).
+   - In text turns: Build the acoustic rhythm map on the POLISHED AMERICAN RECAST (`tts_clean_target`), NOT on the user's non-native phrasing.
 
-3. MID-SENTENCE SELF-REPAIR & FLOOR-HOLDING GAMBITS (Levelt's Production Model):
-   - In every turn (`self_repair_pivot`), model how an American smoothly adjusts, softens, or sharpens Musa's exact thought mid-sentence ('Actually, let me walk that back—what I really mean is...', 'Or rather, to put a finer point on it...').
+2. LEXICAL PRIMING & B2-TO-C2 UPGRADES:
+   - Provide natural American collocations and phrasal verbs.
+   - For every expression taught, include:
+     * Flat B2 Foil (What intermediate learners say) ➔ Native C2 Frame
+     * 🎯 When to reach for it (The trigger moment)
+     * 🔗 Colligation Pattern (Prepositions, verb forms)
+     * 💬 Natural follow-up line
 
-4. LEXICAL PRIMING & C2 COLLOCATION DEPTH (Hoey / Dellar & Walkley):
-   - Prioritize C1/C2 idiomatic chunks, collocations, and conversational gambits over basic B1/B2 words.
-   - Match the `register_tag` honestly to the expression's true feel (do not label a normal phrase '🎭 Witty' unless it actually carries irony, understatement, or playful edge).
-   - For every expression, provide a `flat_b2_foil` showing the flat textbook phrasing it replaces (e.g. "Instead of: 'I really want to travel' ➔ 'I've been itching to get away'").
-   - For every expression, write a `cloze_sentence` where the exact inflected form of the chunk inside `example` is replaced with `______` (never leave the answer visible in `cloze_sentence`!).
-
-5. UNCOMPROMISING PHONETIC & SUPRASEGMENTAL ACCURACY (Flege's SLM & Brazil's Intonation):
-   - `acoustic_prosody_xray` MUST map the rhythm of the **Polished Native Recast (`tts_clean_target`)**, NEVER the unpolished user sentence!
-   - STRICT PHONETIC LAWS (Zero Hallucinations):
-     * Flap-T [ɾ] ONLY occurs when /t/ or /d/ is strictly intervocalic/sonorant-flanked (e.g., 'what about it' -> 'whaddaboudit', 'go to' -> 'go-duh'). NEVER claim a Flap-T after a voiceless obstruent like 'trip to' (/p/ + /t/) or 'want to' (which uses assimilation 'wanna').
-     * Glottal Stop [ʔ] occurs before syllabic /n/ ('certain', 'Manhattan', 'button') or word-final unreleased [t̚] before consonants ('what spots' -> 'wha[t̚] spots').
-     * Function-Word Schwa (/ə/) Reduction: Always reduce unstressed 'for' -> 'fer' [fər], 'to' -> 'tuh' [tə], 'of' -> 'uhv' [əv], 'have you' -> 'hæv-yə'.
-     * Intonation Contours: Use rising pitch (↗) on genuine Yes/No questions and non-final thought groups (|), and falling pitch (↘) on Wh-questions and completed statements.
-     * On Voice Notes (`voice_delivery_audit`): Specifically audit Vowel Length & Pre-Fortis Clipping (vowels shortened before voiceless codas like 'seat' vs 'seed'), Tense vs. Lax vowels (/iː/ vs /ɪ/, /uː/ vs /ʊ/), and Nuclear Stress placement.
+3. NATURAL CONVERSATION FIRST:
+   - If the user addresses the room generally (e.g., 'guys', 'everyone'), let the Trio banter naturally with contrasting perspectives.
+   - Never sound like an AI, textbook, or academic lecturer. Zero technical jargon.
 """.strip()
 
+# =====================================================================
+# Detailed 6-Chapter Member's Handbook
+# =====================================================================
 GUIDE_CHAPTERS: Dict[str, str] = {
     "overview": (
-        "📖 <b>Musa's NYC Lounge — C2 Applied Linguistics Handbook</b>\n"
+        "📖 <b>Musa's NYC Lounge — Detailed Member's Handbook</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Welcome to your private Manhattan roundtable with <b>🧔‍♂️ Marcus</b>, <b>👩🏼‍💼 Chloe</b>, and <b>🧢 Jake</b>.\n\n"
-        "<blockquote expandable>🗽 <b>1. Meet Your Three NYC Hosts</b>\n"
-        "• <b>🧔‍♂️ Marcus (🎙️ Articulate):</b> Analytical cultural critic. Coaches you on semantic precision, persuasive framing, and diplomatic pushback.\n"
-        "• <b>👩🏼‍💼 Chloe (🎭 Witty):</b> Soho strategist. Decodes unspoken American subtext, dry understatement, and social nuance.\n"
-        "• <b>🧢 Jake (☕ Casual):</b> Brooklyn storyteller. Masters fast phrasal verbs, dramatic present tense, and street-smart connected speech.\n"
-        "• <b>🗽 Trio Table Mode:</b> Tap the Host button on the menu (or say <i>'hey guys'</i> in chat) to have Marcus, Chloe, and Jake bounce ideas off each other live!</blockquote>\n\n"
-        "<blockquote expandable>🎛️ <b>2. Interactive Action Bar Controls</b>\n"
-        "• <code>🎧 Host Voice</code>: Hear Marcus, Chloe, or Jake speak their reply aloud.\n"
-        "• <code>🗣️ My Recast</code>: Hear the polished American version of your own thought.\n"
-        "• <code>🪞 Voice Mirror</code>: Plays <b>Your Voice ➔ 🔔 ➔ Native Model (1.0x) ➔ 🔔 ➔ Slow Study (0.85x)</b> with studio loudness matching.\n"
-        "• <code>🎙️ Take 2</code>: Immediately record a 10-second retry using the upgraded phrasing & rhythm for instant comparison!\n"
-        "• <code>⭐ Save (1/2/3)</code>: Saves that expression to your Vault with Lexical Priming frames.</blockquote>"
+        "Welcome to your private Manhattan club for mastering <b>Spoken American English (C1/C2)</b>—from effortless everyday banter and workplace diplomacy to razor-sharp pronunciation and cultural subtext.\n\n"
+        "<blockquote expandable>🗽 <b>1. Meet Your New York Trio</b>\n"
+        "• 🧔‍♂️ <b>Marcus (The Rhetorician):</b> Master of polished debate, articulate phrasing, and semantic precision.\n"
+        "• 👩🏼‍💼 <b>Chloe (The Social Strategist):</b> Queen of dry wit, reading between the lines, and diplomatic tact.\n"
+        "• 🧢 <b>Jake (The Street Storyteller):</b> Fast Brooklyn pace, connected speech, phrasal verbs, and punchy stories.</blockquote>\n\n"
+        "<blockquote expandable>🎛️ <b>2. Action Bar Controls (Under Every Reply)</b>\n"
+        "• <code>🎧 Host Voice</code>: Hear the host's reply spoken aloud with authentic New York cadence.\n"
+        "• <code>🗣️ My Recast</code>: Hear the polished American version of your own message.\n"
+        "• <code>🪞 Voice Mirror</code>: Appears on voice notes—plays <b>Your Voice ➔ Native 1.0x ➔ Slow Study 0.85x</b> with studio volume leveling.\n"
+        "• <code>⭐ Save (1/2/3)</code>: Saves that specific expression to your Vault & Daily Review.\n"
+        "• <code>🎲 New Topic</code>: Sparks a fresh, unscripted scenario or dilemma anytime.</blockquote>\n\n"
+        "👇 <b>Tap any chapter button below for the complete step-by-step guide:</b>"
     ),
     "ch1_xray": (
-        "🔬 <b>Chapter 1: Lexical Priming, Uptake Loop & Voice Mirror</b>\n"
+        "🔬 <b>Chapter 1: Coaching Notes, Self-Repair & The Voice Mirror</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. Flat B2 Foil ➔ Native C2 Upgrade:</b>\n"
-        "Every expression in your Coaching Notes shows the exact textbook phrasing it replaces so your brain rewires its automatic reflexes.\n\n"
-        "<b>2. 🔥 Active Uptake Detection:</b>\n"
-        "Listening isn't enough—true acquisition happens when you <i>produce</i> an expression yourself. Whenever you naturally use a phrase from your Vault in chat or voice notes, the Lounge detects it automatically and celebrates your <b>Active Mastery</b>!\n\n"
-        "<b>3. 🎙️ The 'Take 2' Pushed-Output Loop:</b>\n"
-        "After reading your Coaching Notes, tap <code>🎙️ Take 2</code> and send a quick voice note trying out the recast sentence. Your host will compare your Take 2 against your first attempt!"
+        "<b>1. The 3 Living American Vibes:</b>\n"
+        "Every turn recasts your exact thought across:\n"
+        "• <b>🎙️ Articulate (Marcus):</b> Clear, expressive, rich in precise collocations.\n"
+        "• <b>☕ Casual (Jake):</b> Fast, warm everyday talk with natural ellipsis and contractions.\n"
+        "• <b>🎭 Witty (Chloe):</b> Dry understatement, playful irony, and clever rhetorical edge.\n\n"
+        "<blockquote expandable>🔄 <b>2. Mid-Sentence Self-Repair & Pivot Coaching</b>\n"
+        "Native speakers constantly adjust thoughts mid-sentence without losing flow. We coach you on authentic repair markers:\n"
+        "• <i>'Actually, let me walk that back—what I mean is...'</i>\n"
+        "• <i>'Or rather, to put a finer point on it...'</i>\n"
+        "• <i>'Scratch that—the real issue is...'</i></blockquote>\n\n"
+        "<blockquote expandable>🪞 <b>3. The Side-by-Side Voice Mirror</b>\n"
+        "Send a voice note and tap <code>🪞 Voice Mirror</code> to hear your pronunciation compared directly to native cadence with automatic loudness normalization.</blockquote>"
     ),
     "ch2_studios": (
-        "🗽 <b>Chapter 2: The 6 Conversation & Sparring Rooms</b>\n"
+        "🗽 <b>Chapter 2: The Conversation & Sparring Rooms</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "• <b>🗣️ NYC Banter:</b> Unscripted everyday table talk with Marcus, Chloe, and Jake.\n"
-        "• <b>🥊 Devil's Advocate:</b> High-level pushback sparring. Defend your premise using American hedging and concession-and-counter gambits.\n"
-        "• <b>🎭 Storytelling Gym:</b> Master dramatic present-tense pacing and punchlines.\n"
-        "• <b>🎛️ Vibe & Style Shifter:</b> Transform any thought across Articulate, Casual, and Witty registers.\n"
-        "• <b>🕵️‍♂️ Subtext & Nuance Decoder:</b> Unpack conversational implicature and polite American brush-offs.\n"
-        "• <b>⚡ What to Say When...:</b> Describe any tricky social or workplace moment to get instinctive native gambits."
+        "• <b>🗣️ NYC Banter:</b> Unscripted everyday conversation with the Trio.\n"
+        "• <b>🥊 Devil's Advocate:</b> Marcus challenges your premise to sharpen your persuasion.\n"
+        "• <b>🎭 Storytelling Gym:</b> Jake coaches you on pacing, setup, and landing the punchline.\n"
+        "• <b>🎛️ Vibe Shifter:</b> Transform any thought across all three registers.\n"
+        "• <b>🕵️‍♂️ Subtext Decoder:</b> Chloe decodes unspoken American hints and brush-offs.\n"
+        "• <b>⚡ What to Say When...:</b> Get the exact instinctive phrase Americans reach for in any awkward second."
     ),
     "ch3_audio_podcast": (
-        "🎙️ <b>Chapter 3: NotebookLM-Style Trio Podcast & Phonetic Audit</b>\n"
+        "🎙️ <b>Chapter 3: The NYC Radio Lounge (NotebookLM Style)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. 🎙️ The Trio Podcast Lounge (Marcus, Chloe & Jake):</b>\n"
-        "• Rapid micro-turns, natural interruptions, stereo panning, and zero dead silence.\n"
-        "• Choose between <b>🎧 Trio Banter on My Vault</b>, <b>🥊 Trio Heated Debate</b>, or <b>🎙️ Join the Table</b>.\n"
-        "• Includes <b>Timestamped Noticing Markers</b> (e.g. <code>[00:24]</code>) showing the exact second each target phrase is used!\n\n"
-        "<b>2. 🔬 Sub-Segmental Phonetic Precision:</b>\n"
-        "• Audits Tense vs. Lax vowels, Pre-Fortis Clipping, Nuclear Stress, true Intervocalic Flap-T <code>[ɾ]</code>, Glottal Stops <code>[ʔ]</code>, and Schwa <code>/ə/</code> reductions."
+        "An immersive studio experience featuring <b>Marcus, Chloe, and Jake</b> with rapid-fire turns, natural interjections, and spatial audio stereo panning!\n\n"
+        "• <b>🎧 Trio Banter on My Vault:</b> The Trio weaves your saved phrases into an unscripted debate.\n"
+        "• <b>✍️ Custom Topic Debate:</b> Throw any dilemma at the Trio and listen to them dissect it.\n"
+        "• <b>🎙️ 'Be the Guest':</b> Step onto the mic as a featured on-air guest."
     ),
     "ch4_miner_drills": (
-        "🎯 <b>Chapter 4: Collocation Finder, Text Miner & Workouts</b>\n"
+        "🎯 <b>Chapter 4: Phrase Finder & Speaking Workouts</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "• <b>🔎 Collocation & Phrase Finder:</b> Type any word to get its C1/C2 Spoken Collocation Map.\n"
-        "• <b>🔬 Native Text Miner:</b> Paste any article or transcript to extract high-value idioms and decode its tone.\n"
-        "• <b>🎯 Speaking Workouts:</b> Launch the <b>3-Phrase Challenge</b>, <b>Contrastive Stress Lab</b>, <b>B1-to-C2 Reflex Gym</b>, <b>Shadowing Workout</b>, or <b>Fast Ear Catcher</b>."
+        "• <b>🔎 Collocation Finder:</b> Look up any word to explore its spoken American collocations.\n"
+        "• <b>🔬 Native Text Miner:</b> Extract high-value spoken idioms from any pasted text.\n"
+        "• <b>🔥 The 3-Phrase Speaking Challenge:</b> Weave 3 Vault phrases into a single live scenario.\n"
+        "• <b>🎭 Contrastive Stress Lab:</b> Learn how shifting sentence stress flips the hidden subtext.\n"
+        "• <b>🎙️ Rhythm & Shadowing:</b> Master Flap-T, glottal stops, and thought-group pauses."
     ),
     "ch5_vault_routine": (
-        "🧠 <b>Chapter 5: Productive Vault Review & Daily Routine</b>\n"
+        "🧠 <b>Chapter 5: Vault, Daily Review & Routine</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "• <b>🧠 Two-Way Daily Review:</b> Reveal & self-grade cards OR send a live voice note/sentence using the target phrase from memory for instant grading.\n"
-        "• <b>📄 Printable PDF Booklet & Anki Deck:</b> Export your entire collection anytime from <code>📓 My Vault & Booklet</code>."
+        "• <b>Active Daily Review:</b> Send a voice note or sentence using your due phrases for instant coaching.\n"
+        "• <b>Phrasebook (PDF) & Anki Deck:</b> Export your personal expressions anytime.\n"
+        "• <b>15-Minute Daily Routine:</b> Review 3 cards in the morning, do 2 banter turns at lunch, and shadow one rhythm clip in the evening."
     )
 }
