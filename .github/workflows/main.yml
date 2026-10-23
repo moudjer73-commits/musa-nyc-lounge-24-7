@@ -14,7 +14,7 @@ concurrency:
 jobs:
   run-lounge:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    timeout-minutes: 310
 
     steps:
       - name: Checkout Repository
@@ -26,17 +26,21 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install System Dependencies (FFmpeg & WeasyPrint Fonts)
+      - name: Verify or Install System Dependencies (Instant Check)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0 fonts-liberation fonts-dejavu-core
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0 fonts-liberation fonts-dejavu-core
+          else
+            echo "✅ FFmpeg and system libraries are already pre-installed!"
+          fi
 
       - name: Install Python Packages
         run: |
           pip install --upgrade pip -q
           pip install -r requirements.txt -q
 
-      - name: Run Musa's NYC Lounge (5.3-Hour Relay Cycle)
+      - name: Run Musa's NYC Lounge (4.7-Hour Relay Cycle)
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -47,7 +51,7 @@ jobs:
           python3 app.py
 
       - name: Trigger Next Relay Cycle Automatically
-        if: success()
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
