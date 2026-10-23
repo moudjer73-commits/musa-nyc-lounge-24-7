@@ -2,11 +2,11 @@
 """
 ai_engine.py — Conversational, Phonetic & Pragmatic Brain for Musa's NYC Lounge
 Includes:
-- Natural 2-Layer Banter & Coaching
-- Deep Phonetic & Vowel-Length Precision for Voice Notes
-- Live Collocation Explorer (Generates & auto-saves spoken collocation families)
-- Active Phrase Review Evaluator (Evaluates user's live sentence/voice during review)
-- Dynamic Topic Spark & Custom Radio Show Producer
+- Natural 2-Layer Banter + Mid-Sentence Self-Repair & Pivot Coaching
+- Devil's Advocate Pushback Sparring Room
+- Contrastive Stress & Implicature Workout
+- Spoken Fluency & Mastery Audit Generator
+- Live Collocation Explorer & Active Review Evaluator
 """
 import time
 import html
@@ -31,7 +31,7 @@ logger = logging.getLogger("MusaNYCLounge.AI")
 
 
 # =====================================================================
-# 1. Structured Output Schemas (Human Coaching Labels Only)
+# 1. Structured Output Schemas
 # =====================================================================
 class DiagnosticItem(BaseModel):
     category: str = Field(
@@ -71,6 +71,10 @@ class LoungeTurnResponse(BaseModel):
     rewrite_witty: str = Field(
         description="🎭 Witty recast of the user's message (dry humor, clever understatement, or playful punch)."
     )
+    self_repair_pivot: str = Field(
+        default="",
+        description="A natural mid-sentence self-repair or pivot showing how a native speaker would smoothly adjust, soften, or sharpen this thought on the fly (e.g. 'Actually, let me walk that back—what I really mean is...')."
+    )
     acoustic_prosody_xray: str = Field(
         description="Detailed American Rhythm & Pronunciation Guide: primary stress in CAPS, thought-group pauses (|), intonation arrows (↘/↗), vowel length notes, Flap-T/Glottal Stop, and phonetic respelling."
     )
@@ -102,7 +106,7 @@ class PodcastEpisodeSchema(BaseModel):
 class DynamicStudioSparkSchema(BaseModel):
     headline: str = Field(description="Engaging conversation starter headline.")
     scenario_or_question: str = Field(
-        description="A fresh, vivid scenario, real-life dilemma, subtext puzzle, or storytelling hook."
+        description="A fresh, vivid scenario, real-life dilemma, subtext puzzle, debate stance, or storytelling hook."
     )
     suggested_chunks_to_try: List[str] = Field(
         description="3 natural American expressions the member can try weaving into their reply."
@@ -112,11 +116,11 @@ class DynamicStudioSparkSchema(BaseModel):
 
 class DynamicDrillSchema(BaseModel):
     drill_title: str = Field(description="Engaging title of the workout.")
-    scenario_prompt: str = Field(description="Freshly generated interactive scenario or prompt.")
+    scenario_prompt: str = Field(description="Freshly generated interactive scenario, contrastive stress Variations, or challenge instructions.")
     target_chunks: List[str] = Field(default_factory=list, description="3 target expressions for the challenge.")
     target_audio_sentence: str = Field(
         default="",
-        description="Natural American spoken sentence packed with Flap-T, linking, vowel reductions, and rhythm."
+        description="Natural American spoken sentence packed with Flap-T, linking, vowel reductions, or contrastive stress."
     )
     phonetic_prosody_map: str = Field(
         default="",
@@ -124,7 +128,7 @@ class DynamicDrillSchema(BaseModel):
     )
     hidden_reductions_explained: str = Field(
         default="",
-        description="Clear explanation of how words blend, link, or reduce in fast American speech."
+        description="Clear explanation of how words blend, link, or how shifting stress alters the hidden subtext."
     )
 
 
@@ -143,6 +147,13 @@ class ActiveReviewEvalSchema(BaseModel):
     recommended_grade: int = Field(description="5 if effortless & natural, 3 if minor slip, 1 if misused or missing.")
     coach_feedback: str = Field(description="Warm, sharp coaching feedback on how they used the phrase (and pronunciation if audio).")
     polished_version: str = Field(description="How a New Yorker would say the user's exact sentence with 100% natural rhythm.")
+
+
+class SpokenFluencyAuditSchema(BaseModel):
+    overall_vibe_assessment: str = Field(description="Insightful assessment of the member's current spoken style, strengths, and conversational presence.")
+    naturalness_highlights: List[str] = Field(description="2 to 3 specific strengths or expressions the member is using or absorbing well.")
+    focus_areas_under_pressure: List[str] = Field(description="2 to 3 specific phrasing, spoken-structure, or phonetic habits to polish next.")
+    recommended_next_steps: str = Field(description="Concrete, actionable 3-step coaching plan for their next few sessions in the club.")
 
 
 # =====================================================================
@@ -238,7 +249,15 @@ class NYCLoungeAI:
         return calibrations.get(level, calibrations["C1"])
 
     def _build_mode_specific_directive(self, mode: str, session_meta: Dict[str, Any]) -> str:
-        if mode == "storytelling_gym":
+        if mode == "devils_advocate":
+            return (
+                "ACTIVE ROOM: 🥊 DEVIL'S ADVOCATE (PUSHBACK & SPARRING UNDER PRESSURE).\n"
+                "Your role: Play a sharp, charismatic New Yorker who respectfully challenges the member's premise or plays devil's advocate.\n"
+                "1. In `lounge_reply`, push back on their argument with a clever counter-angle or edge-case question that forces them to defend or nuance their position.\n"
+                "2. Coach them on American Pushback & Hedging Gambits ('I see where you're coming from, but...', 'Hold on, I wouldn't go that far...', 'Fair point, though if you look at the flip side...').\n"
+                "3. Make all 3 expression upgrades high-impact persuasion, concession-and-counter, or floor-holding gambits."
+            )
+        elif mode == "storytelling_gym":
             return (
                 "ACTIVE ROOM: 🎭 STORYTELLING & WIT GYM.\n"
                 "Coach the member like a New York storytelling mentor:\n"
@@ -290,6 +309,13 @@ class NYCLoungeAI:
                     f"Connected speech notes: {hidden_notes}\n"
                     f"Compare what the member typed against the original sentence. Highlight which linked or reduced sounds (Flap-T, Schwa, dropped consonants) blended together, and show how to catch them."
                 )
+            elif drill_kind == "contrastive_stress":
+                return (
+                    f"ACTIVE ROOM: 🎭 CONTRASTIVE STRESS & SUBTEXT LAB.\n"
+                    f"The target line was: '{target_sent}'.\n"
+                    f"Subtext & Stress Guide: {hidden_notes}\n"
+                    f"Listen closely to which word the member stressed in their voice note (or how they explained the subtext), tell them what unspoken meaning their pitch/stress conveyed, and coach them on nailing contrastive pitch."
+                )
             return (
                 f"ACTIVE ROOM: 🎙️ RHYTHM & SHADOWING WORKOUT.\n"
                 f"The target sentence was: '{target_sent}'.\n"
@@ -301,7 +327,7 @@ class NYCLoungeAI:
         )
 
     # =================================================================
-    # 3. Dynamic Topic & Scenario Spark (Clean, Zero Technical Jargon)
+    # 3. Dynamic Topic & Scenario Spark
     # =================================================================
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
         uid = user["user_id"]
@@ -318,16 +344,22 @@ class NYCLoungeAI:
             "unspoken social rules in modern city life",
             "a plan or trip that took a completely unexpected turn",
             "reading between the lines when a colleague or friend is being diplomatic",
-            "overrated habits vs. small daily rituals that actually matter",
+            "a controversial take on productivity, ambition, or modern habits",
             "navigating last-minute changes or backing out of a commitment gracefully",
             "a moment that completely shifted your perspective on something",
             "dealing with someone who overcomplicates simple decisions"
         ]
         chosen_seed = random.choice(random_themes)
 
+        mode_hint = (
+            "Pitch a bold, slightly provocative New York opinion on this theme and challenge the member to push back and disagree with you!"
+            if target_mode == "devils_advocate" else
+            f"Create a fresh, engaging conversation starter or scenario for room `{target_mode}`."
+        )
+
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"TASK: Invent a fresh, engaging conversation starter or scenario for room: `{target_mode}`.\n"
+            f"TASK: {mode_hint}\n"
             f"- Depth Calibration: {self._level_calibration_guide(level)}\n"
             f"- Preferred Vibe: {REGISTERS_MAP.get(pref_reg, '🎙️ Articulate')}\n"
             f"- Inspiration Angle: {chosen_seed}\n"
@@ -419,7 +451,7 @@ class NYCLoungeAI:
                 "Listen carefully to the member's voice note. "
                 "1) Transcribe what they said verbatim in `transcription`. "
                 "2) Reply naturally as their NYC host in `lounge_reply`. "
-                "3) Provide the 3 Vibe rewrites (🎙️ Articulate, ☕ Casual, 🎭 Witty). "
+                "3) Provide the 3 Vibe rewrites (🎙️ Articulate, ☕ Casual, 🎭 Witty) and a natural `self_repair_pivot`. "
                 "4) In `acoustic_prosody_xray` and `diagnostics`, evaluate their vocal delivery: vowel lengths (tense vs. lax), primary word stress (CAPS), thought-group pauses (|), Flap-T, Glottal Stop, linking, and pitch direction (↘/↗). "
                 "5) Provide 3 high-value Spoken American Expressions with full 3-part frames."
             )
@@ -447,7 +479,7 @@ class NYCLoungeAI:
         return res, used_stealth_ids
 
     # =================================================================
-    # 5. Live Collocation Explorer (Grows the Phrasebook Automatically)
+    # 5. Live Collocation Explorer
     # =================================================================
     def explore_collocations_live(self, user: Dict[str, Any], query_word: str) -> CollocationExplorerSchema:
         level = user.get("level", "C1")
@@ -464,12 +496,11 @@ class NYCLoungeAI:
             system_instruction=system_prompt,
             temperature=0.60
         )
-        # Auto-enrich the local database with these newly explored collocations!
         self.db.ingest_chunks_to_corpus([c.model_dump() for c in explorer.collocation_frames])
         return explorer
 
     # =================================================================
-    # 6. Active Review Usage Evaluator (Voice or Text in Daily Review)
+    # 6. Active Review Usage Evaluator
     # =================================================================
     def evaluate_active_srs_usage(
         self,
@@ -502,7 +533,58 @@ class NYCLoungeAI:
         )
 
     # =================================================================
-    # 7. Native Text & Subtext Miner
+    # 7. Cumulative Spoken Fluency Audit (C2 Progress Report)
+    # =================================================================
+    def generate_fluency_audit(self, user: Dict[str, Any]) -> str:
+        uid = user["user_id"]
+        stats = self.db.get_user_stats(uid)
+        vault = self.db.get_user_vault(uid, limit=10)
+        weaknesses = self.db.get_weaknesses(uid, limit=8)
+        history = self.db.get_history(uid, limit=12)
+
+        vault_str = ", ".join([f"{v['chunk']} ({v['register_tag']})" for v in vault]) if vault else "Building initial Vault"
+        weak_str = "; ".join([f"'{w['user_said']}' -> '{w['native_fix']}' ({w['category']})" for w in weaknesses]) if weaknesses else "No recurring slips logged yet"
+        user_turns = [h["content"] for h in history if h["role"] == "user"]
+        turns_str = " | ".join(user_turns[-6:]) if user_turns else "Ready for initial turns"
+
+        system_prompt = (
+            f"{CORE_NYC_PERSONA_PROMPT}\n\n"
+            "TASK: Generate a personalized, insightful 'Spoken Fluency & Style Audit' for this club member.\n"
+            f"- Collected Vault Phrases ({stats['total_vault']} total, {stats['stealth_mastered']} absorbed in live chat): {vault_str}\n"
+            f"- Logged Phrasing & Accent Habits ({stats['active_errors']} active, {stats['mastered_errors']} mastered): {weak_str}\n"
+            f"- Recent Member Turns: {turns_str}\n"
+            "Be encouraging, specific, and perceptive—like a personal New York rhetoric and accent coach."
+        )
+
+        try:
+            audit: SpokenFluencyAuditSchema = self._call_structured(
+                contents=["Generate the member's Spoken Fluency & Style Audit now."],
+                schema_cls=SpokenFluencyAuditSchema,
+                system_instruction=system_prompt,
+                temperature=0.65
+            )
+            strengths_html = "\n".join([f"  • ✨ {html.escape(s)}" for s in audit.naturalness_highlights[:3]])
+            focus_html = "\n".join([f"  • 🎯 {html.escape(f)}" for f in audit.focus_areas_under_pressure[:3]])
+            return (
+                "📊 <b>Your Spoken American Fluency & Style Audit</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"📓 <b>Vault:</b> <code>{stats['total_vault']}</code> phrases | ✨ <b>Absorbed in Chat:</b> <code>{stats['stealth_mastered']}</code> | ✅ <b>Polished Habits:</b> <code>{stats['mastered_errors']}</code>\n\n"
+                f"🗽 <b>Current Style & Presence:</b>\n{html.escape(audit.overall_vibe_assessment)}\n\n"
+                f"🌟 <b>What's Sounding Natural:</b>\n{strengths_html}\n\n"
+                f"🔬 <b>Priority Focus Areas Under Pressure:</b>\n{focus_html}\n\n"
+                f"🧭 <b>Coach's Next-Step Gameplan:</b>\n<i>{html.escape(audit.recommended_next_steps)}</i>"
+            )
+        except Exception as e:
+            logger.warning(f"Fluency audit fallback: {e}")
+            return (
+                "📊 <b>Your Spoken Fluency Snapshot</b>\n"
+                f"• Saved Phrases: <code>{stats['total_vault']}</code> | Absorbed in Chat: <code>{stats['stealth_mastered']}</code>\n"
+                f"• Active Habits Being Polished: <code>{stats['active_errors']}</code> | Mastered: <code>{stats['mastered_errors']}</code>\n\n"
+                "Keep sending voice notes in <b>🗣️ NYC Banter</b> and <b>🥊 Devil's Advocate</b> to deepen your diagnostic profile!"
+            )
+
+    # =================================================================
+    # 8. Native Text & Subtext Miner
     # =================================================================
     def mine_text_and_subtext(self, user: Dict[str, Any], source_text: str) -> LoungeTurnResponse:
         level = user.get("level", "C1")
@@ -522,7 +604,7 @@ class NYCLoungeAI:
         )
 
     # =================================================================
-    # 8. Dual-Host NYC Radio Studio Generator (Andrew & Ava)
+    # 9. Dual-Host NYC Radio Studio Generator (Andrew & Ava)
     # =================================================================
     def generate_podcast_episode(self, user: Dict[str, Any], custom_topic: str = "") -> PodcastEpisodeSchema:
         uid = user["user_id"]
@@ -558,7 +640,7 @@ class NYCLoungeAI:
         )
 
     # =================================================================
-    # 9. Generative Active Workouts (Zero Technical Jargon)
+    # 10. Generative Active Workouts (Including Contrastive Stress Lab)
     # =================================================================
     def build_active_drill(self, user: Dict[str, Any], drill_type: str) -> Dict[str, Any]:
         uid = user["user_id"]
@@ -581,13 +663,17 @@ class NYCLoungeAI:
             "1. If `forced_output`:\n"
             "   - Pick 3 target expressions (prioritize Member's Saved Phrases & Recent Upgrades; if fewer than 3 exist, invent fresh natural American expressions).\n"
             "   - Invent a vivid, realistic social or workplace scenario where all 3 expressions naturally fit together.\n"
-            "2. If `shadowing`:\n"
+            "2. If `contrastive_stress`:\n"
+            "   - Create 1 natural everyday American sentence (10-14 words) in `target_audio_sentence` where shifting the primary stress to 3 different words completely changes the hidden implication/subtext.\n"
+            "   - In `scenario_prompt`, show the 3 stress variations (using CAPS on the stressed word) and explain the exact unspoken subtext of each variation, then challenge the member to record a voice note delivering Variation #2 or #3!\n"
+            "   - In `phonetic_prosody_map`, show the connected speech & pitch contour.\n"
+            "3. If `shadowing`:\n"
             "   - Create a fresh, natural 1-2 sentence American line rich in Flap-T, consonant-to-vowel linking, tense/lax vowel contrasts, and unstressed Schwa reductions in `target_audio_sentence`.\n"
             "   - Provide its exact rhythm map with primary stress CAPS, thought-group pause bars (|), and intonation arrows (↗/↘) in `phonetic_prosody_map`.\n"
-            "3. If `micro_dictation`:\n"
+            "4. If `micro_dictation`:\n"
             "   - Create a fast everyday American sentence containing natural connected-speech reductions ('did you' -> 'didja', 'going to' -> 'gonna', 'would have' -> 'woulda', Flap-T) in `target_audio_sentence`.\n"
             "   - Explain the exact linked/reduced sounds in `hidden_reductions_explained`.\n"
-            "4. If `diagnostic_test`:\n"
+            "5. If `diagnostic_test`:\n"
             "   - Create an engaging, multi-layered real-life dilemma or storytelling prompt in `scenario_prompt`."
         )
 
@@ -612,6 +698,26 @@ class NYCLoungeAI:
                         f"🗽 <b>The Situation:</b>\n<i>{html.escape(drill.scenario_prompt)}</i>"
                     ),
                     "tts_target": ""
+                }
+
+            elif drill_type == "contrastive_stress":
+                target_sent = drill.target_audio_sentence or "I never said she stole my money."
+                self.db.update_session_meta(
+                    uid,
+                    drill_target_sentence=target_sent,
+                    drill_phonetic_hint=drill.scenario_prompt,
+                    drill_kind="contrastive_stress"
+                )
+                return {
+                    "text": (
+                        f"🎭 <b>{html.escape(drill.drill_title or 'Contrastive Stress & Subtext Lab')}</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🎯 <b>Base Line:</b>\n<code>{html.escape(target_sent)}</code>\n\n"
+                        f"🔍 <b>How Shifting Stress Changes the Unspoken Subtext:</b>\n{html.escape(drill.scenario_prompt)}\n\n"
+                        f"🎧 <b>Rhythm & Pitch Contour:</b>\n<i>{html.escape(drill.phonetic_prosody_map)}</i>\n\n"
+                        "👇 <b>Your Challenge:</b> Send a voice note reading the base line while placing heavy pitch stress on ONE specific word to convey that exact hidden meaning!"
+                    ),
+                    "tts_target": target_sent
                 }
 
             elif drill_type == "micro_dictation":

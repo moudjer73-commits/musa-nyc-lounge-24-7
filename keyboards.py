@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 keyboards.py — Clean, Immersive Club Keyboards for Musa's NYC Lounge
-Zero technical jargon; supports Host Voice, User Recast Voice, and Voice Mirror.
+Includes Devil's Advocate Sparring, Contrastive Stress Lab, and Spoken Fluency Audit.
 """
 from typing import Dict, Any
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -19,44 +19,49 @@ class LoungeKeyboards:
         def _m(target: str, label: str) -> str:
             return f"✅ {label}" if mode == target else label
 
-        # Row 1: Spontaneous Banter & Storytelling Gym
+        # Row 1: Spontaneous Banter & Devil's Advocate Sparring
         kb.add(
             InlineKeyboardButton(_m("spontaneous_chat", "🗣️ NYC Banter"), callback_data="mode:spontaneous_chat"),
-            InlineKeyboardButton(_m("storytelling_gym", "🎭 Storytelling Gym"), callback_data="mode:storytelling_gym")
+            InlineKeyboardButton(_m("devils_advocate", "🥊 Devil's Advocate"), callback_data="mode:devils_advocate")
         )
-        # Row 2: Vibe Shifter & Subtext Decoder
+        # Row 2: Storytelling Gym & Vibe Shifter
         kb.add(
-            InlineKeyboardButton(_m("register_lab", "🎛️ Vibe & Style Shifter"), callback_data="mode:register_lab"),
-            InlineKeyboardButton(_m("subtext_decoder", "🕵️‍♂️ Subtext & Nuance"), callback_data="mode:subtext_decoder")
+            InlineKeyboardButton(_m("storytelling_gym", "🎭 Storytelling Gym"), callback_data="mode:storytelling_gym"),
+            InlineKeyboardButton(_m("register_lab", "🎛️ Vibe & Style Shifter"), callback_data="mode:register_lab")
         )
-        # Row 3: Situation Gambits & The Radio Lounge
+        # Row 3: Subtext Decoder & Situation Gambits
         kb.add(
-            InlineKeyboardButton(_m("situation_gambit", "⚡ What to Say When..."), callback_data="mode:situation_gambit"),
-            InlineKeyboardButton("🎙️ The Radio Lounge", callback_data="menu:podcast")
+            InlineKeyboardButton(_m("subtext_decoder", "🕵️‍♂️ Subtext & Nuance"), callback_data="mode:subtext_decoder"),
+            InlineKeyboardButton(_m("situation_gambit", "⚡ What to Say When..."), callback_data="mode:situation_gambit")
         )
         # Row 4: Fresh Conversation / Scenario Starter
         kb.row(
             InlineKeyboardButton("🎲 Spark a Fresh Topic or Scenario", callback_data="action:spark_topic")
         )
-        # Row 5: Phrase Finder/Text Miner & Active Workouts
+        # Row 5: Radio Lounge & Phrase Finder/Miner
         kb.add(
-            InlineKeyboardButton("🔎 Phrase Finder & Miner", callback_data="menu:miner_lookup"),
-            InlineKeyboardButton("🎯 Speaking Workouts", callback_data="menu:drills")
+            InlineKeyboardButton("🎙️ The Radio Lounge", callback_data="menu:podcast"),
+            InlineKeyboardButton("🔎 Phrase Finder & Miner", callback_data="menu:miner_lookup")
         )
-        # Row 6: Daily Review & Personal Vault
+        # Row 6: Speaking Workouts & Daily Review
         kb.add(
-            InlineKeyboardButton("🧠 Daily Review", callback_data="srs:next"),
-            InlineKeyboardButton("📓 My Vault & Booklet", callback_data="menu:vault")
+            InlineKeyboardButton("🎯 Speaking Workouts", callback_data="menu:drills"),
+            InlineKeyboardButton("🧠 Daily Review", callback_data="srs:next")
         )
-        # Row 7: Vibe Selector & Preferences
+        # Row 7: Personal Vault & Fluency Audit
+        kb.add(
+            InlineKeyboardButton("📓 My Vault & Booklet", callback_data="menu:vault"),
+            InlineKeyboardButton("📊 Fluency Audit", callback_data="action:fluency_audit")
+        )
+        # Row 8: Vibe Selector & Preferences
         kb.add(
             InlineKeyboardButton(f"🎚️ Vibe: {reg_label}", callback_data="action:cycle_register"),
-            InlineKeyboardButton("⚙️ Preferences & Progress", callback_data="menu:settings")
+            InlineKeyboardButton("⚙️ Preferences", callback_data="menu:settings")
         )
-        # Row 8: Member's Handbook & Fresh Table
+        # Row 9: Detailed Member's Handbook & Fresh Table
         kb.add(
             InlineKeyboardButton("📖 Member's Handbook", callback_data="guide:overview"),
-            InlineKeyboardButton("🔄 Fresh Table (Clear Chat)", callback_data="action:clear_chat")
+            InlineKeyboardButton("🔄 Fresh Table", callback_data="action:clear_chat")
         )
         if is_admin:
             kb.row(InlineKeyboardButton("🛡️ Club Host Controls", callback_data="menu:admin"))
@@ -112,15 +117,15 @@ class LoungeKeyboards:
 
         kb.add(
             InlineKeyboardButton(_c("overview", "📖 Overview & Controls"), callback_data="guide:overview"),
-            InlineKeyboardButton(_c("ch1_xray", "🔬 1. Notes & Voice Mirror"), callback_data="guide:ch1_xray")
+            InlineKeyboardButton(_c("ch1_xray", "🔬 1. Notes, Pivot & Mirror"), callback_data="guide:ch1_xray")
         )
         kb.add(
-            InlineKeyboardButton(_c("ch2_studios", "🗽 2. Conversation Rooms"), callback_data="guide:ch2_studios"),
+            InlineKeyboardButton(_c("ch2_studios", "🗽 2. The 6 Club Rooms"), callback_data="guide:ch2_studios"),
             InlineKeyboardButton(_c("ch3_audio_podcast", "🎙️ 3. Accent & Radio Show"), callback_data="guide:ch3_audio_podcast")
         )
         kb.add(
-            InlineKeyboardButton(_c("ch4_miner_drills", "🎯 4. Phrase Finder & Workouts"), callback_data="guide:ch4_miner_drills"),
-            InlineKeyboardButton(_c("ch5_vault_routine", "🧠 5. Vault & Daily Review"), callback_data="guide:ch5_vault_routine")
+            InlineKeyboardButton(_c("ch4_miner_drills", "🎯 4. Finder & Workouts"), callback_data="guide:ch4_miner_drills"),
+            InlineKeyboardButton(_c("ch5_vault_routine", "🧠 5. Vault & Daily Routine"), callback_data="guide:ch5_vault_routine")
         )
         kb.row(InlineKeyboardButton("🏠 Back to Club Menu", callback_data="menu:home"))
         return kb
@@ -151,9 +156,11 @@ class LoungeKeyboards:
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
             InlineKeyboardButton("🔥 The 3-Phrase Speaking Challenge", callback_data="drill:forced_output"),
+            InlineKeyboardButton("🎭 Contrastive Stress & Subtext Lab", callback_data="drill:contrastive_stress"),
             InlineKeyboardButton("🎙️ American Rhythm & Shadowing Workout", callback_data="drill:shadowing"),
             InlineKeyboardButton("👂 Fast Ear Catcher (Connected Speech)", callback_data="drill:micro_dictation"),
             InlineKeyboardButton("🩺 Habits I'm Polishing", callback_data="drill:weakness_list"),
+            InlineKeyboardButton("📊 My Spoken Fluency & Style Audit", callback_data="action:fluency_audit"),
             InlineKeyboardButton("🧭 Full Spoken Flow & Accent Checkup", callback_data="drill:diagnostic_test"),
             InlineKeyboardButton("🔙 Back to Club Menu", callback_data="menu:home")
         )
@@ -193,8 +200,9 @@ class LoungeKeyboards:
         )
         kb.add(
             InlineKeyboardButton("🧠 Practice Due Phrases", callback_data="srs:next"),
-            InlineKeyboardButton("🔙 Club Menu", callback_data="menu:home")
+            InlineKeyboardButton("📊 Spoken Fluency Audit", callback_data="action:fluency_audit")
         )
+        kb.row(InlineKeyboardButton("🔙 Club Menu", callback_data="menu:home"))
         return kb
 
     @staticmethod
@@ -209,7 +217,7 @@ class LoungeKeyboards:
         eng_only = bool(user.get("english_only", 1))
         eng_label = "🔒 100% English Immersion: ON" if eng_only else "🔓 Brief Arabic Notes: ALLOWED"
         kb.row(InlineKeyboardButton(eng_label, callback_data="set:toggle_eng"))
-        kb.row(InlineKeyboardButton("🧭 Run Spoken Flow & Accent Checkup", callback_data="drill:diagnostic_test"))
+        kb.row(InlineKeyboardButton("📊 Generate My Spoken Fluency Audit", callback_data="action:fluency_audit"))
         kb.row(InlineKeyboardButton("🔙 Back to Club Menu", callback_data="menu:home"))
         return kb
 

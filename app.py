@@ -103,6 +103,7 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
     stats = db.get_user_stats(user["user_id"])
     mode_names = {
         "spontaneous_chat": "🗣️ NYC Spontaneous Banter",
+        "devils_advocate": "🥊 Devil's Advocate Sparring",
         "storytelling_gym": "🎭 Storytelling & Wit Gym",
         "register_lab": "🎛️ Vibe & Style Shifter",
         "subtext_decoder": "🕵️‍♂️ Subtext & Nuance",
@@ -143,6 +144,7 @@ def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False, ste
         f"• <b>🎙️ Articulate:</b> <code>{html.escape(res.rewrite_articulate)}</code>",
         f"• <b>☕ Casual:</b> <code>{html.escape(res.rewrite_casual)}</code>",
         f"• <b>🎭 Witty:</b> <code>{html.escape(res.rewrite_witty)}</code>",
+        f"• <b>🔄 Mid-Sentence Pivot:</b> <i>{html.escape(res.self_repair_pivot)}</i>" if getattr(res, "self_repair_pivot", "") else "",
         "",
         f"🎧 <b>American Rhythm, Stress & Linking Map:</b>\n{html.escape(res.acoustic_prosody_xray)}"
     ]
@@ -365,7 +367,21 @@ if bot:
                 )
                 bot.answer_callback_query(call.id)
 
-            # --- 3. Spark a Fresh Topic / Scenario ---
+            # --- 3. Spoken Fluency & Style Audit ---
+            elif data == "action:fluency_audit":
+                bot.answer_callback_query(call.id, "📊 Compiling your Spoken Fluency Audit...")
+                wait_msg = bot.send_message(
+                    call.message.chat.id,
+                    "📊 <b>Reviewing your recent turns, Vault phrases & speaking habits...</b>"
+                )
+                audit_html = ai_engine.generate_fluency_audit(user)
+                safe_edit_text(
+                    call.message.chat.id, wait_msg.message_id,
+                    audit_html,
+                    reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"))
+                )
+
+            # --- 3B. Spark a Fresh Topic / Scenario ---
             elif data == "action:spark_topic":
                 bot.answer_callback_query(call.id, "🎲 Setting up a fresh topic...")
                 wait_msg = bot.send_message(
@@ -410,6 +426,10 @@ if bot:
                     )
                 else:
                     studio_banners = {
+                        "devils_advocate": (
+                            "🥊 <b>Devil's Advocate (Pushback & Sparring Room)</b>\n\n"
+                            "Share any opinion, hot take, or decision (voice or text)—or tap <code>🎲 Spark Another Topic</code> for a controversial thesis. I'll push back on your premise so you can practice diplomatic disagreement, hedging, and holding the floor!"
+                        ),
                         "spontaneous_chat": (
                             "🗣️ <b>NYC Spontaneous Banter</b>\n\n"
                             "Drop a voice note or text on anything—or tap <code>🎲 Spark Another Topic</code> below for a fresh conversation starter!"
@@ -620,6 +640,7 @@ if bot:
                 )
                 mode_map = {
                     "forced_output": "weakness_drill",
+                    "contrastive_stress": "shadowing_drill",
                     "shadowing": "shadowing_drill",
                     "micro_dictation": "shadowing_drill",
                     "diagnostic_test": "spontaneous_chat"
