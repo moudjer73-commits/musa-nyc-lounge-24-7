@@ -2,11 +2,11 @@
 """
 app.py — Main Club Host Engine for Musa's NYC Lounge
 Features:
-- Pure New York Club Experience (zero technical jargon or startup spam)
-- Dual Audio Playback (Host Voice + User Recast Voice) & Voice Mirror
-- Live Collocation Explorer with Atomic Save
-- Active & Self-Graded Daily Review (Voice or Text practice)
-- Silent Self-Cleaning Background Vault Sync
+- Full Trio & Individual Host Experience (Marcus, Chloe, Jake & Trio Table)
+- Long-Form (3+ Min) Duo & Trio Podcast Studio with [MM:SS] Noticing Timestamps
+- Active Productive Uptake Celebration (Swain's Output Hypothesis) & 'Take 2' Retry Loop
+- 1-to-1 Calibrated Voice Mirror with Loudness Normalization
+- Graceful SIGTERM/SIGINT Backup Handler for Zero-Loss GitHub Actions Relay
 """
 import os
 import re
@@ -14,9 +14,10 @@ import sys
 import time
 import uuid
 import html
+import signal
 import logging
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import telebot
 
@@ -30,8 +31,7 @@ from config import (
     RELAY_MAX_RUNTIME_SECONDS,
     PERIODIC_BACKUP_SECONDS,
     REGISTERS_MAP,
-    VOICE_MALE_HOST,
-    VOICE_FEMALE_HOST,
+    PERSONAS,
     GUIDE_CHAPTERS
 )
 from database import LoungeDatabase
@@ -61,7 +61,8 @@ def sanitize_ai_html(raw_text: str) -> str:
     placeholders = {
         "<i>": "___OPEN_I___", "</i>": "___CLOSE_I___",
         "<b>": "___OPEN_B___", "</b>": "___CLOSE_B___",
-        "<code>": "___OPEN_C___", "</code>": "___CLOSE_C___"
+        "<code>": "___OPEN_C___", "</code>": "___CLOSE_C___",
+        "<s>": "___OPEN_S___", "</s>": "___CLOSE_S___"
     }
     t = raw_text
     for tag, ph in placeholders.items():
@@ -69,16 +70,16 @@ def sanitize_ai_html(raw_text: str) -> str:
     t = html.escape(t)
     for tag, ph in placeholders.items():
         t = t.replace(ph, tag)
-    if t.count("<i>") > t.count("</i>"):
-        t += "</i>" * (t.count("<i>") - t.count("</i>"))
-    if t.count("<b>") > t.count("</b>"):
-        t += "</b>" * (t.count("<b>") - t.count("</b>"))
-    if t.count("<code>") > t.count("</code>"):
-        t += "</code>" * (t.count("<code>") - t.count("</code>"))
+    for tag_name in ("i", "b", "code", "s"):
+        o_tag, c_tag = f"<{tag_name}>", f"</{tag_name}>"
+        if t.count(o_tag) > t.count(c_tag):
+            t += c_tag * (t.count(o_tag) - t.count(c_tag))
     return t
 
 
 def safe_edit_text(chat_id: int, message_id: int, text: str, reply_markup=None):
+    if len(text) > 4050:
+        text = text[:4040] + "...</blockquote>" if "<blockquote" in text else text[:4040] + "..."
     try:
         return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup)
     except Exception as e:
@@ -89,7 +90,7 @@ def safe_edit_text(chat_id: int, message_id: int, text: str, reply_markup=None):
             return bot.send_message(chat_id, text, reply_markup=reply_markup)
         except Exception:
             plain = re.sub(r"<[^>]+>", "", text)
-            return bot.send_message(chat_id, plain, parse_mode=None, reply_markup=reply_markup)
+            return bot.send_message(chat_id, plain[:4000], parse_mode=None, reply_markup=reply_markup)
 
 
 def is_authorized(user_id: int, username: str = "", full_name: str = "") -> bool:
@@ -97,6 +98,16 @@ def is_authorized(user_id: int, username: str = "", full_name: str = "") -> bool
     if user_id == ADMIN_ID or ADMIN_ID == 0:
         return True
     return bool(u.get("is_whitelisted", 0))
+
+
+def _persona_badge(persona_key: str) -> str:
+    p_map = {
+        "trio": "🗽 Trio Table (Marcus, Chloe & Jake)",
+        "marcus": "🧔‍♂️ Marcus (Articulate)",
+        "chloe": "👩🏼‍💼 Chloe (Witty)",
+        "jake": "🧢 Jake (Casual)"
+    }
+    return p_map.get((persona_key or "trio").lower(), "🗽 Trio Table")
 
 
 def build_welcome_banner(user: Dict[str, Any]) -> str:
@@ -110,47 +121,65 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
         "situation_gambit": "⚡ What to Say When...",
         "fast_lookup": "🔎 Collocation & Phrase Finder",
         "chunk_miner": "🔬 Native Text Miner",
-        "podcast_guest": "🎙️ Live Radio Interview",
-        "podcast_custom_topic": "✍️ Custom Radio Show",
+        "podcast_guest": "🎤 Live Radio Interview",
+        "podcast_custom_trio": "✍️ Custom Trio Podcast",
+        "podcast_custom_duo": "✍️ Custom Duo Podcast",
         "weakness_drill": "🔥 3-Phrase Speaking Challenge",
         "shadowing_drill": "🎙️ Rhythm & Shadowing",
         "srs_active_practice": "🧠 Daily Phrase Practice"
     }
     cur_mode = mode_names.get(user.get("current_mode", "spontaneous_chat"), "🗣️ NYC Spontaneous Banter")
     reg_badge = REGISTERS_MAP.get(user.get("preferred_register", "articulate"), "🎙️ Articulate")
+    host_badge = _persona_badge(user.get("active_persona", "trio"))
 
     return (
         f"🗽 <b>Musa's NYC Lounge</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 <b>Member:</b> {html.escape(user.get('full_name') or 'Friend')} | 🎚️ <b>Vibe:</b> {reg_badge}\n"
+        f"👥 <b>Active Hosts:</b> {host_badge}\n"
         f"🛋️ <b>Current Room:</b> {cur_mode}\n"
-        f"📓 <b>Saved Phrases:</b> <code>{stats['total_vault']}</code> | 🧠 <b>Due for Review:</b> <code>{stats['due_srs']}</code> | ✨ <b>Absorbed in Chat:</b> <code>{stats['stealth_mastered']}</code>\n"
+        f"📓 <b>Vault:</b> <code>{stats['total_vault']}</code> | 🔥 <b>Produced:</b> <code>{stats.get('productive_mastered', 0)}</code> | 🧠 <b>Due Today:</b> <code>{stats['due_srs']}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>Drop a voice note or text anytime, tap <code>🎲 Spark a Fresh Topic</code>, or step into any room below:</i>"
+        f"<i>Tap a host at the top, drop a voice note or text anytime, or step into any room below:</i>"
     )
 
 
-def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False, stealth_count: int = 0) -> str:
+def format_lounge_turn_html(
+    res: LoungeTurnResponse,
+    is_voice: bool = False,
+    stealth_count: int = 0,
+    active_uptakes: List[str] = None
+) -> str:
     top_section = ""
+    if active_uptakes:
+        up_badges = ", ".join([f"<code>{html.escape(u)}</code>" for u in active_uptakes])
+        top_section += f"🔥 <b>Active Mastery! You naturally produced from your Vault:</b> {up_badges}\n\n"
+
     if is_voice and res.transcription:
         top_section += f"🎙️ <i>\"{html.escape(res.transcription)}\"</i>\n\n"
 
-    top_section += f"🗽 {sanitize_ai_html(res.lounge_reply)}\n\n"
+    resp_p = (getattr(res, "responding_persona", "marcus") or "marcus").lower()
+    p_icon = {"marcus": "🧔‍♂️", "chloe": "👩🏼‍💼", "jake": "🧢"}.get(resp_p, "🗽")
+    reply_clean = sanitize_ai_html(res.lounge_reply)
+    if any(tag in reply_clean for tag in ("Marcus:", "Chloe:", "Jake:")):
+        top_section += f"{reply_clean}\n\n"
+    else:
+        top_section += f"{p_icon} {reply_clean}\n\n"
 
     xray_lines = [
-        "🔬 <b>Coaching Notes, Rhythm & Expressions (Tap to Expand)</b>",
+        "🔬 <b>Coaching Notes, Rhythm & C1/C2 Expressions (Tap to Expand)</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        "🎭 <b>Your Thought Across 3 American Vibes:</b>",
-        f"• <b>🎙️ Articulate:</b> <code>{html.escape(res.rewrite_articulate)}</code>",
-        f"• <b>☕ Casual:</b> <code>{html.escape(res.rewrite_casual)}</code>",
-        f"• <b>🎭 Witty:</b> <code>{html.escape(res.rewrite_witty)}</code>",
+        "🎭 <b>Your Thought Recast by the Trio:</b>",
+        f"• <b>🧔‍♂️ Marcus (🎙️ Articulate):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
+        f"• <b>🧢 Jake (☕ Casual):</b> <code>{html.escape(res.rewrite_casual)}</code>",
+        f"• <b>👩🏼‍💼 Chloe (🎭 Witty):</b> <code>{html.escape(res.rewrite_witty)}</code>",
         f"• <b>🔄 Mid-Sentence Pivot:</b> <i>{html.escape(res.self_repair_pivot)}</i>" if getattr(res, "self_repair_pivot", "") else "",
         "",
-        f"🎧 <b>American Rhythm, Stress & Linking Map:</b>\n{html.escape(res.acoustic_prosody_xray)}"
+        f"🎧 <b>American Rhythm, Nuclear Stress & Linking Map:</b>\n{html.escape(res.acoustic_prosody_xray)}"
     ]
 
     if res.diagnostics:
-        xray_lines.append("\n🩺 <b>Precision Polish & Pronunciation Notes:</b>")
+        xray_lines.append("\n🩺 <b>Precision Polish & Acoustic Notes:</b>")
         for d in res.diagnostics[:3]:
             xray_lines.append(
                 f"• <i>{html.escape(d.user_said)}</i> ➔ ✅ <b>{html.escape(d.native_fix)}</b>\n"
@@ -160,8 +189,14 @@ def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False, ste
     if res.lexical_upgrades:
         xray_lines.append("\n💎 <b>Spoken Expressions to Steal (Tap ⭐ Save 1/2/3):</b>")
         for idx, up in enumerate(res.lexical_upgrades[:3], start=1):
+            b2_foil_str = getattr(up, "b2_foil", "")
+            foil_line = (
+                f"  • 🔄 <b>B2 vs. C2:</b> <s>{html.escape(b2_foil_str)}</s> ➔ <b>{html.escape(up.chunk)}</b>\n"
+                if b2_foil_str else ""
+            )
             xray_lines.append(
                 f"\n<b>({idx}) {html.escape(up.chunk)}</b> ({html.escape(up.register_tag)})\n"
+                f"{foil_line}"
                 f"  • 💡 <b>Nuance:</b> {html.escape(up.explanation)}\n"
                 f"  • 🎯 <b>When to use:</b> {html.escape(up.trigger)}\n"
                 f"  • 🔗 <b>Pattern:</b> <code>{html.escape(up.pattern)}</code>\n"
@@ -171,10 +206,10 @@ def format_lounge_turn_html(res: LoungeTurnResponse, is_voice: bool = False, ste
 
     if stealth_count > 0:
         xray_lines.append(
-            f"\n✨ <i>Notice the italics above? {stealth_count} expression(s) from your Vault were naturally woven into our conversation!</i>"
+            f"\n✨ <i>Notice the italics above? {stealth_count} expression(s) from your Vault fit this topic naturally!</i>"
         )
 
-    expandable_body = "\n".join(xray_lines)
+    expandable_body = "\n".join([line for line in xray_lines if line is not None])
     return f"{top_section}<blockquote expandable>{expandable_body}</blockquote>"
 
 
@@ -183,14 +218,18 @@ def send_srs_card_prompt(chat_id: int, user_id: int, card: Dict[str, Any], edit_
     db.update_user(user_id, current_mode="srs_active_practice")
     db.update_session_meta(user_id, active_srs_card_id=card["id"])
 
-    cloze = card.get("cloze_sentence") or card.get("example_sentence", "").replace(card["chunk"], "______")
+    cloze = card.get("cloze_sentence") or "______"
+    b2_foil = card.get("b2_foil", "")
+    foil_hint = f"🔄 <b>Instead of flat B2:</b> <i>\"{html.escape(b2_foil)}\"</i>\n" if b2_foil else ""
+
     msg_text = (
-        f"🧠 <b>Daily Phrase Practice</b>\n"
+        f"🧠 <b>Daily Phrase Practice (Active Recall)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🎚️ <b>Vibe:</b> {html.escape(card['register_tag'])}\n"
         f"🎯 <b>When to reach for it:</b> {html.escape(card['trigger_context'])}\n"
-        f"🔗 <b>Pattern Hint:</b> <code>{html.escape(card['co_text_pattern'])}</code>\n\n"
-        f"📝 <b>Fill in the blank:</b>\n"
+        f"{foil_hint}"
+        f"🔗 <b>Colligation Hint:</b> <code>{html.escape(card['co_text_pattern'])}</code>\n\n"
+        f"📝 <b>Complete the sentence:</b>\n"
         f"<i>\"{html.escape(cloze)}\"</i>\n\n"
         f"💡 <b>Two ways to practice:</b>\n"
         f"1️⃣ Tap <code>👁️ Reveal Phrase</code> below to check & self-grade.\n"
@@ -201,6 +240,105 @@ def send_srs_card_prompt(chat_id: int, user_id: int, card: Dict[str, Any], edit_
         safe_edit_text(chat_id, edit_msg_id, msg_text, reply_markup=kb)
     else:
         bot.send_message(chat_id, msg_text, reply_markup=kb)
+
+
+def run_and_send_podcast_episode(
+    chat_id: int,
+    user: Dict[str, Any],
+    format_mode: str = "trio",
+    duo_pair: str = "marcus_chloe",
+    custom_topic: str = "",
+    wait_msg_id: int = 0
+):
+    """Generates and sends a 3+ minute Duo or Trio NotebookLM-style episode with [MM:SS] timestamps."""
+    uid = user["user_id"]
+    bot.send_chat_action(chat_id, "record_voice")
+
+    ep = ai_engine.generate_podcast_episode(
+        user,
+        custom_topic=custom_topic,
+        format_mode=format_mode,
+        duo_pair=duo_pair
+    )
+    mp3_path = LoungeMediaEngine.produce_podcast(ep, format_mode=format_mode)
+
+    token_key = uuid.uuid4().hex[:10]
+    upgrades_dicts = [u.model_dump() for u in ep.key_takeaways]
+    db.store_atomic_batch(uid, token_key, upgrades_dicts, audio_clean_text=ep.title)
+
+    speaker_badges = {
+        "marcus": "🧔‍♂️ Marcus",
+        "male_host": "🧔‍♂️ Marcus",
+        "chloe": "👩🏼‍💼 Chloe",
+        "female_host": "👩🏼‍💼 Chloe",
+        "jake": "🧢 Jake"
+    }
+
+    turn_timestamps = getattr(ep, "turn_timestamps", []) or []
+    chunk_timestamps = getattr(ep, "chunk_timestamps", {}) or {}
+    duration_label = getattr(ep, "duration_label", "03:10")
+
+    # Format Noticing Hypothesis Timestamp Index
+    ts_badges = []
+    for ch in ep.target_chunks_covered:
+        ts_val = chunk_timestamps.get(ch, "")
+        if ts_val:
+            ts_badges.append(f"⏱️ <code>[{ts_val}]</code> <b>{html.escape(ch)}</b>")
+        else:
+            ts_badges.append(f"💎 <b>{html.escape(ch)}</b>")
+    noticing_bar = " • ".join(ts_badges) if ts_badges else "<code>Spoken American Collocations</code>"
+
+    script_lines_html = []
+    for idx, line in enumerate(ep.script):
+        sp_label = speaker_badges.get((line.speaker or "marcus").lower(), "🧔‍♂️ Marcus")
+        ts_prefix = f"<code>[{turn_timestamps[idx]}]</code> " if idx < len(turn_timestamps) else ""
+        script_lines_html.append(f"{ts_prefix}<b>{sp_label}:</b> {html.escape(line.text)}")
+
+    script_html = "\n\n".join(script_lines_html)
+    takeaways_html = "\n".join([
+        f"<b>({i}) {html.escape(u.chunk)}</b> ({html.escape(u.register_tag)}) — {html.escape(u.explanation)}"
+        for i, u in enumerate(ep.key_takeaways, 1)
+    ])
+
+    cast_title = (
+        "Marcus, Chloe & Jake" if format_mode == "trio"
+        else ("Chloe & Jake" if duo_pair == "chloe_jake" else "Marcus & Chloe")
+    )
+
+    short_caption = (
+        f"🎙️ <b>{html.escape(ep.title)}</b>\n"
+        f"👥 <b>Cast:</b> {cast_title} | ⏳ <b>Length:</b> <code>{duration_label}</code>\n"
+        f"🎯 <b>Listen For:</b> {noticing_bar}"
+    )
+
+    full_transcript_msg = (
+        f"📜 <b>Show Transcript & Timestamped Notes: {html.escape(ep.title)}</b>\n"
+        f"🎯 {noticing_bar}\n\n"
+        f"<blockquote expandable>{script_html[:3100]}\n\n"
+        f"✨ <b>Featured Expressions (Tap ⭐ Save 1–4):</b>\n{takeaways_html}</blockquote>"
+    )
+
+    kb = LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False, False, persona_key="marcus")
+
+    if mp3_path:
+        with open(mp3_path, "rb") as af:
+            bot.send_audio(
+                chat_id, af,
+                title=ep.title,
+                performer=f"Musa's NYC Lounge ({cast_title})",
+                caption=short_caption[:1020],
+                reply_markup=kb
+            )
+        bot.send_message(chat_id, full_transcript_msg, reply_markup=kb)
+        LoungeMediaEngine.cleanup_file(mp3_path)
+    else:
+        bot.send_message(chat_id, full_transcript_msg, reply_markup=kb)
+
+    if wait_msg_id:
+        try:
+            bot.delete_message(chat_id, wait_msg_id)
+        except Exception:
+            pass
 
 
 # =====================================================================
@@ -217,6 +355,56 @@ if bot:
             GUIDE_CHAPTERS["overview"],
             reply_markup=LoungeKeyboards.guide_navigation_kb("overview")
         )
+
+    @bot.message_handler(commands=["trio", "podcast"])
+    def cmd_quick_podcast(message):
+        uid = message.from_user.id
+        if not is_authorized(uid, message.from_user.username or "", message.from_user.first_name or ""):
+            return
+        bot.send_message(
+            message.chat.id,
+            "🎙️ <b>The NYC Podcast Lounge (NotebookLM Style — 3+ Min Episodes)</b>\n\n"
+            "Choose a <b>Trio Roundtable (Marcus, Chloe & Jake)</b> or a <b>Duo Deep-Dive</b> below:",
+            reply_markup=LoungeKeyboards.podcast_menu()
+        )
+
+    @bot.message_handler(commands=["spark", "devil", "audit", "review"])
+    def cmd_shortcuts(message):
+        uid = message.from_user.id
+        uname = message.from_user.username or ""
+        fname = message.from_user.first_name or "Friend"
+        if not is_authorized(uid, uname, fname):
+            return
+        user = db.get_user(uid, uname, fname)
+        cmd = (message.text or "").split()[0].lstrip("/").lower()
+
+        if cmd == "devil":
+            db.update_user(uid, current_mode="devils_advocate")
+            user = db.get_user(uid)
+            spark_html = ai_engine.generate_studio_spark(user, mode="devils_advocate")
+            bot.send_message(
+                message.chat.id, spark_html,
+                reply_markup=LoungeKeyboards.studio_prompt_bar("devils_advocate", user.get("active_persona", "trio"))
+            )
+        elif cmd == "spark":
+            spark_html = ai_engine.generate_studio_spark(user)
+            bot.send_message(
+                message.chat.id, spark_html,
+                reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"), user.get("active_persona", "trio"))
+            )
+        elif cmd == "audit":
+            wait_m = bot.send_message(message.chat.id, "📊 <b>The Trio is compiling your Spoken Fluency Audit...</b>")
+            audit_html = ai_engine.generate_fluency_audit(user)
+            safe_edit_text(
+                message.chat.id, wait_m.message_id, audit_html,
+                reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"), user.get("active_persona", "trio"))
+            )
+        elif cmd == "review":
+            card = db.get_due_srs_card(uid)
+            if not card:
+                bot.send_message(message.chat.id, "🎉 <b>You're all caught up on your Daily Review for today!</b>")
+            else:
+                send_srs_card_prompt(message.chat.id, uid, card)
 
     @bot.message_handler(commands=["start", "menu", "lounge"])
     def cmd_start(message):
@@ -287,6 +475,40 @@ if bot:
                 bot.answer_callback_query(call.id)
                 return
 
+            # --- 1B. Direct Persona & Trio Selection ---
+            if data.startswith("persona:"):
+                new_p = data.split(":", 1)[1]
+                if new_p in ("trio", "marcus", "chloe", "jake"):
+                    reg_map = {"marcus": "articulate", "chloe": "witty", "jake": "casual"}
+                    upd_kwargs: Dict[str, Any] = {"active_persona": new_p}
+                    if new_p in reg_map:
+                        upd_kwargs["preferred_register"] = reg_map[new_p]
+                    db.update_user(uid, **upd_kwargs)
+                    user = db.get_user(uid)
+                    bot.answer_callback_query(call.id, f"👥 Host: {_persona_badge(new_p)}")
+                    safe_edit_text(
+                        call.message.chat.id, call.message.message_id,
+                        build_welcome_banner(user),
+                        reply_markup=LoungeKeyboards.main_menu(user, is_admin=(uid == ADMIN_ID))
+                    )
+                return
+
+            if data == "action:cycle_persona":
+                order = ["trio", "marcus", "chloe", "jake"]
+                cur_p = user.get("active_persona", "trio")
+                nxt_p = order[(order.index(cur_p) + 1) % len(order)] if cur_p in order else "trio"
+                db.update_user(uid, active_persona=nxt_p)
+                user = db.get_user(uid)
+                bot.answer_callback_query(call.id, f"👥 Active Host: {_persona_badge(nxt_p)}")
+                try:
+                    bot.edit_message_reply_markup(
+                        call.message.chat.id, call.message.message_id,
+                        reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"), nxt_p)
+                    )
+                except Exception:
+                    pass
+                return
+
             # --- 2. Club Menus ---
             if data == "menu:home":
                 if user.get("current_mode") == "srs_active_practice":
@@ -302,8 +524,9 @@ if bot:
             elif data == "menu:podcast":
                 safe_edit_text(
                     call.message.chat.id, call.message.message_id,
-                    "🎙️ <b>The NYC Radio Lounge (Andrew & Ava)</b>\n\n"
-                    "Our two New York hosts record a lively conversation weaving in the phrases from your Vault, pausing mid-show to unpack why each expression works in context:",
+                    "🎙️ <b>The NYC Podcast Lounge (NotebookLM Style — 3+ Min Episodes)</b>\n\n"
+                    "Experience rapid-fire micro-turns, spatial stereo panning, and timestamped phrase callouts with <b>🧔‍♂️ Marcus, 👩🏼‍💼 Chloe, and 🧢 Jake</b>.\n\n"
+                    "Choose a <b>Trio Roundtable (3 Hosts)</b> or a <b>Duo Deep-Dive (2 Hosts)</b>:",
                     reply_markup=LoungeKeyboards.podcast_menu()
                 )
                 bot.answer_callback_query(call.id)
@@ -312,7 +535,7 @@ if bot:
                 safe_edit_text(
                     call.message.chat.id, call.message.message_id,
                     "🔎 <b>Phrase Finder & Native Text Miner</b>\n\n"
-                    "• <b>Collocation & Phrase Finder:</b> Type any word or verb to explore its most natural spoken American collocations and examples.\n"
+                    "• <b>Collocation & Phrase Finder:</b> Type any word or verb to explore its most natural spoken American collocations and B2-to-C2 upgrades.\n"
                     "• <b>Native Text Miner:</b> Paste any article, dialogue, or quote to extract its best spoken expressions and unpack its subtext:",
                     reply_markup=LoungeKeyboards.miner_lookup_menu()
                 )
@@ -332,13 +555,14 @@ if bot:
                 stats = db.get_user_stats(uid)
                 preview = "\n".join([
                     f"{i}. <b>{html.escape(v['chunk'])}</b> ({html.escape(v['register_tag'])})"
+                    + (f" 🔥<code>{v['productive_count']}x</code>" if int(v.get("productive_count", 0)) > 0 else "")
                     for i, v in enumerate(vault_items, 1)
                 ]) if vault_items else "<i>Your Vault is empty right now. Tap [⭐ Save 1/2/3] under any reply to collect expressions!</i>"
 
                 safe_edit_text(
                     call.message.chat.id, call.message.message_id,
                     f"📓 <b>My Personal Phrasebook & Vault</b>\n"
-                    f"Saved Phrases: <code>{stats['total_vault']}</code> | Due Today: <code>{stats['due_srs']}</code> | Absorbed in Chat: <code>{stats['stealth_mastered']}</code>\n\n"
+                    f"Saved: <code>{stats['total_vault']}</code> | 🔥 Actively Produced: <code>{stats.get('productive_mastered', 0)}</code> | Due Today: <code>{stats['due_srs']}</code>\n\n"
                     f"<b>Latest Saved Expressions:</b>\n{preview}",
                     reply_markup=LoungeKeyboards.vault_menu()
                 )
@@ -350,10 +574,11 @@ if bot:
                     call.message.chat.id, call.message.message_id,
                     f"⚙️ <b>Preferences & Personal Progress</b>\n\n"
                     f"• Coaching Depth: <code>{user['level']}</code>\n"
+                    f"• Active Hosts: <code>{_persona_badge(user.get('active_persona', 'trio'))}</code>\n"
                     f"• Default Vibe: <code>{REGISTERS_MAP.get(user['preferred_register'], '🎙️ Articulate')}</code>\n"
-                    f"• Collected Expressions: <code>{stats['total_vault']}</code> | Absorbed in Chat: <code>{stats['stealth_mastered']}</code>\n"
+                    f"• Collected Expressions: <code>{stats['total_vault']}</code> | Actively Produced: <code>{stats.get('productive_mastered', 0)}</code>\n"
                     f"• Habits Being Polished: <code>{stats['active_errors']}</code> | Polished & Mastered: <code>{stats['mastered_errors']}</code>\n\n"
-                    f"<i>Adjust your coaching depth below:</i>",
+                    f"<i>Adjust your coaching depth or active hosts below:</i>",
                     reply_markup=LoungeKeyboards.settings_menu(user)
                 )
                 bot.answer_callback_query(call.id)
@@ -372,13 +597,13 @@ if bot:
                 bot.answer_callback_query(call.id, "📊 Compiling your Spoken Fluency Audit...")
                 wait_msg = bot.send_message(
                     call.message.chat.id,
-                    "📊 <b>Reviewing your recent turns, Vault phrases & speaking habits...</b>"
+                    "📊 <b>Marcus, Chloe & Jake are reviewing your recent turns, Vault phrases & speaking habits...</b>"
                 )
                 audit_html = ai_engine.generate_fluency_audit(user)
                 safe_edit_text(
                     call.message.chat.id, wait_msg.message_id,
                     audit_html,
-                    reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"))
+                    reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"), user.get("active_persona", "trio"))
                 )
 
             # --- 3B. Spark a Fresh Topic / Scenario ---
@@ -392,7 +617,7 @@ if bot:
                 safe_edit_text(
                     call.message.chat.id, wait_msg.message_id,
                     spark_html,
-                    reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"))
+                    reply_markup=LoungeKeyboards.studio_prompt_bar(user.get("current_mode", "spontaneous_chat"), user.get("active_persona", "trio"))
                 )
 
             # --- 4. Room Switching ---
@@ -402,19 +627,27 @@ if bot:
                 user = db.get_user(uid)
                 bot.answer_callback_query(call.id, "✅ Room Ready!")
 
-                if new_mode in ("fast_lookup", "chunk_miner", "podcast_custom_topic", "admin_add_user", "admin_del_user"):
+                if new_mode in ("fast_lookup", "chunk_miner", "podcast_custom_trio", "podcast_custom_duo", "podcast_custom_topic", "admin_add_user", "admin_del_user"):
                     static_prompts = {
                         "fast_lookup": (
                             "🔎 <b>Collocation & Phrase Finder</b>\n\n"
-                            "Send any word, verb, or short phrase (e.g., <i>slack, point, wind up, doubt</i>) and I'll pull up its most natural spoken American collocations, patterns, and examples!"
+                            "Send any word, verb, or short phrase (e.g., <i>slack, point, wind up, doubt</i>) and I'll pull up its most natural spoken American collocations, patterns, and B2-to-C2 upgrades!"
                         ),
                         "chunk_miner": (
                             "🔬 <b>Native Text & Dialogue Miner</b>\n\n"
                             "Paste any English paragraph, dialogue, or article here to extract its best spoken expressions and unpack its subtext."
                         ),
+                        "podcast_custom_trio": (
+                            "✍️ <b>Custom Trio Roundtable (3+ Min: Marcus, Chloe & Jake)</b>\n\n"
+                            "Type any topic, dilemma, cultural question, or scenario you want <b>all 3 hosts</b> to debate in depth while weaving in your Vault phrases:"
+                        ),
+                        "podcast_custom_duo": (
+                            "✍️ <b>Custom Duo Deep-Dive (3+ Min: Marcus & Chloe)</b>\n\n"
+                            "Type any topic, dilemma, or idea you want <b>Marcus & Chloe</b> to unpack in a 2-host NotebookLM-style deep dive:"
+                        ),
                         "podcast_custom_topic": (
                             "✍️ <b>Custom Radio Show</b>\n\n"
-                            "Type any topic, dilemma, or question you want <b>Andrew & Ava</b> to discuss on-air while weaving in your saved phrases:"
+                            "Type any topic or dilemma you want the hosts to discuss on-air:"
                         ),
                         "admin_add_user": "➕ Send the numeric <b>Telegram ID</b> of the friend you'd like to invite:",
                         "admin_del_user": "➖ Send the numeric <b>Telegram ID</b> you'd like to remove:"
@@ -427,23 +660,23 @@ if bot:
                 else:
                     studio_banners = {
                         "devils_advocate": (
-                            "🥊 <b>Devil's Advocate (Pushback & Sparring Room)</b>\n\n"
-                            "Share any opinion, hot take, or decision (voice or text)—or tap <code>🎲 Spark Another Topic</code> for a controversial thesis. I'll push back on your premise so you can practice diplomatic disagreement, hedging, and holding the floor!"
+                            "🥊 <b>Devil's Advocate (Led by 🧔‍♂️ Marcus & 👩🏼‍💼 Chloe)</b>\n\n"
+                            "Share any opinion, hot take, or decision (voice or text)—or tap <code>🎲 Spark Another Topic</code> for a controversial thesis. We'll challenge your premise so you can practice diplomatic pushback, hedging, and holding the floor!"
                         ),
                         "spontaneous_chat": (
                             "🗣️ <b>NYC Spontaneous Banter</b>\n\n"
-                            "Drop a voice note or text on anything—or tap <code>🎲 Spark Another Topic</code> below for a fresh conversation starter!"
+                            "Drop a voice note or text on anything—or tap <code>🎲 Spark Another Topic</code> below for a fresh conversation starter with the Trio!"
                         ),
                         "storytelling_gym": (
-                            "🎭 <b>Storytelling & Wit Gym</b>\n\n"
+                            "🎭 <b>Storytelling & Wit Gym (Led by 🧢 Jake)</b>\n\n"
                             "Tell a short story (real or made up) via voice or text to practice dramatic present tense & punchlines—or tap <code>🎲 Spark Another Topic</code> for a story prompt!"
                         ),
                         "register_lab": (
-                            "🎛️ <b>Vibe & Style Shifter</b>\n\n"
+                            "🎛️ <b>Vibe & Style Shifter (Marcus vs. Jake vs. Chloe)</b>\n\n"
                             "Send any sentence or thought to see how it naturally shifts across <b>🎙️ Articulate</b>, <b>☕ Casual</b>, and <b>🎭 Witty</b> vibes!"
                         ),
                         "subtext_decoder": (
-                            "🕵️‍♂️ <b>Subtext & Nuance Decoder</b>\n\n"
+                            "🕵️‍♂️ <b>Subtext & Nuance Decoder (Led by 👩🏼‍💼 Chloe)</b>\n\n"
                             "Send something someone said to you (or tap <code>🎲 Spark Another Topic</code> for a subtext puzzle) to decode what's really being said between the lines!"
                         ),
                         "situation_gambit": (
@@ -451,14 +684,14 @@ if bot:
                             "Describe any social or workplace moment (in English or Arabic) to get the exact instinctive phrases Americans reach for in that second!"
                         ),
                         "podcast_guest": (
-                            "🎙️ <b>Live Radio Interview ('Be the Guest')</b>\n\n"
-                            "Tap <code>🎲 Spark Another Topic</code> for the host's opening question, or send a voice note to jump right on-air!"
+                            "🎤 <b>Live Radio Interview ('Be the Guest' with the Trio)</b>\n\n"
+                            "Tap <code>🎲 Spark Another Topic</code> for the Trio's opening question, or send a voice note to jump right on-air!"
                         )
                     }
                     safe_edit_text(
                         call.message.chat.id, call.message.message_id,
                         studio_banners.get(new_mode, "✅ Room ready!"),
-                        reply_markup=LoungeKeyboards.studio_prompt_bar(new_mode)
+                        reply_markup=LoungeKeyboards.studio_prompt_bar(new_mode, user.get("active_persona", "trio"))
                     )
 
             elif data == "action:cycle_register":
@@ -480,7 +713,7 @@ if bot:
                 db.reset_history(uid)
                 bot.answer_callback_query(call.id, "🔄 Fresh table! Conversation memory cleared.", show_alert=True)
 
-            # --- 5. Saving & Audio Controls (Host Voice, User Recast, Voice Mirror) ---
+            # --- 5. Saving, Take 2 Retry & Audio Controls ---
             elif data.startswith("save:"):
                 _, token_key, idx_str = data.split(":")
                 saved_chunk = db.save_atomic_item_to_vault(uid, token_key, int(idx_str))
@@ -489,21 +722,36 @@ if bot:
                 else:
                     bot.answer_callback_query(call.id, "Already in your Vault!", show_alert=False)
 
+            elif data.startswith("take2:"):
+                token_key = data.split(":", 1)[1]
+                meta = db.get_atomic_meta(token_key)
+                target_recast = (meta.get("audio_clean_text") or "") if meta else ""
+                bot.answer_callback_query(call.id, "🎙️ Take 2 Ready! Send your upgraded voice note or text.")
+                prompt_txt = (
+                    "🎙️ <b>Take 2 — Pushed Output Loop</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "Send a quick <b>voice note (or text)</b> delivering your thought again using one of the Trio's upgrades or polishing the stress/vowel notes!\n\n"
+                    + (f"🎯 <b>Target Native Flow:</b>\n<code>{html.escape(target_recast)}</code>" if target_recast else "")
+                )
+                bot.send_message(call.message.chat.id, prompt_txt)
+
             elif data.startswith("host_tts:"):
                 token_key = data.split(":", 1)[1]
                 meta = db.get_atomic_meta(token_key)
                 host_txt = (meta.get("host_reply_text") or meta.get("audio_clean_text") or "") if meta else ""
+                p_key = (meta.get("active_persona") or "marcus") if meta else "marcus"
                 if not host_txt:
                     bot.answer_callback_query(call.id, "Audio unavailable for this message.", show_alert=True)
                     return
-                bot.answer_callback_query(call.id, "🎧 Recording host's voice...")
+                p_title = PERSONAS.get(p_key, PERSONAS["marcus"])["title"]
+                bot.answer_callback_query(call.id, f"🎧 {p_title} is speaking...")
                 bot.send_chat_action(call.message.chat.id, "record_voice")
-                ogg_path = LoungeMediaEngine.synthesize_us_speech(host_txt, voice=VOICE_FEMALE_HOST)
+                ogg_path = LoungeMediaEngine.synthesize_us_speech(host_txt, persona_key=p_key)
                 if ogg_path:
                     with open(ogg_path, "rb") as vf:
                         bot.send_voice(
                             call.message.chat.id, vf,
-                            caption="🗽 <i>Host's Spoken Reply</i>"
+                            caption=f"🗽 <i>{html.escape(p_title)}</i>"
                         )
                     LoungeMediaEngine.cleanup_file(ogg_path)
 
@@ -513,9 +761,10 @@ if bot:
                 if not meta or not meta.get("audio_clean_text"):
                     bot.answer_callback_query(call.id, "Audio unavailable for this message.", show_alert=True)
                     return
+                p_key = meta.get("active_persona") or "marcus"
                 bot.answer_callback_query(call.id, "🗣️ Recording your American recast...")
                 bot.send_chat_action(call.message.chat.id, "record_voice")
-                ogg_path = LoungeMediaEngine.synthesize_us_speech(meta["audio_clean_text"], voice=VOICE_MALE_HOST)
+                ogg_path = LoungeMediaEngine.synthesize_us_speech(meta["audio_clean_text"], persona_key=p_key)
                 if ogg_path:
                     with open(ogg_path, "rb") as vf:
                         bot.send_voice(
@@ -530,86 +779,61 @@ if bot:
                 if not meta or not meta.get("user_voice_file_id"):
                     bot.answer_callback_query(call.id, "Send a voice note first to use the Voice Mirror!", show_alert=True)
                     return
-                bot.answer_callback_query(call.id, "🪞 Preparing your Voice Mirror (1.0x + 0.85x)...")
+                bot.answer_callback_query(call.id, "🪞 Preparing loudness-leveled Voice Mirror (1.0x + 0.85x)...")
                 bot.send_chat_action(call.message.chat.id, "record_voice")
 
+                # Use 1-to-1 calibrated mirror sentence so acoustic comparison matches the user's words
+                mirror_target = meta.get("user_transcript_text") or meta.get("audio_clean_text") or ""
+                p_key = meta.get("active_persona") or "marcus"
                 user_ogg = os.path.join(TEMP_DIR, f"u_{token_key}.ogg")
                 try:
                     f_info = bot.get_file(meta["user_voice_file_id"])
                     raw_voice = bot.download_file(f_info.file_path)
                     with open(user_ogg, "wb") as f:
                         f.write(raw_voice)
-                    mirror_ogg = LoungeMediaEngine.build_acoustic_mirror(user_ogg, meta["audio_clean_text"])
+                    mirror_ogg = LoungeMediaEngine.build_acoustic_mirror(
+                        user_ogg, mirror_target, persona_key=p_key
+                    )
                     if mirror_ogg:
                         with open(mirror_ogg, "rb") as mf:
                             bot.send_voice(
                                 call.message.chat.id, mf,
                                 caption=(
-                                    "🪞 <b>Side-by-Side Voice Mirror:</b>\n"
-                                    "1️⃣ Your Voice ➔ 🔔 ➔ 2️⃣ Native Pace (1.0x) ➔ 🔔 ➔ 3️⃣ Slow Study Pace (0.85x)\n\n"
-                                    f"🎯 <code>{html.escape(meta['audio_clean_text'])}</code>"
+                                    "🪞 <b>1-to-1 Calibrated Voice Mirror:</b>\n"
+                                    "1️⃣ Your Voice (Leveled) ➔ 🔔 ➔ 2️⃣ Native Pace (1.0x) ➔ 🔔 ➔ 3️⃣ Slow Study (0.85x)\n\n"
+                                    f"🎯 <code>{html.escape(mirror_target)}</code>"
                                 )
                             )
                         LoungeMediaEngine.cleanup_file(mirror_ogg)
                 finally:
                     LoungeMediaEngine.cleanup_file(user_ogg)
 
-            # --- 6. The Radio Lounge (Andrew & Ava) ---
-            elif data == "pod:generate_auto":
-                bot.answer_callback_query(call.id, "🎙️ Andrew & Ava are stepping up to the mic...")
+            # --- 6. The Podcast Lounge (Trio Roundtable & Duo Deep-Dives) ---
+            elif data in ("pod:trio_vault", "pod:duo_mc", "pod:duo_cj", "pod:generate_auto"):
+                if data == "pod:duo_mc":
+                    fmt_mode, d_pair = "duo", "marcus_chloe"
+                    cast_str = "🧔‍♂️ Marcus & 👩🏼‍💼 Chloe (Duo Deep-Dive)"
+                elif data == "pod:duo_cj":
+                    fmt_mode, d_pair = "duo", "chloe_jake"
+                    cast_str = "👩🏼‍💼 Chloe & 🧢 Jake (Duo Street Banter)"
+                else:
+                    fmt_mode, d_pair = "trio", "all"
+                    cast_str = "🧔‍♂️ Marcus, 👩🏼‍💼 Chloe & 🧢 Jake (Trio Roundtable)"
+
+                bot.answer_callback_query(call.id, "🎙️ Stepping up to the studio mics...")
                 wait_msg = bot.send_message(
                     call.message.chat.id,
-                    "🎙️ <b>The NYC Radio Lounge is recording your episode...</b>\n"
-                    "<i>Andrew & Ava are weaving your saved expressions into today's show (~15s).</i>"
+                    f"🎙️ <b>Recording a 3+ minute episode with {cast_str}...</b>\n"
+                    "<i>Weaving in your Vault phrases, trimming silence & panning stereo mics (~18–25s).</i>"
                 )
-                bot.send_chat_action(call.message.chat.id, "record_voice")
-                ep = ai_engine.generate_podcast_episode(user)
-                mp3_path = LoungeMediaEngine.produce_dual_host_podcast(ep)
-
-                token_key = uuid.uuid4().hex[:10]
-                upgrades_dicts = [u.model_dump() for u in ep.key_takeaways]
-                db.store_atomic_batch(uid, token_key, upgrades_dicts, audio_clean_text=ep.title)
-
-                script_html = "\n\n".join([
-                    f"<b>{'🧔‍♂️ Andrew' if line.speaker == 'male_host' else '👩🏼‍💼 Ava'}:</b> {html.escape(line.text)}"
-                    for line in ep.script
-                ])
-                takeaways_html = "\n".join([
-                    f"<b>({i}) {html.escape(u.chunk)}</b> ({html.escape(u.register_tag)}) — {html.escape(u.explanation)}"
-                    for i, u in enumerate(ep.key_takeaways, 1)
-                ])
-
-                full_caption = (
-                    f"🎙️ <b>{html.escape(ep.title)}</b>\n"
-                    f"💎 <b>Featured Expressions:</b> <code>{html.escape(', '.join(ep.target_chunks_covered))}</code>\n\n"
-                    f"<blockquote expandable>📜 <b>Full Show Transcript & Notes (Tap to Expand):</b>\n\n"
-                    f"{script_html}\n\n"
-                    f"✨ <b>Expressions to Save:</b>\n{takeaways_html}</blockquote>"
+                run_and_send_podcast_episode(
+                    call.message.chat.id,
+                    user,
+                    format_mode=fmt_mode,
+                    duo_pair=d_pair,
+                    custom_topic="",
+                    wait_msg_id=wait_msg.message_id
                 )
-
-                if mp3_path:
-                    with open(mp3_path, "rb") as af:
-                        bot.send_audio(
-                            call.message.chat.id, af,
-                            title=ep.title, performer="Musa's NYC Lounge (Andrew & Ava)",
-                            caption=full_caption[:1024],
-                            reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False, False)
-                        )
-                    if len(full_caption) > 1024:
-                        bot.send_message(
-                            call.message.chat.id, full_caption,
-                            reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False, False)
-                        )
-                    LoungeMediaEngine.cleanup_file(mp3_path)
-                else:
-                    bot.send_message(
-                        call.message.chat.id, full_caption,
-                        reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False, False)
-                    )
-                try:
-                    bot.delete_message(call.message.chat.id, wait_msg.message_id)
-                except Exception:
-                    pass
 
             # --- 7. Speaking Workouts & Habits Being Polished ---
             elif data.startswith("drill:"):
@@ -650,7 +874,7 @@ if bot:
                 safe_edit_text(
                     call.message.chat.id, wait_msg.message_id,
                     drill_data["text"],
-                    reply_markup=LoungeKeyboards.studio_prompt_bar(mode_map.get(drill_type, "spontaneous_chat"))
+                    reply_markup=LoungeKeyboards.studio_prompt_bar(mode_map.get(drill_type, "spontaneous_chat"), user.get("active_persona", "trio"))
                 )
 
                 if drill_data.get("tts_target"):
@@ -682,10 +906,13 @@ if bot:
                 if not card:
                     bot.answer_callback_query(call.id, "Phrase not found.")
                     return
+                b2_foil = card.get("b2_foil", "")
+                foil_line = f"• 🔄 <b>B2 vs. C2:</b> <s>{html.escape(b2_foil)}</s> ➔ <b>{html.escape(card['chunk'])}</b>\n" if b2_foil else ""
                 ans_text = (
                     f"🧠 <b>Phrase Details & Context:</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"💎 <b>{html.escape(card['chunk'])}</b> ({html.escape(card['register_tag'])})\n"
+                    f"{foil_line}"
                     f"• <b>Nuance:</b> {html.escape(card['explanation'])}\n"
                     f"• 🎯 <b>When to use:</b> {html.escape(card['trigger_context'])}\n"
                     f"• 🔗 <b>Pattern:</b> <code>{html.escape(card['co_text_pattern'])}</code>\n"
@@ -735,7 +962,7 @@ if bot:
                     with open(pdf_p, "rb") as pf:
                         bot.send_document(
                             call.message.chat.id, pf,
-                            caption="📄 <b>Musa's NYC Lounge — Personal Phrasebook</b>"
+                            caption="📄 <b>Musa's NYC Lounge — Personal C1/C2 Phrasebook</b>"
                         )
                     LoungeMediaEngine.cleanup_file(pdf_p)
 
@@ -813,7 +1040,7 @@ if bot:
             bot.answer_callback_query(call.id, "☕ Just a second—try tapping that once more.")
 
     # =====================================================================
-    # 3. Voice Note Handler (Supports Both Live Conversation & Active Review)
+    # 3. Voice Note Handler (Live Conversation, Active Uptake & SRS Review)
     # =====================================================================
     @bot.message_handler(content_types=["voice", "audio"])
     def handle_voice_input(message):
@@ -847,6 +1074,8 @@ if bot:
                     wait_msg = bot.reply_to(message, f"🎧 <b>Listening to how you used <code>{html.escape(card['chunk'])}</code>...</b>")
                     ev = ai_engine.evaluate_active_srs_usage(user, card, audio_bytes=audio_bytes)
                     db.grade_srs_card(card_id, ev.recommended_grade)
+                    if ev.used_naturally:
+                        db.detect_and_record_active_uptake(uid, card["chunk"])
                     badge = "🌟 <b>Spot-On Delivery!</b>" if ev.used_naturally else "💡 <b>Close—Here's How to Polish It:</b>"
                     reply_html = (
                         f"{badge}\n"
@@ -863,7 +1092,7 @@ if bot:
             # --- Standard Conversational & Phonetic Coaching ---
             status_msg = bot.reply_to(
                 message,
-                "🎧 <b>Listening closely to your phrasing, vowels & American rhythm...</b>"
+                "🎧 <b>Listening closely to your phrasing, vowels, nuclear stress & linking...</b>"
             )
             bot.send_chat_action(message.chat.id, "typing")
 
@@ -874,6 +1103,8 @@ if bot:
                 audio_mime="audio/ogg"
             )
 
+            active_uptakes = db.detect_and_record_active_uptake(uid, res.transcription)
+
             db.append_history(uid, "user", f"[Voice]: {res.transcription}")
             db.append_history(uid, "assistant", res.lounge_reply)
             db.record_diagnostics(uid, [d.model_dump() for d in res.diagnostics])
@@ -882,22 +1113,33 @@ if bot:
 
             token_key = uuid.uuid4().hex[:10]
             upgrades_dicts = [u.model_dump() for u in res.lexical_upgrades]
+            resp_persona = (res.responding_persona or "marcus").lower()
+            mirror_sent = res.mirror_clean_target or res.tts_clean_target or res.rewrite_articulate
+
             db.store_atomic_batch(
                 user_id=uid,
                 token_key=token_key,
                 items=upgrades_dicts,
                 audio_clean_text=res.tts_clean_target or res.rewrite_articulate,
+                user_transcript_text=mirror_sent,
                 host_reply_text=res.lounge_reply,
+                active_persona=resp_persona,
                 user_voice_file_id=file_id
             )
 
-            formatted_html = format_lounge_turn_html(res, is_voice=True, stealth_count=len(stealth_ids))
+            formatted_html = format_lounge_turn_html(
+                res, is_voice=True, stealth_count=len(stealth_ids), active_uptakes=active_uptakes
+            )
             safe_edit_text(
                 message.chat.id,
                 status_msg.message_id,
                 formatted_html,
                 reply_markup=LoungeKeyboards.turn_action_bar(
-                    token_key, len(res.lexical_upgrades), has_user_voice=True, has_host_voice=True
+                    token_key,
+                    len(res.lexical_upgrades),
+                    has_user_voice=True,
+                    has_host_voice=True,
+                    persona_key=resp_persona
                 )
             )
         except Exception as e:
@@ -905,7 +1147,7 @@ if bot:
             bot.reply_to(message, "☕ Give me just a second—could you send that voice note once more?")
 
     # =====================================================================
-    # 4. Text Input Handler (Banter, Collocation Explorer, Active Review)
+    # 4. Text Input Handler (Banter, Collocation Explorer, Custom Podcasts)
     # =====================================================================
     @bot.message_handler(content_types=["text"])
     def handle_text_input(message):
@@ -969,6 +1211,8 @@ if bot:
                 try:
                     ev = ai_engine.evaluate_active_srs_usage(user, card, user_text=text)
                     db.grade_srs_card(card_id, ev.recommended_grade)
+                    if ev.used_naturally:
+                        db.detect_and_record_active_uptake(uid, text)
                     badge = "🌟 <b>Spot-On Usage!</b>" if ev.used_naturally else "💡 <b>Nice Try—Here's How to Make It Sound Effortless:</b>"
                     reply_html = (
                         f"{badge}\n"
@@ -984,7 +1228,7 @@ if bot:
                     safe_edit_text(message.chat.id, wait_msg.message_id, "☕ Let's try that sentence once more.")
                 return
 
-        # --- C. Collocation & Phrase Finder (Instant Local + Live Collocation Map) ---
+        # --- C. Collocation & Phrase Finder ---
         if mode == "fast_lookup" and len(text.split()) <= 5:
             local_hits = db.lookup_collocations(text, user_id=uid, limit=4)
             wait_msg = bot.reply_to(message, f"🔎 <b>Exploring natural American collocations for <code>{html.escape(text)}</code>...</b>")
@@ -998,7 +1242,7 @@ if bot:
                 lines = [
                     f"🔎 <b>Spoken Collocation Map: <code>{html.escape(explorer.headword)}</code></b>",
                     "━━━━━━━━━━━━━━━━━━━━",
-                    f"💡 <b>Nuance & Feel:</b> {html.escape(explorer.semantic_note)}\n"
+                    f"💡 <b>Lexical Priming & Feel:</b> {html.escape(explorer.semantic_note)}\n"
                 ]
                 if local_hits:
                     lines.append("📓 <b>Already in Your Club Phrasebook:</b>")
@@ -1008,8 +1252,11 @@ if bot:
 
                 lines.append("💎 <b>Top Spoken Collocations (Tap ⭐ Save 1–4 below):</b>")
                 for idx, cf in enumerate(explorer.collocation_frames[:4], 1):
+                    b2_f = getattr(cf, "b2_foil", "")
+                    foil_s = f"  • 🔄 <b>Upgrade from:</b> <s>{html.escape(b2_f)}</s>\n" if b2_f else ""
                     lines.append(
                         f"\n<b>({idx}) {html.escape(cf.chunk)}</b> ({html.escape(cf.register_tag)})\n"
+                        f"{foil_s}"
                         f"  • 💡 {html.escape(cf.explanation)}\n"
                         f"  • 🎯 <b>When:</b> {html.escape(cf.trigger)}\n"
                         f"  • 🔗 <b>Pattern:</b> <code>{html.escape(cf.pattern)}</code>\n"
@@ -1038,61 +1285,41 @@ if bot:
                     safe_edit_text(message.chat.id, wait_msg.message_id, "☕ Try sending a single verb, noun, or short expression.")
             return
 
-        # --- D. Custom Radio Episode Producer ---
-        if mode == "podcast_custom_topic":
+        # --- D. Custom Long-Form Podcast Producer (Trio or Duo) ---
+        if mode in ("podcast_custom_trio", "podcast_custom_duo", "podcast_custom_topic"):
+            fmt_mode = "duo" if mode == "podcast_custom_duo" else "trio"
+            cast_desc = "Marcus & Chloe (Duo)" if fmt_mode == "duo" else "Marcus, Chloe & Jake (Trio)"
             wait_msg = bot.reply_to(
                 message,
-                f"🎙️ <b>Andrew & Ava are recording an episode on:</b> <i>{html.escape(text)}</i>..."
+                f"🎙️ <b>{cast_desc} are recording a 3+ minute episode on:</b>\n<i>{html.escape(text)}</i>..."
             )
             try:
                 db.update_user(uid, current_mode="spontaneous_chat")
-                ep = ai_engine.generate_podcast_episode(user, custom_topic=text)
-                mp3_path = LoungeMediaEngine.produce_dual_host_podcast(ep)
-
-                token_key = uuid.uuid4().hex[:10]
-                upgrades_dicts = [u.model_dump() for u in ep.key_takeaways]
-                db.store_atomic_batch(uid, token_key, upgrades_dicts, audio_clean_text=ep.title)
-
-                script_html = "\n\n".join([
-                    f"<b>{'🧔‍♂️ Andrew' if line.speaker == 'male_host' else '👩🏼‍💼 Ava'}:</b> {html.escape(line.text)}"
-                    for line in ep.script
-                ])
-                full_caption = (
-                    f"🎙️ <b>{html.escape(ep.title)}</b>\n\n"
-                    f"<blockquote expandable>📜 <b>Full Show Transcript (Tap to Expand):</b>\n\n{script_html}</blockquote>"
+                run_and_send_podcast_episode(
+                    message.chat.id,
+                    user,
+                    format_mode=fmt_mode,
+                    duo_pair="marcus_chloe",
+                    custom_topic=text,
+                    wait_msg_id=wait_msg.message_id
                 )
-                if mp3_path:
-                    with open(mp3_path, "rb") as af:
-                        bot.send_audio(
-                            message.chat.id, af,
-                            title=ep.title, performer="Musa's NYC Lounge",
-                            caption=full_caption[:1024],
-                            reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False, False)
-                        )
-                    LoungeMediaEngine.cleanup_file(mp3_path)
-                else:
-                    bot.send_message(
-                        message.chat.id, full_caption,
-                        reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(ep.key_takeaways), False, False)
-                    )
-                try:
-                    bot.delete_message(message.chat.id, wait_msg.message_id)
-                except Exception:
-                    pass
-            except Exception:
+            except Exception as e:
+                logger.error(f"Custom podcast error: {e}")
                 safe_edit_text(message.chat.id, wait_msg.message_id, "☕ Studio mics were busy for a second—try that topic once more!")
             return
 
         # --- E. Standard Conversational Turn or Native Text Miner ---
-        status_msg = bot.reply_to(message, "🗽 <b>Thinking...</b>")
+        status_msg = bot.reply_to(message, "🗽 <b>The Lounge is on it...</b>")
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
             if mode == "chunk_miner":
                 res = ai_engine.mine_text_and_subtext(user, text)
                 stealth_ids = []
+                active_uptakes = []
             else:
                 res, stealth_ids = ai_engine.process_lounge_turn(user=user, user_text=text)
+                active_uptakes = db.detect_and_record_active_uptake(uid, text)
 
             db.append_history(uid, "user", text)
             db.append_history(uid, "assistant", res.lounge_reply)
@@ -1102,21 +1329,31 @@ if bot:
 
             token_key = uuid.uuid4().hex[:10]
             upgrades_dicts = [u.model_dump() for u in res.lexical_upgrades]
+            resp_persona = (res.responding_persona or "marcus").lower()
+
             db.store_atomic_batch(
                 user_id=uid,
                 token_key=token_key,
                 items=upgrades_dicts,
                 audio_clean_text=res.tts_clean_target or res.rewrite_articulate,
-                host_reply_text=res.lounge_reply
+                user_transcript_text=res.mirror_clean_target or text,
+                host_reply_text=res.lounge_reply,
+                active_persona=resp_persona
             )
 
-            formatted_html = format_lounge_turn_html(res, is_voice=False, stealth_count=len(stealth_ids))
+            formatted_html = format_lounge_turn_html(
+                res, is_voice=False, stealth_count=len(stealth_ids), active_uptakes=active_uptakes
+            )
             safe_edit_text(
                 message.chat.id,
                 status_msg.message_id,
                 formatted_html,
                 reply_markup=LoungeKeyboards.turn_action_bar(
-                    token_key, len(res.lexical_upgrades), has_user_voice=False, has_host_voice=True
+                    token_key,
+                    len(res.lexical_upgrades),
+                    has_user_voice=False,
+                    has_host_voice=True,
+                    persona_key=resp_persona
                 )
             )
         except Exception as e:
@@ -1128,34 +1365,51 @@ if bot:
 
 
 # =====================================================================
-# 5. Silent Background Lifecycle & Clean Profile Metadata
+# 5. Silent Background Lifecycle & Graceful Signal Protection
 # =====================================================================
 def sync_bot_profile_metadata():
     if not bot:
         return
     try:
         bot.set_my_short_description(
-            "🗽 Musa's NYC Lounge — Private Manhattan Club for Spoken American English, Accent Precision & Witty Banter."
+            "🗽 Musa's NYC Lounge — Private Manhattan Club with Marcus, Chloe & Jake for C1/C2 Spoken American English."
         )
         bot.set_my_description(
             "🗽 Welcome to Musa's NYC Lounge!\n\n"
-            "Your private Manhattan conversational club for effortless Spoken American English.\n\n"
+            "Your private Manhattan club for mastering Spoken American English with Marcus, Chloe & Jake.\n\n"
             "✨ Inside the Club:\n"
-            "• 🗣️ Unscripted New York Banter & Storytelling Gym\n"
-            "• 🎛️ 3 Living Vibes (Articulate, Casual, Witty)\n"
-            "• 🪞 Side-by-Side Voice Mirror & Pronunciation Coaching\n"
-            "• 🎙️ The NYC Radio Lounge with Andrew & Ava\n"
+            "• 🗽 Trio & Individual Banter (Marcus, Chloe, Jake)\n"
+            "• 🎙️ 3+ Minute NotebookLM-Style Trio & Duo Podcasts\n"
+            "• 🪞 Loudness-Normalized Voice Mirror & Accent Coaching\n"
             "• 🔎 Spoken Collocation Finder & Personal Phrasebook\n\n"
             "Tap Start or /guide to pull up a chair!"
         )
         bot.set_my_commands([
             telebot.types.BotCommand("start", "🗽 Enter the Lounge & Main Menu"),
-            telebot.types.BotCommand("guide", "📖 Open the Member's Handbook"),
-            telebot.types.BotCommand("lounge", "🛋️ Switch Conversation Rooms"),
-            telebot.types.BotCommand("menu", "🏠 Show Club Dashboard")
+            telebot.types.BotCommand("trio", "🎙️ Launch Trio & Duo Podcast Studio"),
+            telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic"),
+            telebot.types.BotCommand("devil", "🥊 Devil's Advocate Sparring"),
+            telebot.types.BotCommand("review", "🧠 Daily Phrase Practice"),
+            telebot.types.BotCommand("audit", "📊 Spoken Fluency Audit"),
+            telebot.types.BotCommand("guide", "📖 Open the Member's Handbook")
         ])
     except Exception as e:
         logger.warning(f"Profile sync note: {e}")
+
+
+def _graceful_shutdown(signum, frame):
+    logger.info(f"⏳ Signal {signum} received—saving Vault snapshot before exit...")
+    if bot:
+        try:
+            db.backup_to_telegram(bot, caption_note="Synced Club Vault")
+            bot.stop_polling()
+        except Exception:
+            pass
+    os._exit(0)
+
+
+signal.signal(signal.SIGTERM, _graceful_shutdown)
+signal.signal(signal.SIGINT, _graceful_shutdown)
 
 
 def relay_lifecycle_watchdog():
@@ -1169,7 +1423,7 @@ def relay_lifecycle_watchdog():
             last_periodic_backup = time.time()
 
         if elapsed >= RELAY_MAX_RUNTIME_SECONDS:
-            logger.info("⏳ Handing over club shift seamlessly...")
+            logger.info("⏳ Handing over 4.7h club shift seamlessly...")
             if bot:
                 db.backup_to_telegram(bot, caption_note="Synced Club Vault")
                 try:
@@ -1184,7 +1438,7 @@ def main():
         logger.error("Missing required credentials.")
         sys.exit(1)
 
-    logger.info("🗽 Starting Musa's NYC Lounge...")
+    logger.info("🗽 Starting Musa's NYC Lounge (Marcus, Chloe & Jake)...")
 
     restored = db.restore_from_telegram_pin(bot)
     sync_bot_profile_metadata()
@@ -1194,7 +1448,6 @@ def main():
 
     try:
         bot.remove_webhook()
-        # Only send a welcome message if this is a brand-new setup, never spam on 5.3h shift handovers!
         if ADMIN_ID and not restored and not db.get_sys_state("club_initialized"):
             db.set_sys_state("club_initialized", "1")
             u_admin = db.get_user(ADMIN_ID, "Admin", "Musa")
