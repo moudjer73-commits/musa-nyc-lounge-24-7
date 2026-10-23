@@ -262,6 +262,32 @@ class LoungeDatabase:
                     INSERT OR IGNORE INTO users (user_id, full_name, level, english_only, is_whitelisted, onboarded)
                     VALUES (?, 'Musa (Founder)', 'C2', 1, 1, 1)
                 """, (ADMIN_ID,))
+
+            # Auto-Migration for legacy pinned .db files
+            existing_cols = [c[1] for c in conn.execute("PRAGMA table_info(users)").fetchall()]
+            needed_migrations = {
+                "username": "TEXT DEFAULT ''",
+                "full_name": "TEXT DEFAULT ''",
+                "level": "TEXT DEFAULT 'C1'",
+                "english_only": "INTEGER DEFAULT 1",
+                "preferred_register": "TEXT DEFAULT 'articulate'",
+                "current_mode": "TEXT DEFAULT 'spontaneous_chat'",
+                "session_meta": "TEXT DEFAULT '{}'",
+                "is_whitelisted": "INTEGER DEFAULT 1",
+                "onboarded": "INTEGER DEFAULT 1",
+                "daily_count": "INTEGER DEFAULT 0",
+                "daily_limit": "INTEGER DEFAULT 120",
+                "last_date": "TEXT DEFAULT ''"
+            }
+            for col_name, col_def in needed_migrations.items():
+                if col_name not in existing_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}")
+                    except Exception:
+                        pass
+
+            # Replace any legacy 'professional' or 'formal' registers with NYC Lounge registers
+            conn.execute("UPDATE users SET preferred_register = 'articulate' WHERE preferred_register NOT IN ('articulate', 'casual', 'witty') OR preferred_register IS NULL")
             conn.commit()
 
     # --- إدارة المستخدمين والصلاحيات ---
@@ -277,7 +303,7 @@ class LoungeDatabase:
                 """, (user_id, username or "", full_name or "", is_wl, today))
                 conn.commit()
                 row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
-            elif row["last_date"] != today:
+            elif dict(row).get("last_date", "") != today:
                 conn.execute("UPDATE users SET daily_count = 0, last_date = ? WHERE user_id = ?", (today, user_id))
                 conn.commit()
                 row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
@@ -311,7 +337,7 @@ class LoungeDatabase:
         u = self.get_user(user_id)
         if user_id == ADMIN_ID:
             return True
-        if u["daily_count"] >= u["daily_limit"]:
+        if u.get("daily_count", 0) >= u.get("daily_limit", 120):
             return False
         with self._lock, self._conn() as conn:
             conn.execute("UPDATE users SET daily_count = daily_count + 1 WHERE user_id = ?", (user_id,))
