@@ -376,6 +376,9 @@ class NYCLoungeAI:
         target_mode = mode or user.get("current_mode", "spontaneous_chat")
         level = user.get("level", "C1")
         pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         active_persona = user.get("active_persona", "trio")
         vault = self.db.get_user_vault(uid, limit=4)
         history = self.db.get_history(uid, limit=4)
@@ -431,6 +434,9 @@ class NYCLoungeAI:
         level = user.get("level", "C1")
         eng_only = bool(user.get("english_only", 1)) or level in ("C1", "C2")
         pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         active_persona = user.get("active_persona", "trio")
         mode = user.get("current_mode", "spontaneous_chat")
         session_meta = self.db.get_session_meta(uid)
@@ -461,7 +467,8 @@ class NYCLoungeAI:
             f"CALIBRATION FOR THIS TURN:\n"
             f"- {self._level_calibration_guide(level)}\n"
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
-            f"- Preferred Vibe: {REGISTERS_MAP.get(pref_reg, '🎙️ Articulate')} ({REGISTER_DESCRIPTIONS.get(pref_reg, '')})\n"
+            f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
+            f"- Your `lounge_reply`, `self_repair_pivot`, `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly match {active_vibe_badge} without mixing registers.\n"
             f"- {lang_rule}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
@@ -611,6 +618,7 @@ class NYCLoungeAI:
         pref_reg = user.get("preferred_register", "articulate")
         vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
         vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         vault = self.db.get_user_vault(uid, limit=5)
         weaknesses = self.db.get_weaknesses(uid, limit=3)
 
@@ -650,6 +658,9 @@ class NYCLoungeAI:
         uid = user["user_id"]
         level = user.get("level", "C1")
         pref_reg = user.get("preferred_register", "articulate")
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        active_vibe_badge = vibe_badge
         vault = self.db.get_user_vault(uid, limit=8)
         weaknesses = self.db.get_weaknesses(uid, limit=5)
 
