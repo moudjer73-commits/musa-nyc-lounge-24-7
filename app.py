@@ -154,7 +154,7 @@ def format_lounge_turn_html(
     is_voice: bool = False,
     stealth_count: int = 0,
     active_uptakes: List[str] = None
-) -> str:
+, active_reg: str = 'articulate') -> str:
     top_section = ""
     if active_uptakes:
         up_badges = ", ".join([f"<code>{html.escape(u)}</code>" for u in active_uptakes])
@@ -1247,7 +1247,7 @@ if bot:
             )
 
             formatted_html = format_lounge_turn_html(
-                res, is_voice=True, stealth_count=len(stealth_ids), active_uptakes=active_uptakes
+                res, is_voice=True, stealth_count=len(stealth_ids), active_uptakes=active_uptakes, active_reg=user.get('preferred_register', 'articulate')
             )
             safe_edit_text(
                 message.chat.id,
@@ -1461,7 +1461,7 @@ if bot:
             )
 
             formatted_html = format_lounge_turn_html(
-                res, is_voice=False, stealth_count=len(stealth_ids), active_uptakes=active_uptakes
+                res, is_voice=False, stealth_count=len(stealth_ids), active_uptakes=active_uptakes, active_reg=user.get('preferred_register', 'articulate')
             )
             safe_edit_text(
                 message.chat.id,

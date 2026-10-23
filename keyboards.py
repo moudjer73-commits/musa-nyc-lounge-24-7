@@ -131,14 +131,17 @@ class LoungeKeyboards:
         num_upgrades: int = 3,
         has_user_voice: bool = False,
         has_host_voice: bool = True,
+        persona_key: str = "trio",
         has_recast_voice: bool = True,
-        recast_label: str = "🗣️ My Recast"
+        recast_label: str = "🗣️ My Recast",
+        **kwargs
     ) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
 
         audio_btns = []
         if has_host_voice:
-            audio_btns.append(InlineKeyboardButton("🎧 Host Voice", callback_data=f"host_tts:{token_key}"))
+            host_lbl = "🎧 Trio Voice" if persona_key == "trio" else "🎧 Host Voice"
+            audio_btns.append(InlineKeyboardButton(host_lbl, callback_data=f"host_tts:{token_key}"))
         if has_recast_voice:
             audio_btns.append(InlineKeyboardButton(recast_label, callback_data=f"tts:{token_key}"))
         if has_user_voice:
