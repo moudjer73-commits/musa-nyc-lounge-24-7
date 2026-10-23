@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-database.py — Dual-Database Engine with WAL Concurrency, Morphological Cloze Builder,
-Productive Uptake Detector (Swain's Output Hypothesis), and Persona Persistence.
+database.py — Dual-Database Engine for Musa's NYC Lounge
+Features:
+- Inflection-Aware Smart Cloze Generator (Fixes morphological & pronoun-insertion leaks)
+- Active Productive Uptake Detector (Swain's Output Hypothesis tracking)
+- Trio Persona State ('marcus', 'chloe', 'jake', 'trio') & B2-to-C2 Foil storage
+- SQLite WAL Concurrency & Self-Cleaning Silent Telegram Backup
 """
 import os
 import re
@@ -19,14 +23,79 @@ from config import (
     USER_DB_PATH,
     CORPUS_DB_PATH,
     ADMIN_ID,
-    REGISTERS_MAP,
-    PERSONAS_MAP
+    REGISTERS_MAP
 )
 
 logger = logging.getLogger("MusaNYCLounge.DB")
 
+# Irregular verb stems for accurate morphological Cloze masking & Active Uptake detection
+IRREGULAR_STEM_MAP: Dict[str, List[str]] = {
+    "wind": ["wind", "winds", "wound", "winding"],
+    "bite": ["bite", "bites", "bit", "bitten", "biting"],
+    "take": ["take", "takes", "took", "taken", "taking"],
+    "cut": ["cut", "cuts", "cutting"],
+    "hit": ["hit", "hits", "hitting"],
+    "let": ["let", "lets", "letting"],
+    "put": ["put", "puts", "putting"],
+    "run": ["run", "runs", "ran", "running"],
+    "fall": ["fall", "falls", "fell", "fallen", "falling"],
+    "give": ["give", "gives", "gave", "given", "giving"],
+    "have": ["have", "has", "had", "having", "'ve", "'s", "'d"],
+    "be": ["be", "am", "is", "are", "was", "were", "been", "being", "'m", "'re", "'s"],
+    "get": ["get", "gets", "got", "gotten", "getting"],
+    "go": ["go", "goes", "went", "gone", "going"],
+    "come": ["come", "comes", "came", "coming"],
+    "make": ["make", "makes", "made", "making"],
+    "hold": ["hold", "holds", "held", "holding"],
+    "keep": ["keep", "keeps", "kept", "keeping"],
+    "leave": ["leave", "leaves", "left", "leaving"],
+    "catch": ["catch", "catches", "caught", "catching"],
+    "throw": ["throw", "throws", "threw", "thrown", "throwing"],
+    "bring": ["bring", "brings", "brought", "bringing"],
+    "think": ["think", "thinks", "thought", "thinking"],
+    "buy": ["buy", "buys", "bought", "buying"],
+    "break": ["break", "breaks", "broke", "broken", "breaking"],
+    "speak": ["speak", "speaks", "spoke", "spoken", "speaking"],
+    "drive": ["drive", "drives", "drove", "driven", "driving"],
+    "ride": ["ride", "rides", "rode", "ridden", "riding"],
+    "write": ["write", "writes", "wrote", "written", "writing"],
+    "see": ["see", "sees", "saw", "seen", "seeing"],
+    "eat": ["eat", "eats", "ate", "eaten", "eating"],
+    "drink": ["drink", "drinks", "drank", "drunk", "drinking"],
+    "blow": ["blow", "blows", "blew", "blown", "blowing"],
+    "grow": ["grow", "grows", "grew", "grown", "growing"],
+    "know": ["know", "knows", "knew", "known", "knowing"],
+    "fly": ["fly", "flies", "flew", "flown", "flying"],
+    "draw": ["draw", "draws", "drew", "drawn", "drawing"],
+    "wear": ["wear", "wears", "wore", "worn", "wearing"],
+    "tear": ["tear", "tears", "tore", "torn", "tearing"],
+    "stand": ["stand", "stands", "stood", "standing"],
+    "sit": ["sit", "sits", "sat", "sitting"],
+    "set": ["set", "sets", "setting"],
+    "pay": ["pay", "pays", "paid", "paying"],
+    "say": ["say", "says", "said", "saying"],
+    "sell": ["sell", "sells", "sold", "selling"],
+    "tell": ["tell", "tells", "told", "telling"],
+    "lose": ["lose", "loses", "lost", "losing"],
+    "shoot": ["shoot", "shoots", "shot", "shooting"],
+    "lead": ["lead", "leads", "led", "leading"],
+    "read": ["read", "reads", "reading"],
+    "meet": ["meet", "meets", "met", "meeting"],
+    "spend": ["spend", "spends", "spent", "spending"],
+    "send": ["send", "send", "sends", "sent", "sending"],
+    "build": ["build", "builds", "built", "building"],
+    "find": ["find", "finds", "found", "finding"],
+    "bind": ["bind", "binds", "bound", "binding"]
+}
+
+PLACEHOLDER_STOPWORDS = {
+    "someone", "somebody", "something", "somewhere", "one", "ones",
+    "your", "my", "his", "her", "their", "our", "one's", "someone's",
+    "a", "an", "the", "it", "them", "him", "us", "you", "me"
+}
+
 INITIAL_CORPUS_SEED: List[Tuple[str, str, str, str, str, str]] = [
-    ("play it by ear", "☕ Casual", "Decide how to handle something as it unfolds instead of locking down a plan", "When plans are uncertain or flexible", "let's just / we'll + play it by ear", "No need to lock anything down right now—let's just play it by ear."),
+    ("play it by ear", "☕ Casual", "Decide how to handle something as it unfolds instead of planning ahead", "When plans are uncertain or flexible", "let's just / we'll + play it by ear", "No need to lock anything down right now—let's just play it by ear."),
     ("wind up", "🎙️ Articulate", "End up in an unexpected situation or doing something unplanned", "Telling a story about an unintended outcome", "wind up + V-ing / adj", "We went out for a quick coffee and wound up talking for three hours."),
     ("take it with a grain of salt", "🎙️ Articulate", "Treat a claim or story with healthy skepticism", "When someone exaggerates or passes along rumors", "take [something] with a grain of salt", "I'd take his version of the story with a grain of salt; he loves drama."),
     ("call it a day", "☕ Casual", "Stop working or wrap up an activity for the rest of the day", "When you've done enough and want to rest", "let's / I'm gonna + call it a day", "We've covered enough ground—let's call it a day and grab some food."),
@@ -38,7 +107,7 @@ INITIAL_CORPUS_SEED: List[Tuple[str, str, str, str, str, str]] = [
     ("bite off more than you can chew", "☕ Casual", "Take on a commitment that's too big to handle", "Feeling overwhelmed by too many tasks", "bit off a bit more than I could chew", "I think I bit off more than I could chew by agreeing to host twenty people."),
     ("read between the lines", "🎙️ Articulate", "Catch the unspoken meaning or real intention behind someone's words", "Decoding polite excuses or subtle hints", "if you read between the lines", "She said everything was fine, but if you read between the lines, she's frustrated."),
     ("that's one way to put it", "🎭 Witty", "Dry, understated reaction when someone describes a disaster too mildly", "Reacting with irony or dry humor", "Well, that's certainly one way to put it", "You call getting stranded at JFK for twelve hours 'a minor delay'? Well, that's one way to put it."),
-    ("jump the gun", "☕ Casual", "Act prematurely before having all the facts or before the right time", "Stopping someone from rushing a decision", "let's not jump the gun", "Hold on, let's not jump the gun before we actually hear his side of the story."),
+    ("jump the gun", "☕ Casual", "Act too soon before having all the facts", "Stopping someone from reacting prematurely", "let's not jump the gun", "Hold on, let's not jump the gun before we actually hear his side of the story."),
     ("hit the nail on the head", "🎙️ Articulate", "Pinpoint the exact truth or root cause of an issue", "Validating a sharp observation", "you hit the nail right on the head", "You hit the nail on the head—that's the exact issue nobody wants to admit."),
     ("let it slide", "☕ Casual", "Ignore a minor mistake or annoyance instead of making a big deal out of it", "Choosing peace over confrontation", "just let it slide this time", "It annoyed me a little, sure, but I figured I'd just let it slide."),
     ("by the skin of my teeth", "🎭 Witty", "Barely manage to do something or escape a close call", "Narrating a narrow escape", "made it by the skin of my teeth", "The subway doors were literally closing—I caught the train by the skin of my teeth."),
@@ -46,78 +115,84 @@ INITIAL_CORPUS_SEED: List[Tuple[str, str, str, str, str, str]] = [
     ("boil down to", "🎙️ Articulate", "Come down to the single most important factor or core issue", "Summarizing a complex argument", "what it really boils down to is [noun]", "At the end of the day, the whole disagreement boils down to trust."),
     ("pan out", "🎙️ Articulate", "Turn out well or develop in a particular way", "Talking about how a plan or project unfolded", "see how things pan out / didn't pan out", "We tried launching it in the spring, but the timing just didn't pan out."),
     ("iron out", "🎙️ Articulate", "Resolve remaining small problems or details", "Finalizing a plan or agreement", "iron out a few kinks / details", "We're almost ready—we just need to iron out a few last-minute details."),
-    ("brush up on", "☕ Casual", "Review and refresh a skill you haven't used lately", "Preparing for a trip or presentation", "brush up on my [skill]", "I really need to brush up on my spoken Spanish before the trip."),
-    ("run it by", "🎙️ Articulate", "Tell someone about an idea to get their quick feedback or approval", "Checking with a colleague or friend", "let me run this by [person]", "That sounds promising—let me run it by Chloe and see what she thinks."),
+    ("brush up on", "☕ Casual", "Review and refresh a skill you haven't used lately", "Preparing for a trip or presentation", "brush up on my [skill]", "I really need to brush up on my spoken French before the conference."),
+    ("run it by", "🎙️ Articulate", "Tell someone about an idea to get their quick feedback or approval", "Checking with a colleague or friend", "let me run this by [person]", "That sounds promising—let me run it by Sarah and see what she thinks."),
     ("fall through", "☕ Casual", "Fail to happen after being planned (deals, trips, plans)", "Explaining why a plan was canceled", "our plans fell through at the last minute", "We were supposed to drive upstate, but the whole trip fell through."),
-    ("give someone the benefit of the doubt", "🎙️ Articulate", "Choose to believe someone had good intentions despite doubts", "Being fair when evidence is incomplete", "give [person] the benefit of the doubt", "Maybe his phone really did die—let's give him the benefit of the doubt.")
+    ("give someone the benefit of the doubt", "🎙️ Articulate", "Choose to believe someone had good intentions despite doubts", "Being fair when evidence is incomplete", "give [person] the benefit of the doubt", "Maybe his phone really did die—let's give him the benefit of the doubt."),
+    ("not my cup of tea", "🎭 Witty", "Polite, understated way to say you really dislike something", "Declining an activity without sounding harsh", "just not really my cup of tea", "Crowded nightclubs aren't really my cup of tea anymore."),
+    ("pull strings", "🎙️ Articulate", "Use personal influence or connections behind the scenes", "Explaining how someone got a rare favor", "pull a few strings to make it happen", "He had to pull a few strings just to get us a table on Friday night."),
+    ("keep me posted", "☕ Casual", "Keep me updated as things develop", "Wrapping up a conversation when waiting for news", "keep me posted on how it goes", "Good luck with the interview tomorrow—definitely keep me posted!")
 ]
 
-IRREGULAR_STEMS: Dict[str, str] = {
-    "wind": r"(?:wind|winds|wound|winding)",
-    "bite": r"(?:bite|bites|bit|bitten|biting)",
-    "take": r"(?:take|takes|took|taken|taking)",
-    "cut": r"(?:cut|cuts|cutting)",
-    "hit": r"(?:hit|hits|hitting)",
-    "let": r"(?:let|lets|letting)",
-    "fall": r"(?:fall|falls|fell|fallen|falling)",
-    "give": r"(?:give|gives|gave|given|giving)",
-    "run": r"(?:run|runs|ran|running)",
-    "have": r"(?:have|has|had|having|'ve|'s|'d)",
-    "be": r"(?:be|am|is|are|was|were|been|being|'m|'re|'s)",
-    "keep": r"(?:keep|keeps|kept|keeping)",
-    "pull": r"(?:pull|pulls|pulled|pulling)",
-    "push": r"(?:push|pushes|pushed|pushing)",
-    "boil": r"(?:boil|boils|boiled|boiling)",
-    "pan": r"(?:pan|pans|panned|panning)",
-    "iron": r"(?:iron|irons|ironed|ironing)",
-    "brush": r"(?:brush|brushes|brushed|brushing)",
-    "jump": r"(?:jump|jumps|jumped|jumping)",
-    "play": r"(?:play|plays|played|playing)",
-    "call": r"(?:call|calls|called|calling)",
-    "read": r"(?:read|reads|reading)"
-}
+
+def _word_regex_token(word: str) -> str:
+    w = word.lower().strip()
+    if w in PLACEHOLDER_STOPWORDS:
+        return r"(?:\w+(?:'\w+)?\s+){0,3}?"
+    if w in IRREGULAR_STEM_MAP:
+        forms = "|".join(re.escape(f) for f in IRREGULAR_STEM_MAP[w])
+        return rf"\b(?:{forms})\b"
+    if len(w) > 3:
+        stem = re.escape(w[:-1] if w.endswith("e") else w)
+        return rf"\b{stem}\w*\b"
+    return rf"\b{re.escape(w)}\b"
 
 
 def build_smart_cloze(chunk: str, example: str, ai_cloze: str = "") -> str:
-    """Ensures the target chunk is ALWAYS masked in the cloze sentence even with inflections or pronouns."""
+    """
+    Creates an accurate fill-in-the-blank sentence without leaking the target chunk,
+    handling irregular verb inflections (wind -> wound) and inserted pronouns
+    (cut someone some slack -> cut him some slack).
+    """
     if ai_cloze and "____" in ai_cloze and chunk.lower() not in ai_cloze.lower():
         return ai_cloze.strip()
+
     if not example:
         return "______"
 
-    tokens = chunk.strip().split()
-    regex_parts = []
-    for tok in tokens:
-        low = tok.lower().strip("[]()")
-        if low in ("someone", "somebody", "person"):
-            regex_parts.append(r"(?:\w+(?:\s+\w+)?)")
-        elif low in ("something", "it"):
-            regex_parts.append(r"(?:\w+(?:\s+\w+){0,2})")
-        elif low in ("my", "your", "one's", "his", "her", "their", "our"):
-            regex_parts.append(r"(?:my|your|his|her|their|our|one's|the|a)")
-        elif low in IRREGULAR_STEMS:
-            regex_parts.append(IRREGULAR_STEMS[low])
-        elif len(low) >= 4:
-            stem = re.escape(low[:-1] if low.endswith("e") else low)
-            regex_parts.append(rf"{stem}\w*")
-        else:
-            regex_parts.append(re.escape(tok))
+    # 1. Exact case-insensitive match
+    exact_re = re.compile(re.escape(chunk), re.IGNORECASE)
+    if exact_re.search(example):
+        return exact_re.sub("______", example)
 
-    flex_pattern = r"\b" + r"(?:\s+(?:a\s+bit\s+|right\s+|really\s+|just\s+)?)".join(regex_parts) + r"\b"
-    masked, count = re.subn(flex_pattern, "______", example, flags=re.IGNORECASE)
-    if count > 0:
-        return masked
+    # 2. Inflection & pronoun-bridging regex
+    tokens = [t for t in re.split(r"\s+", chunk.strip()) if t]
+    if tokens:
+        pattern_parts = []
+        for tok in tokens:
+            clean_tok = re.sub(r"[^a-zA-Z']", "", tok)
+            if not clean_tok:
+                continue
+            pattern_parts.append(_word_regex_token(clean_tok))
+        if pattern_parts:
+            flex_pattern = r"\s+(?:\w+(?:'\w+)?\s+){0,2}?".join(pattern_parts)
+            try:
+                flex_re = re.compile(flex_pattern, re.IGNORECASE)
+                if flex_re.search(example):
+                    return flex_re.sub("______", example, count=1)
+            except Exception:
+                pass
 
-    # Fallback: mask any content word >= 4 chars from chunk that appears in example
-    content_words = [w for w in tokens if len(w) >= 4 and w.lower() not in ("with", "from", "that", "this", "some", "more", "than")]
-    masked_fb = example
+    # 3. Fallback: mask individual content words from chunk inside example so answer never leaks
+    masked = example
+    content_words = [
+        re.sub(r"[^a-zA-Z']", "", t) for t in tokens
+        if len(t) >= 3 and t.lower() not in PLACEHOLDER_STOPWORDS
+    ]
     replaced_any = False
     for cw in content_words:
-        stem = re.escape(cw[:4].lower())
-        masked_fb, c = re.subn(rf"\b{stem}\w*\b", "______", masked_fb, flags=re.IGNORECASE)
-        if c > 0:
-            replaced_any = True
-    return masked_fb if replaced_any else "Complete this thought using your target phrase: ______"
+        tok_pat = _word_regex_token(cw)
+        try:
+            m_re = re.compile(tok_pat, re.IGNORECASE)
+            if m_re.search(masked):
+                masked = m_re.sub("____", masked, count=1)
+                replaced_any = True
+        except Exception:
+            pass
+
+    if replaced_any:
+        return masked
+    return "Complete the thought with the target expression: ______"
 
 
 class LoungeDatabase:
@@ -133,7 +208,10 @@ class LoungeDatabase:
     def _conn(self):
         conn = sqlite3.connect(self.user_db_path, timeout=30, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         try:
             yield conn
             conn.commit()
@@ -147,7 +225,10 @@ class LoungeDatabase:
     def _corpus_conn(self):
         conn = sqlite3.connect(self.corpus_db_path, timeout=30, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         try:
             yield conn
             conn.commit()
@@ -195,8 +276,8 @@ class LoungeDatabase:
                     user_id INTEGER,
                     chunk TEXT,
                     register_tag TEXT DEFAULT '🎙️ Articulate',
+                    b2_foil TEXT DEFAULT '',
                     explanation TEXT DEFAULT '',
-                    flat_b2_foil TEXT DEFAULT '',
                     trigger_context TEXT DEFAULT '',
                     co_text_pattern TEXT DEFAULT '',
                     typical_followup TEXT DEFAULT '',
@@ -218,7 +299,7 @@ class LoungeDatabase:
                 CREATE TABLE IF NOT EXISTS error_profile (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
-                    category TEXT DEFAULT '🎭 Natural Flow',
+                    category TEXT DEFAULT 'Spoken Flow',
                     user_said TEXT DEFAULT '',
                     native_fix TEXT DEFAULT '',
                     why_note TEXT DEFAULT '',
@@ -235,9 +316,9 @@ class LoungeDatabase:
                     user_id INTEGER,
                     payload_json TEXT,
                     audio_clean_text TEXT DEFAULT '',
-                    mirror_target_text TEXT DEFAULT '',
+                    user_transcript_text TEXT DEFAULT '',
                     host_reply_text TEXT DEFAULT '',
-                    host_persona TEXT DEFAULT 'marcus',
+                    active_persona TEXT DEFAULT 'marcus',
                     user_voice_file_id TEXT DEFAULT '',
                     created_at INTEGER
                 )
@@ -259,7 +340,7 @@ class LoungeDatabase:
                 )
             """)
 
-            # Safe schema migrations for existing user DBs
+            # Safe Auto-Migrations for Existing Restored Databases
             u_cols = [c[1] for c in conn.execute("PRAGMA table_info(users)").fetchall()]
             if "active_persona" not in u_cols:
                 try:
@@ -267,23 +348,23 @@ class LoungeDatabase:
                 except Exception:
                     pass
 
-            v_cols = [c[1] for c in conn.execute("PRAGMA table_info(lexical_vault)").fetchall()]
-            if "productive_count" not in v_cols:
+            lv_cols = [c[1] for c in conn.execute("PRAGMA table_info(lexical_vault)").fetchall()]
+            if "b2_foil" not in lv_cols:
                 try:
-                    conn.execute("ALTER TABLE lexical_vault ADD COLUMN productive_count INTEGER DEFAULT 0")
+                    conn.execute("ALTER TABLE lexical_vault ADD COLUMN b2_foil TEXT DEFAULT ''")
                 except Exception:
                     pass
-            if "flat_b2_foil" not in v_cols:
+            if "productive_count" not in lv_cols:
                 try:
-                    conn.execute("ALTER TABLE lexical_vault ADD COLUMN flat_b2_foil TEXT DEFAULT ''")
+                    conn.execute("ALTER TABLE lexical_vault ADD COLUMN productive_count INTEGER DEFAULT 0")
                 except Exception:
                     pass
 
             ab_cols = [c[1] for c in conn.execute("PRAGMA table_info(atomic_buffer)").fetchall()]
             for col_name, col_def in [
                 ("host_reply_text", "TEXT DEFAULT ''"),
-                ("mirror_target_text", "TEXT DEFAULT ''"),
-                ("host_persona", "TEXT DEFAULT 'marcus'")
+                ("user_transcript_text", "TEXT DEFAULT ''"),
+                ("active_persona", "TEXT DEFAULT 'marcus'")
             ]:
                 if col_name not in ab_cols:
                     try:
@@ -291,13 +372,13 @@ class LoungeDatabase:
                     except Exception:
                         pass
 
-            # Repair any leaked cloze sentences in existing vault
-            rows = conn.execute("SELECT id, chunk, example_sentence, cloze_sentence FROM lexical_vault").fetchall()
-            for r in rows:
-                c_sent = r["cloze_sentence"] or ""
-                if "(Phrase: ______)" in c_sent or r["chunk"].lower() in c_sent.lower():
-                    fixed_c = build_smart_cloze(r["chunk"], r["example_sentence"])
-                    conn.execute("UPDATE lexical_vault SET cloze_sentence = ? WHERE id = ?", (fixed_c, r["id"]))
+            # Retroactively repair any leaked "(Phrase: ______)" clozes in existing vault rows
+            bad_clozes = conn.execute(
+                "SELECT id, chunk, example_sentence, cloze_sentence FROM lexical_vault WHERE cloze_sentence LIKE '%(Phrase:%'"
+            ).fetchall()
+            for bc in bad_clozes:
+                fixed_c = build_smart_cloze(bc["chunk"], bc["example_sentence"])
+                conn.execute("UPDATE lexical_vault SET cloze_sentence = ? WHERE id = ?", (fixed_c, bc["id"]))
 
             if ADMIN_ID > 0:
                 conn.execute("""
@@ -305,6 +386,12 @@ class LoungeDatabase:
                     VALUES (?, 'Musa', 'C2', 1, 'articulate', 'trio', 1, 1, 500)
                 """, (ADMIN_ID,))
                 conn.execute("UPDATE users SET is_whitelisted = 1, daily_limit = 500 WHERE user_id = ?", (ADMIN_ID,))
+
+            conn.execute("""
+                UPDATE users
+                SET preferred_register = 'articulate'
+                WHERE preferred_register NOT IN ('articulate', 'casual', 'witty') OR preferred_register IS NULL
+            """)
             conn.commit()
 
     def get_sys_state(self, key: str, default: str = "") -> str:
@@ -429,11 +516,6 @@ class LoungeDatabase:
             if not c_rows:
                 c_rows = cconn.execute("""
                     SELECT chunk, register_tag, explanation, trigger_context, co_text_pattern, example_sentence
-                    WHERE chunk LIKE ? OR explanation LIKE ? OR example_sentence LIKE ?
-                    FROM corpus_entries
-                    LIMIT ?
-                """, (f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%", limit)).fetchall() if False else cconn.execute("""
-                    SELECT chunk, register_tag, explanation, trigger_context, co_text_pattern, example_sentence
                     FROM corpus_entries
                     WHERE chunk LIKE ? OR explanation LIKE ? OR example_sentence LIKE ?
                     LIMIT ?
@@ -496,7 +578,7 @@ class LoungeDatabase:
             u = dict(row)
             if u.get("preferred_register") not in REGISTERS_MAP:
                 u["preferred_register"] = "articulate"
-            if u.get("active_persona") not in PERSONAS_MAP:
+            if u.get("active_persona") not in ("marcus", "chloe", "jake", "trio"):
                 u["active_persona"] = "trio"
             return u
 
@@ -625,7 +707,7 @@ class LoungeDatabase:
                         last_seen = CURRENT_TIMESTAMP
                 """, (
                     user_id,
-                    d.get("category", "🎭 Natural Flow"),
+                    d.get("category", "Spoken Flow"),
                     user_said,
                     native_fix,
                     d.get("why_note", "")
@@ -650,26 +732,49 @@ class LoungeDatabase:
     # =================================================================
     # Active Productive Uptake Detector (Swain's Output Hypothesis)
     # =================================================================
-    def detect_and_record_productive_uptake(self, user_id: int, user_utterance: str) -> List[str]:
-        """Checks if the user actively produced any expression from their Vault in their own speech/text."""
-        if not user_utterance or len(user_utterance) < 4:
+    def detect_and_record_active_uptake(self, user_id: int, user_utterance: str) -> List[str]:
+        """
+        Scans the member's spoken or written utterance for active, unprompted production
+        of expressions stored in their personal lexical_vault. Increments `productive_count`
+        when matched.
+        """
+        if not user_utterance or len(user_utterance.strip()) < 4:
             return []
+
         matched_chunks: List[str] = []
+        matched_ids: List[int] = []
+
         with self._lock, self._conn() as conn:
             vault_rows = conn.execute(
                 "SELECT id, chunk FROM lexical_vault WHERE user_id = ?", (user_id,)
             ).fetchall()
+
             for r in vault_rows:
-                chunk = r["chunk"]
-                # Check if build_smart_cloze masks it (meaning the chunk or its inflected form was used!)
-                masked = build_smart_cloze(chunk, user_utterance)
-                if "______" in masked and masked != "Complete this thought using your target phrase: ______":
-                    matched_chunks.append(chunk)
-                    conn.execute(
-                        "UPDATE lexical_vault SET productive_count = productive_count + 1 WHERE id = ?",
-                        (r["id"],)
-                    )
-            conn.commit()
+                chunk = (r["chunk"] or "").strip()
+                if not chunk:
+                    continue
+                tokens = [re.sub(r"[^a-zA-Z']", "", t) for t in chunk.split() if t]
+                pattern_parts = [_word_regex_token(t) for t in tokens if t]
+                if not pattern_parts:
+                    continue
+                flex_pat = r"\s+(?:\w+(?:'\w+)?\s+){0,2}?".join(pattern_parts)
+                try:
+                    if re.search(flex_pat, user_utterance, re.IGNORECASE):
+                        matched_chunks.append(chunk)
+                        matched_ids.append(r["id"])
+                except Exception:
+                    if chunk.lower() in user_utterance.lower():
+                        matched_chunks.append(chunk)
+                        matched_ids.append(r["id"])
+
+            if matched_ids:
+                placeholders = ",".join(["?"] * len(matched_ids))
+                conn.execute(
+                    f"UPDATE lexical_vault SET productive_count = productive_count + 1 WHERE id IN ({placeholders})",
+                    matched_ids
+                )
+                conn.commit()
+
         return matched_chunks[:3]
 
     def store_atomic_batch(
@@ -678,28 +783,27 @@ class LoungeDatabase:
         token_key: str,
         items: List[Dict[str, Any]],
         audio_clean_text: str = "",
-        mirror_target_text: str = "",
         host_reply_text: str = "",
-        host_persona: str = "marcus",
-        user_voice_file_id: str = ""
+        user_voice_file_id: str = "",
+        user_transcript_text: str = "",
+        active_persona: str = "marcus"
     ):
         self.ingest_chunks_to_corpus(items)
         now_ts = int(time.time())
-        clean_host = re.sub(r"<[^>]+>", "", host_reply_text or "")
         with self._lock, self._conn() as conn:
             conn.execute("DELETE FROM atomic_buffer WHERE created_at < ?", (now_ts - 172800,))
             conn.execute("""
                 INSERT OR REPLACE INTO atomic_buffer
-                (token_key, user_id, payload_json, audio_clean_text, mirror_target_text, host_reply_text, host_persona, user_voice_file_id, created_at)
+                (token_key, user_id, payload_json, audio_clean_text, user_transcript_text, host_reply_text, active_persona, user_voice_file_id, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 token_key,
                 user_id,
                 json.dumps(items, ensure_ascii=False),
                 audio_clean_text,
-                mirror_target_text or audio_clean_text,
-                clean_host,
-                host_persona,
+                user_transcript_text,
+                host_reply_text,
+                active_persona,
                 user_voice_file_id,
                 now_ts
             ))
@@ -722,14 +826,14 @@ class LoungeDatabase:
         with self._lock, self._conn() as conn:
             cur = conn.execute("""
                 INSERT OR IGNORE INTO lexical_vault
-                (user_id, chunk, register_tag, explanation, flat_b2_foil, trigger_context, co_text_pattern, typical_followup, example_sentence, cloze_sentence, srs_next_review)
+                (user_id, chunk, register_tag, b2_foil, explanation, trigger_context, co_text_pattern, typical_followup, example_sentence, cloze_sentence, srs_next_review)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 user_id,
                 chunk,
                 item.get("register_tag", "🎙️ Articulate"),
+                item.get("b2_foil", ""),
                 item.get("explanation", ""),
-                item.get("flat_b2_foil", ""),
                 item.get("trigger", item.get("trigger_context", "")),
                 item.get("pattern", item.get("co_text_pattern", "")),
                 item.get("followup", item.get("typical_followup", "")),
@@ -754,7 +858,7 @@ class LoungeDatabase:
             logger.error(f"Atomic save error: {e}")
             return None
 
-    def get_stealth_injection_targets(self, user_id: int, limit: int = 2) -> Tuple[List[Dict[str, Any]], List[int]]:
+    def get_stealth_injection_targets(self, user_id: int, limit: int = 4) -> Tuple[List[Dict[str, Any]], List[int]]:
         with self._lock, self._conn() as conn:
             rows = conn.execute("""
                 SELECT id, chunk, register_tag, trigger_context
@@ -791,14 +895,13 @@ class LoungeDatabase:
             row = conn.execute("SELECT * FROM lexical_vault WHERE id = ?", (card_id,)).fetchone()
             return dict(row) if row else None
 
-    def grade_srs_card(self, card_id: int, quality: int, increment_productive: bool = False):
+    def grade_srs_card(self, card_id: int, quality: int):
         card = self.get_srs_card_by_id(card_id)
         if not card:
             return
         reps = int(card.get("srs_repetitions", 0))
         ef = float(card.get("srs_efactor", 2.5))
         interval = int(card.get("srs_interval", 1))
-        prod = int(card.get("productive_count", 0)) + (1 if increment_productive else 0)
 
         if quality < 3:
             reps = 0
@@ -819,9 +922,9 @@ class LoungeDatabase:
         with self._lock, self._conn() as conn:
             conn.execute("""
                 UPDATE lexical_vault
-                SET srs_repetitions = ?, srs_efactor = ?, srs_interval = ?, srs_next_review = ?, productive_count = ?
+                SET srs_repetitions = ?, srs_efactor = ?, srs_interval = ?, srs_next_review = ?
                 WHERE id = ?
-            """, (reps, ef, interval, next_date, prod, card_id))
+            """, (reps, ef, interval, next_date, card_id))
             conn.commit()
 
     def get_user_vault(self, user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
@@ -853,6 +956,9 @@ class LoungeDatabase:
                 "productive_mastered": productive_mastered
             }
 
+    # =================================================================
+    # Self-Cleaning Silent Vault Sync (Deletes previous backup message)
+    # =================================================================
     def backup_to_telegram(self, bot: Any, caption_note: str = "Vault Sync") -> bool:
         if not ADMIN_ID or not bot:
             return False
@@ -910,7 +1016,7 @@ class LoungeDatabase:
                 cols = [c[1] for c in chk_conn.execute("PRAGMA table_info(users)").fetchall()]
                 chk_conn.close()
 
-                if "user_id" in cols:
+                if "user_id" in cols and "preferred_register" in cols:
                     with self._lock:
                         os.replace(temp_check, self.user_db_path)
                     self.init_schema()
