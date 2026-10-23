@@ -14,7 +14,7 @@ import tempfile
 import subprocess
 import threading
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Tuple
 
 
 import telebot
@@ -2095,7 +2095,18 @@ def main():
 
     # 3. بدء استقبال الرسائل بلا انقطاع
     logger.info("✅ Bot is live and polling!")
-    bot.infinity_polling(timeout=30, long_polling_timeout=25, skip_pending=True)
+    try:
+        bot.remove_webhook()
+        if ADMIN_ID:
+            u_admin = db.get_user(ADMIN_ID, "Admin", "Musa")
+            bot.send_message(
+                ADMIN_ID,
+                "🗽 <b>Musa's NYC Lounge is NOW LIVE (24/7 Relay)!</b>\n\n" + build_welcome_banner(u_admin),
+                reply_markup=LoungeKeyboards.main_menu(u_admin, is_admin=True)
+            )
+    except Exception as e:
+        logger.warning(f"Startup notify warning: {e}")
+    bot.infinity_polling(timeout=30, long_polling_timeout=25, skip_pending=False)
 
 
 if __name__ == "__main__":
