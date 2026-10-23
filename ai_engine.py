@@ -457,7 +457,7 @@ class NYCLoungeAI:
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
             f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
-            f"- SPONTANEOUS HOST PIVOTS: When natural in conversation, let the hosts occasionally model a smooth American mid-sentence pivot/self-repair inside `chat_turns` (matching {active_vibe_badge}) without ever forcing it or making it awkward.\n"
+            f"- SPONTANEOUS HOST PIVOTS: Do NOT follow any fixed count or quota for mid-sentence pivots; weave them into `chat_turns` (matching {active_vibe_badge}) whenever a thought naturally shifts mid-stream, as long as it never disrupts the spontaneity of the dialogue.\n"
             f"- {lang_rule}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
@@ -614,10 +614,6 @@ class NYCLoungeAI:
         return self._finalize_chat_turns(res, active_persona=active_persona, user_text=source_text)
 
     def generate_podcast_episode(self, user: Dict[str, Any], custom_topic: str = "") -> PodcastEpisodeSchema:
-        pref_reg = user.get("preferred_register", "articulate")
-        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
-        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
-        active_vibe_badge = vibe_badge
         uid = user["user_id"]
         level = user.get("level", "C1")
         pref_reg = user.get("preferred_register", "articulate")
@@ -633,7 +629,7 @@ class NYCLoungeAI:
         topic_prompt = (
             f"Topic requested by listener: '{custom_topic}'."
             if custom_topic else
-            "Invent a lively, captivating New York cultural observation, everyday dilemma, or real-life story."
+            "Pick a relatable, captivating New York cultural observation, everyday dilemma, or real-life human moment."
         )
 
         system_prompt = (
@@ -643,21 +639,25 @@ class NYCLoungeAI:
             f"- Both Andrew and Ava MUST speak strictly in the {vibe_badge} register throughout the entire show, and all 3 `key_takeaways` MUST match {vibe_badge}.\n"
             f"- {self._level_calibration_guide(level)}\n"
             f"- {topic_prompt}\n"
-            f"- Member's Saved Vault Phrases to weave in naturally (if empty, choose 3 fresh expressions): {vault_chunks}\n"
-            f"- Target Phrasing Upgrades to reinforce: {weak_fixes}\n"
-            "- Write an 8 to 10 turn dialogue between `male_host` (Andrew) and `female_host` (Ava).\n"
-            "- Twice during the conversation, have the hosts briefly pause ('Wait, I love how you put that...') to highlight why a target phrase works so well in that exact moment before continuing."
+            f"- Candidate Vault Phrases (weave in ONLY the ones that fit the topic 100% naturally; ignore any that feel forced): {vault_chunks}\n"
+            f"- Target Phrasing Upgrades (use organically if relevant): {weak_fixes}\n"
+            "- Write an 8 to 10 turn unscripted-feeling dialogue between `male_host` (Andrew) and `female_host` (Ava).\n"
+            "- REAL HUMAN FLOW & UNFORCED PIVOTS: Make them sound like two real people thinking out loud in real time. "
+            "Without any fixed quota or numerical limit, let the hosts naturally recalibrate or pivot mid-sentence "
+            f"(matching the {vibe_badge} vibe) whenever the flow of thought genuinely calls for it, provided it never disrupts the spontaneity of their conversation.\n"
+            "- NO DIDACTIC META-PAUSES: Never pause the conversation to lecture or say 'I love how you used that phrase.' Keep the illusion of a real, spontaneous NYC podcast 100% intact."
         )
 
         ep: PodcastEpisodeSchema = self._call_structured(
-            contents=[f"Record the complete Dual-Host NYC Radio episode strictly in {vibe_badge} mode now."],
+            contents=[f"Record the complete Dual-Host NYC Radio episode strictly in {vibe_badge} mode with 100% natural human flow now."],
             schema_cls=PodcastEpisodeSchema,
             system_instruction=system_prompt,
-            temperature=0.78
+            temperature=0.76
         )
         for u in ep.key_takeaways:
             u.register_tag = vibe_badge
         return ep
+
 
     def build_active_drill(self, user: Dict[str, Any], drill_type: str) -> Dict[str, Any]:
         pref_reg = user.get("preferred_register", "articulate")
