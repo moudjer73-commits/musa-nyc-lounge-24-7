@@ -21,6 +21,7 @@ from typing import Dict, Any, List
 
 import telebot
 
+import json
 from config import (
     BOT_TOKEN,
     GEMINI_API_KEY,
@@ -32,6 +33,7 @@ from config import (
     PERIODIC_BACKUP_SECONDS,
     REGISTERS_MAP,
     PERSONAS,
+    CAST_PRESETS,
     GUIDE_CHAPTERS
 )
 from database import LoungeDatabase
@@ -101,13 +103,8 @@ def is_authorized(user_id: int, username: str = "", full_name: str = "") -> bool
 
 
 def _persona_badge(persona_key: str) -> str:
-    p_map = {
-        "trio": "🗽 Trio Table (Marcus, Chloe & Jake)",
-        "marcus": "🧔‍♂️ Marcus (Articulate)",
-        "chloe": "👩🏼‍💼 Chloe (Witty)",
-        "jake": "🧢 Jake (Casual)"
-    }
-    return p_map.get((persona_key or "trio").lower(), "🗽 Trio Table")
+    preset = CAST_PRESETS.get((persona_key or "trio").lower(), CAST_PRESETS["trio"])
+    return preset["label"]
 
 
 def build_welcome_banner(user: Dict[str, Any]) -> str:
@@ -475,17 +472,32 @@ if bot:
                 bot.answer_callback_query(call.id)
                 return
 
-            # --- 1B. Direct Persona & Trio Selection ---
+            # --- 1B. Cast Selector Menu & 1/2/3 Host Switching ---
+            if data == "menu:cast_selector":
+                cur_cast = user.get("active_persona", "trio")
+                safe_edit_text(
+                    call.message.chat.id, call.message.message_id,
+                    "👥 <b>Choose Your Conversation Hosts (1, 2, or 3 Characters)</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"<b>Current Table Cast:</b> {_persona_badge(cur_cast)}\n\n"
+                    "• <b>🗽 Trio (3 Hosts):</b> Marcus, Chloe & Jake all react, banter with each other, and reply together.\n"
+                    "• <b>👥 Duo (2 Hosts):</b> Pick any 2-host pair for a focused back-and-forth dialogue.\n"
+                    "• <b>👤 Solo (1 Host):</b> Chat 1-on-1 with Marcus, Chloe, or Jake:",
+                    reply_markup=LoungeKeyboards.cast_selector_menu(cur_cast)
+                )
+                bot.answer_callback_query(call.id)
+                return
+
             if data.startswith("persona:"):
                 new_p = data.split(":", 1)[1]
-                if new_p in ("trio", "marcus", "chloe", "jake"):
+                if new_p in CAST_PRESETS:
                     reg_map = {"marcus": "articulate", "chloe": "witty", "jake": "casual"}
                     upd_kwargs: Dict[str, Any] = {"active_persona": new_p}
                     if new_p in reg_map:
                         upd_kwargs["preferred_register"] = reg_map[new_p]
                     db.update_user(uid, **upd_kwargs)
                     user = db.get_user(uid)
-                    bot.answer_callback_query(call.id, f"👥 Host: {_persona_badge(new_p)}")
+                    bot.answer_callback_query(call.id, f"✅ {_persona_badge(new_p)}")
                     safe_edit_text(
                         call.message.chat.id, call.message.message_id,
                         build_welcome_banner(user),
@@ -494,12 +506,12 @@ if bot:
                 return
 
             if data == "action:cycle_persona":
-                order = ["trio", "marcus", "chloe", "jake"]
+                order = list(CAST_PRESETS.keys())
                 cur_p = user.get("active_persona", "trio")
                 nxt_p = order[(order.index(cur_p) + 1) % len(order)] if cur_p in order else "trio"
                 db.update_user(uid, active_persona=nxt_p)
                 user = db.get_user(uid)
-                bot.answer_callback_query(call.id, f"👥 Active Host: {_persona_badge(nxt_p)}")
+                bot.answer_callback_query(call.id, f"👥 {_persona_badge(nxt_p)}")
                 try:
                     bot.edit_message_reply_markup(
                         call.message.chat.id, call.message.message_id,
@@ -738,20 +750,31 @@ if bot:
             elif data.startswith("host_tts:"):
                 token_key = data.split(":", 1)[1]
                 meta = db.get_atomic_meta(token_key)
-                host_txt = (meta.get("host_reply_text") or meta.get("audio_clean_text") or "") if meta else ""
-                p_key = (meta.get("active_persona") or "marcus") if meta else "marcus"
-                if not host_txt:
+                raw_host_payload = (meta.get("host_reply_text") or "") if meta else ""
+                p_key = (meta.get("active_persona") or "trio") if meta else "trio"
+                if not raw_host_payload:
                     bot.answer_callback_query(call.id, "Audio unavailable for this message.", show_alert=True)
                     return
-                p_title = PERSONAS.get(p_key, PERSONAS["marcus"])["title"]
-                bot.answer_callback_query(call.id, f"🎧 {p_title} is speaking...")
+                chat_turns_list = []
+                fallback_plain = raw_host_payload
+                if raw_host_payload.startswith("[{"):
+                    try:
+                        chat_turns_list = json.loads(raw_host_payload)
+                        fallback_plain = " ".join([t.get("text", "") for t in chat_turns_list])
+                    except Exception:
+                        chat_turns_list = []
+
+                cast_badge = _persona_badge(p_key)
+                bot.answer_callback_query(call.id, f"🎧 Recording {cast_badge}...")
                 bot.send_chat_action(call.message.chat.id, "record_voice")
-                ogg_path = LoungeMediaEngine.synthesize_us_speech(host_txt, persona_key=p_key)
+                ogg_path = LoungeMediaEngine.synthesize_chat_turns(
+                    chat_turns_list, fallback_text=fallback_plain, fallback_persona=p_key
+                )
                 if ogg_path:
                     with open(ogg_path, "rb") as vf:
                         bot.send_voice(
                             call.message.chat.id, vf,
-                            caption=f"🗽 <i>{html.escape(p_title)}</i>"
+                            caption=f"🗽 <i>{html.escape(cast_badge)}</i>"
                         )
                     LoungeMediaEngine.cleanup_file(ogg_path)
 
@@ -1113,8 +1136,9 @@ if bot:
 
             token_key = uuid.uuid4().hex[:10]
             upgrades_dicts = [u.model_dump() for u in res.lexical_upgrades]
-            resp_persona = (res.responding_persona or "marcus").lower()
+            active_cast_key = user.get("active_persona", "trio")
             mirror_sent = res.mirror_clean_target or res.tts_clean_target or res.rewrite_articulate
+            turns_json = json.dumps([ct.model_dump() for ct in getattr(res, "chat_turns", [])], ensure_ascii=False) if getattr(res, "chat_turns", None) else res.lounge_reply
 
             db.store_atomic_batch(
                 user_id=uid,
@@ -1122,8 +1146,8 @@ if bot:
                 items=upgrades_dicts,
                 audio_clean_text=res.tts_clean_target or res.rewrite_articulate,
                 user_transcript_text=mirror_sent,
-                host_reply_text=res.lounge_reply,
-                active_persona=resp_persona,
+                host_reply_text=turns_json,
+                active_persona=active_cast_key,
                 user_voice_file_id=file_id
             )
 
@@ -1139,7 +1163,7 @@ if bot:
                     len(res.lexical_upgrades),
                     has_user_voice=True,
                     has_host_voice=True,
-                    persona_key=resp_persona
+                    persona_key=active_cast_key
                 )
             )
         except Exception as e:
@@ -1329,7 +1353,8 @@ if bot:
 
             token_key = uuid.uuid4().hex[:10]
             upgrades_dicts = [u.model_dump() for u in res.lexical_upgrades]
-            resp_persona = (res.responding_persona or "marcus").lower()
+            active_cast_key = user.get("active_persona", "trio")
+            turns_json = json.dumps([ct.model_dump() for ct in getattr(res, "chat_turns", [])], ensure_ascii=False) if getattr(res, "chat_turns", None) else res.lounge_reply
 
             db.store_atomic_batch(
                 user_id=uid,
@@ -1337,8 +1362,8 @@ if bot:
                 items=upgrades_dicts,
                 audio_clean_text=res.tts_clean_target or res.rewrite_articulate,
                 user_transcript_text=res.mirror_clean_target or text,
-                host_reply_text=res.lounge_reply,
-                active_persona=resp_persona
+                host_reply_text=turns_json,
+                active_persona=active_cast_key
             )
 
             formatted_html = format_lounge_turn_html(
@@ -1353,7 +1378,7 @@ if bot:
                     len(res.lexical_upgrades),
                     has_user_voice=False,
                     has_host_voice=True,
-                    persona_key=resp_persona
+                    persona_key=active_cast_key
                 )
             )
         except Exception as e:

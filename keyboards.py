@@ -2,14 +2,13 @@
 """
 keyboards.py — Interactive Club Keyboards for Musa's NYC Lounge
 Includes:
-- 1-Tap Trio & Individual Host Selector Bar (Trio, Marcus, Chloe, Jake)
+- Full Cast Selector (Choose 1 Solo, 2 Duo, or 3 Trio Hosts anytime)
 - Long-Form Duo & Trio Podcast Studio Menu (NotebookLM Style)
-- Pushed-Output 'Take 2 (Retry)' Button & Dynamic Persona Audio Controls
-- Devil's Advocate Sparring, Contrastive Stress Lab & Spoken Fluency Audit
+- Pushed-Output 'Take 2 (Retry)' Button & Multi-Voice Chat Playback
 """
 from typing import Dict, Any
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import REGISTERS_MAP, PERSONAS
+from config import REGISTERS_MAP, PERSONAS, CAST_PRESETS
 
 
 class LoungeKeyboards:
@@ -19,20 +18,21 @@ class LoungeKeyboards:
         mode = user.get("current_mode", "spontaneous_chat")
         reg_key = user.get("preferred_register", "articulate")
         reg_label = REGISTERS_MAP.get(reg_key, "🎙️ Articulate")
-        active_persona = user.get("active_persona", "trio")
+        active_cast = user.get("active_persona", "trio")
+        cast_short = CAST_PRESETS.get(active_cast, CAST_PRESETS["trio"])["short"]
 
         def _m(target: str, label: str) -> str:
             return f"✅ {label}" if mode == target else label
 
-        def _p(target: str, label: str) -> str:
-            return f"✅ {label}" if active_persona == target else label
-
-        # Top Bar: 1-Tap Host / Trio Selector
+        # Top Row: Dedicated Cast Selector Button (Choose 1, 2, or 3 Hosts)
         kb.row(
-            InlineKeyboardButton(_p("trio", "🗽 Trio"), callback_data="persona:trio"),
-            InlineKeyboardButton(_p("marcus", "🧔‍♂️ Marcus"), callback_data="persona:marcus"),
-            InlineKeyboardButton(_p("chloe", "👩🏼‍💼 Chloe"), callback_data="persona:chloe"),
-            InlineKeyboardButton(_p("jake", "🧢 Jake"), callback_data="persona:jake")
+            InlineKeyboardButton(f"👥 Chat Hosts: {cast_short} (Tap to Change)", callback_data="menu:cast_selector")
+        )
+        # Quick 1-Tap Switchers for Trio / Duo / Solo
+        kb.row(
+            InlineKeyboardButton("🗽 Trio (3)" if active_cast != "trio" else "✅ 🗽 Trio (3)", callback_data="persona:trio"),
+            InlineKeyboardButton("🧔‍♂️👩🏼‍💼 M&C (2)" if active_cast != "duo_mc" else "✅ M&C (2)", callback_data="persona:duo_mc"),
+            InlineKeyboardButton("👩🏼‍💼🧢 C&J (2)" if active_cast != "duo_cj" else "✅ C&J (2)", callback_data="persona:duo_cj")
         )
 
         # Row 1: Spontaneous Banter & Devil's Advocate Sparring
@@ -84,19 +84,40 @@ class LoungeKeyboards:
         return kb
 
     @staticmethod
+    def cast_selector_menu(active_cast: str = "trio") -> InlineKeyboardMarkup:
+        """Lets the member choose 1 (Solo), 2 (Duo), or 3 (Trio) hosts for spontaneous chat."""
+        kb = InlineKeyboardMarkup(row_width=1)
+
+        def _c(key: str, label: str) -> str:
+            return f"✅ {label}" if active_cast == key else label
+
+        # 3 Hosts (Trio)
+        kb.add(InlineKeyboardButton(_c("trio", "🗽 Trio Table: Marcus, Chloe & Jake (All 3 Hosts)"), callback_data="persona:trio"))
+
+        # 2 Hosts (Duo Combinations)
+        kb.add(
+            InlineKeyboardButton(_c("duo_mc", "🧔‍♂️👩🏼‍💼 Duo: Marcus & Chloe (Articulate + Witty)"), callback_data="persona:duo_mc"),
+            InlineKeyboardButton(_c("duo_cj", "👩🏼‍💼🧢 Duo: Chloe & Jake (Witty + Brooklyn Casual)"), callback_data="persona:duo_cj"),
+            InlineKeyboardButton(_c("duo_mj", "🧔‍♂️🧢 Duo: Marcus & Jake (Analytical + Street Story)"), callback_data="persona:duo_mj")
+        )
+
+        # 1 Host (Solo 1-on-1)
+        kb.row(
+            InlineKeyboardButton(_c("marcus", "🧔‍♂️ Marcus (1)"), callback_data="persona:marcus"),
+            InlineKeyboardButton(_c("chloe", "👩🏼‍💼 Chloe (1)"), callback_data="persona:chloe"),
+            InlineKeyboardButton(_c("jake", "🧢 Jake (1)"), callback_data="persona:jake")
+        )
+        kb.row(InlineKeyboardButton("🔙 Back to Conversation / Main Menu", callback_data="menu:home"))
+        return kb
+
+    @staticmethod
     def studio_prompt_bar(mode: str, active_persona: str = "trio") -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=2)
-        p_labels = {
-            "trio": "🗽 Trio Table",
-            "marcus": "🧔‍♂️ Marcus",
-            "chloe": "👩🏼‍💼 Chloe",
-            "jake": "🧢 Jake"
-        }
-        p_badge = p_labels.get(active_persona, "🗽 Trio Table")
+        cast_short = CAST_PRESETS.get(active_persona, CAST_PRESETS["trio"])["short"]
 
         kb.add(
             InlineKeyboardButton("🎲 Spark Another Topic", callback_data="action:spark_topic"),
-            InlineKeyboardButton(f"👥 Host: {p_badge}", callback_data="action:cycle_persona")
+            InlineKeyboardButton(f"👥 Hosts: {cast_short}", callback_data="menu:cast_selector")
         )
         kb.add(
             InlineKeyboardButton("🎚️ Switch Vibe", callback_data="action:cycle_register"),
@@ -110,19 +131,16 @@ class LoungeKeyboards:
         num_upgrades: int = 3,
         has_user_voice: bool = False,
         has_host_voice: bool = True,
-        persona_key: str = "marcus"
+        persona_key: str = "trio"
     ) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
 
-        p_short = {
-            "marcus": "🧔‍♂️ Marcus",
-            "chloe": "👩🏼‍💼 Chloe",
-            "jake": "🧢 Jake"
-        }.get((persona_key or "marcus").lower(), "🎧 Host")
+        cast_info = CAST_PRESETS.get(persona_key, CAST_PRESETS.get("marcus"))
+        host_btn_label = f"🎧 Hear {cast_info['short']}" if cast_info else "🎧 Hear Host"
 
         audio_btns = []
         if has_host_voice:
-            audio_btns.append(InlineKeyboardButton(f"🎧 {p_short}", callback_data=f"host_tts:{token_key}"))
+            audio_btns.append(InlineKeyboardButton(host_btn_label, callback_data=f"host_tts:{token_key}"))
         audio_btns.append(InlineKeyboardButton("🗣️ My Recast", callback_data=f"tts:{token_key}"))
         if has_user_voice:
             audio_btns.append(InlineKeyboardButton("🪞 Voice Mirror", callback_data=f"mirror:{token_key}"))
@@ -136,9 +154,9 @@ class LoungeKeyboards:
             kb.row(*save_btns)
 
         kb.row(
-            InlineKeyboardButton("🎙️ Take 2 (Retry)", callback_data=f"take2:{token_key}"),
-            InlineKeyboardButton("🎲 New Topic", callback_data="action:spark_topic"),
-            InlineKeyboardButton("👥 Host", callback_data="action:cycle_persona"),
+            InlineKeyboardButton("🎙️ Take 2", callback_data=f"take2:{token_key}"),
+            InlineKeyboardButton("👥 Hosts (1/2/3)", callback_data="menu:cast_selector"),
+            InlineKeyboardButton("🎲 Topic", callback_data="action:spark_topic"),
             InlineKeyboardButton("🏠 Menu", callback_data="menu:home")
         )
         return kb
@@ -253,17 +271,9 @@ class LoungeKeyboards:
             for lv, label in levels
         ])
 
-        active_persona = user.get("active_persona", "trio")
-        personas_row = [
-            ("trio", "🗽 Trio"),
-            ("marcus", "🧔‍♂️ Marcus"),
-            ("chloe", "👩🏼‍💼 Chloe"),
-            ("jake", "🧢 Jake")
-        ]
-        kb.row(*[
-            InlineKeyboardButton(f"{'✅ ' if active_persona == pk else ''}{plabel}", callback_data=f"persona:{pk}")
-            for pk, plabel in personas_row
-        ])
+        active_cast = user.get("active_persona", "trio")
+        cast_short = CAST_PRESETS.get(active_cast, CAST_PRESETS["trio"])["short"]
+        kb.row(InlineKeyboardButton(f"👥 Choose Hosts (1, 2, or 3): {cast_short}", callback_data="menu:cast_selector"))
 
         eng_only = bool(user.get("english_only", 1))
         eng_label = "🔒 100% English Immersion: ON" if eng_only else "🔓 Brief Arabic Notes: ALLOWED"

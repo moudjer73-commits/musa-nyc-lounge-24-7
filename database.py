@@ -578,7 +578,7 @@ class LoungeDatabase:
             u = dict(row)
             if u.get("preferred_register") not in REGISTERS_MAP:
                 u["preferred_register"] = "articulate"
-            if u.get("active_persona") not in ("marcus", "chloe", "jake", "trio"):
+            if u.get("active_persona") not in ("trio", "duo_mc", "duo_cj", "duo_mj", "marcus", "chloe", "jake"):
                 u["active_persona"] = "trio"
             return u
 

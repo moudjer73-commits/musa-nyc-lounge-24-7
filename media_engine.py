@@ -276,6 +276,103 @@ class LoungeMediaEngine:
                 if os.path.exists(out_ogg) and os.path.exists(raw_mp3):
                     cls.cleanup_file(raw_mp3)
 
+
+    @classmethod
+    def synthesize_chat_turns(
+        cls,
+        chat_turns: List[Dict[str, str]],
+        fallback_text: str = "",
+        fallback_persona: str = "marcus"
+    ) -> Optional[str]:
+        """
+        Synthesizes a Solo (1 host), Duo (2 hosts), or Trio (3 hosts) chat reply
+        into a single Telegram .ogg voice note with each character's real voice,
+        trimmed dead-air silence, and stereo spatial panning!
+        """
+        if not chat_turns or len(chat_turns) <= 1:
+            if chat_turns and len(chat_turns) == 1:
+                sp = chat_turns[0].get("speaker", fallback_persona)
+                txt = chat_turns[0].get("text", fallback_text)
+                return cls.synthesize_us_speech(txt, persona_key=sp)
+            return cls.synthesize_us_speech(fallback_text, persona_key=fallback_persona)
+
+        cls.sweep_old_temp_files()
+        uid = uuid.uuid4().hex[:10]
+        temp_files: List[str] = []
+        concat_txt = os.path.join(TEMP_DIR, f"ct_list_{uid}.txt")
+        final_ogg = os.path.join(TEMP_DIR, f"ct_multi_{uid}.ogg")
+        temp_files.append(concat_txt)
+
+        with MEDIA_TASK_SEMAPHORE:
+            try:
+                resolved_speakers = [cls.resolve_persona_voice(t.get("speaker", "marcus"))["key"] for t in chat_turns]
+                pan_map = cls._build_speaker_pan_map(resolved_speakers, requested_mode="auto")
+
+                tasks_meta = []
+                for idx, turn in enumerate(chat_turns):
+                    raw_sp = turn.get("speaker", "marcus")
+                    text = turn.get("text", "")
+                    pacing = turn.get("pacing", "normal")
+                    p_info = cls.resolve_persona_voice(raw_sp)
+                    sp_key = p_info["key"]
+                    final_rate = cls._compute_turn_rate(p_info["rate"], pacing)
+                    pad_after = cls._compute_pad_after(text, pacing)
+                    pan_filter = pan_map.get(sp_key, "pan=stereo|c0=0.50*c0|c1=0.50*c0")
+
+                    seg_mp3 = os.path.join(TEMP_DIR, f"ct_seg_{uid}_{idx}.mp3")
+                    seg_wav = os.path.join(TEMP_DIR, f"ct_seg_{uid}_{idx}.wav")
+                    temp_files.extend([seg_mp3, seg_wav])
+
+                    tasks_meta.append({
+                        "text": text,
+                        "voice": p_info["voice"],
+                        "rate": final_rate,
+                        "pitch": p_info["pitch"],
+                        "mp3": seg_mp3,
+                        "wav": seg_wav,
+                        "pan_filter": pan_filter,
+                        "pad_after": pad_after
+                    })
+
+                async def _synth_all():
+                    sem = asyncio.Semaphore(4)
+                    async def _w(m):
+                        async with sem:
+                            return await cls._async_edge_tts_to_file(
+                                m["text"], m["mp3"], voice=m["voice"], rate=m["rate"], pitch=m["pitch"]
+                            )
+                    return await asyncio.gather(*[_w(m) for m in tasks_meta])
+
+                results = cls._run_async(_synth_all())
+                wav_segments = []
+                for m, ok in zip(tasks_meta, results):
+                    if ok and cls._to_trimmed_podcast_wav(m["mp3"], m["wav"], pan_filter=m["pan_filter"], pad_after=m["pad_after"]):
+                        wav_segments.append(m["wav"])
+
+                if not wav_segments:
+                    return cls.synthesize_us_speech(fallback_text, persona_key=fallback_persona)
+
+                with open(concat_txt, "w", encoding="utf-8") as f:
+                    for w in wav_segments:
+                        f.write(f"file '{w}'\n")
+
+                cmd = [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", concat_txt,
+                    "-c:a", "libopus", "-b:a", "64k", "-vbr", "on",
+                    final_ogg
+                ]
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
+                if res.returncode == 0 and os.path.exists(final_ogg):
+                    return final_ogg
+                return None
+            except Exception as e:
+                logger.error(f"Multi-host chat voice error: {e}")
+                return None
+            finally:
+                for tf in temp_files:
+                    cls.cleanup_file(tf)
+
     @classmethod
     def build_acoustic_mirror(
         cls,

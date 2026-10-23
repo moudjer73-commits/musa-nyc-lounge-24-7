@@ -23,6 +23,7 @@ from config import (
     GEMINI_MODELS_CHAIN,
     CORE_NYC_PERSONA_PROMPT,
     PERSONAS,
+    CAST_PRESETS,
     REGISTERS_MAP,
     REGISTER_DESCRIPTIONS
 )
@@ -63,6 +64,19 @@ class LexicalFrameUpgrade(BaseModel):
     )
 
 
+class ChatBubbleLine(BaseModel):
+    speaker: str = Field(
+        description="Strictly one of the active hosts at the table: 'marcus', 'chloe', or 'jake'."
+    )
+    pacing: str = Field(
+        default="normal",
+        description="Strictly 'fast_interjection', 'normal', or 'thoughtful_slow'."
+    )
+    text: str = Field(
+        description="This host's spoken conversational turn (without speaker name prefix). Wrap any naturally woven Vault phrases in <i>italics</i>."
+    )
+
+
 class LoungeTurnResponse(BaseModel):
     transcription: str = Field(
         default="",
@@ -70,10 +84,15 @@ class LoungeTurnResponse(BaseModel):
     )
     responding_persona: str = Field(
         default="marcus",
-        description="Primary host voice for audio playback: strictly 'marcus', 'chloe', or 'jake'."
+        description="Primary host voice: strictly 'marcus', 'chloe', or 'jake'."
+    )
+    chat_turns: List[ChatBubbleLine] = Field(
+        default_factory=list,
+        description="REQUIRED: The structured conversational turns from the active host(s) at the table. If 1 host (Solo) is active: 1 turn. If 2 hosts (Duo) are active: 2 to 3 interactive turns between both hosts. If 3 hosts (Trio) are active: 3 to 4 lively turns where ALL THREE hosts ('marcus', 'chloe', AND 'jake') speak and react to the user and each other!"
     )
     lounge_reply: str = Field(
-        description="Your natural, witty, engaging conversational response. In 'trio' mode or when the user addresses 'guys'/'everyone', include lively banter from 2 or 3 hosts (e.g. '🧔‍♂️ <b>Marcus:</b> ...\\n\\n🧢 <b>Jake:</b> ...'). Wrap any naturally woven Vault phrases in <i>italics</i>."
+        default="",
+        description="Optional summary fallback; the main reply is built directly from `chat_turns`."
     )
     rewrite_articulate: str = Field(
         description="🧔‍♂️ Marcus's 🎙️ Articulate recast of the user's message (polished, expressive spoken flow)."
@@ -284,22 +303,37 @@ class NYCLoungeAI:
 
     @staticmethod
     def _persona_routing_directive(active_persona: str, mode: str, user_text: str = "") -> str:
-        addr_group = any(w in (user_text or "").lower() for w in ("guys", "everyone", "you all", "y'all", "folks", "team", "trio"))
-        if active_persona == "trio" or addr_group:
+        preset = CAST_PRESETS.get(active_persona, CAST_PRESETS["trio"])
+        hosts = preset["hosts"]
+        count = preset["count"]
+
+        if count == 3:
             return (
-                "ACTIVE HOST TABLE: 🗽 THE NYC TRIO (🧔‍♂️ Marcus, 👩🏼‍💼 Chloe, and 🧢 Jake).\n"
-                "- In `lounge_reply`, let 2 (or all 3) hosts jump in naturally with distinct perspectives! Format speaker labels clearly with bold HTML, e.g.:\n"
-                "  🧔‍♂️ <b>Marcus:</b> [Analytical/Articulate take]\n\n"
-                "  🧢 <b>Jake:</b> [Fast, street-level story or playful pushback]\n\n"
-                "  👩🏼‍💼 <b>Chloe:</b> [Sharp social nuance or witty synthesis]\n"
-                "- Set `responding_persona` to whichever host delivered the main hook ('marcus', 'chloe', or 'jake')."
+                "ACTIVE TABLE CAST: 🗽 3-HOST TRIO ROUNDTABLE (`marcus`, `chloe`, AND `jake`).\n"
+                "- MANDATORY SCHEMA RULE: Populate `chat_turns` with 3 to 4 conversational turns where ALL THREE hosts (`marcus`, `chloe`, and `jake`) speak!\n"
+                "- Turn 1: One host reacts directly to Musa's message.\n"
+                "- Turn 2: A second host jumps in ('Wait, hold on Marcus—', 'Actually, I'm with Musa on this...', etc.) adding a contrasting angle or story.\n"
+                "- Turn 3: The third host synthesizes the subtext or teases the others and tosses an engaging follow-up question back to Musa.\n"
+                "- Do NOT put speaker names inside `ChatBubbleLine.text` (the `speaker` field handles that)."
             )
-        p_info = PERSONAS.get(active_persona, PERSONAS["marcus"])
-        return (
-            f"ACTIVE HOST ON MIC: {p_info['title']} ({p_info['vibe_badge']}).\n"
-            f"- Persona Style: {p_info['style_desc']}\n"
-            f"- Speak directly in {p_info['name']}'s voice inside `lounge_reply`, and set `responding_persona` to '{active_persona}'."
-        )
+        elif count == 2:
+            h1, h2 = hosts[0], hosts[1]
+            p1, p2 = PERSONAS[h1], PERSONAS[h2]
+            return (
+                f"ACTIVE TABLE CAST: 👥 2-HOST DUO BANTER (`{h1}` and `{h2}` ONLY).\n"
+                f"- Host 1: {p1['title']} — {p1['style_desc']}\n"
+                f"- Host 2: {p2['title']} — {p2['style_desc']}\n"
+                f"- MANDATORY SCHEMA RULE: Populate `chat_turns` with 2 to 3 interactive turns strictly alternating between `{h1}` and `{h2}`!\n"
+                f"- Have `{h1}` and `{h2}` react both to Musa and to each other naturally, ending with a question for Musa."
+            )
+        else:
+            h1 = hosts[0]
+            p1 = PERSONAS.get(h1, PERSONAS["marcus"])
+            return (
+                f"ACTIVE TABLE CAST: 👤 1-ON-1 SOLO CHAT WITH {p1['title']} (`{h1}` ONLY).\n"
+                f"- Persona Style: {p1['style_desc']}\n"
+                f"- MANDATORY SCHEMA RULE: Populate `chat_turns` with exactly 1 rich, engaging turn where `speaker` is '{h1}'."
+            )
 
     def _build_mode_specific_directive(self, mode: str, session_meta: Dict[str, Any]) -> str:
         if mode == "devils_advocate":
@@ -533,8 +567,29 @@ class NYCLoungeAI:
             if not any(k in up.register_tag for k in ("Articulate", "Casual", "Witty")):
                 up.register_tag = allowed_tags[idx % len(allowed_tags)]
 
-        if (res.responding_persona or "").lower() not in ("marcus", "chloe", "jake"):
-            res.responding_persona = "marcus" if active_persona == "trio" else active_persona
+        preset_hosts = CAST_PRESETS.get(active_persona, CAST_PRESETS["trio"])["hosts"]
+        if res.chat_turns:
+            formatted_bubbles = []
+            for ct in res.chat_turns:
+                sp_k = (ct.speaker or preset_hosts[0]).strip().lower()
+                if sp_k not in ("marcus", "chloe", "jake"):
+                    sp_k = preset_hosts[0]
+                ct.speaker = sp_k
+                p_meta = PERSONAS[sp_k]
+                clean_line = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", (ct.text or "").strip(), flags=re.IGNORECASE)
+                ct.text = clean_line
+                if len(preset_hosts) > 1 or len(res.chat_turns) > 1:
+                    formatted_bubbles.append(f"{p_meta['icon']} <b>{p_meta['name']}:</b> {clean_line}")
+                else:
+                    formatted_bubbles.append(f"{p_meta['icon']} <b>{p_meta['name']}:</b> {clean_line}")
+            res.lounge_reply = "\n\n".join(formatted_bubbles)
+            res.responding_persona = res.chat_turns[0].speaker
+        else:
+            sp_k = preset_hosts[0]
+            p_meta = PERSONAS[sp_k]
+            res.responding_persona = sp_k
+            res.chat_turns = [ChatBubbleLine(speaker=sp_k, pacing="normal", text=res.lounge_reply or "Tell me more about that!")]
+            res.lounge_reply = f"{p_meta['icon']} <b>{p_meta['name']}:</b> {res.lounge_reply}"
 
         used_stealth_ids: List[int] = []
         reply_lower = (res.lounge_reply or "").lower()
