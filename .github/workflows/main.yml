@@ -7,6 +7,10 @@ on:
   schedule:
     - cron: '15 */5 * * *'
 
+permissions:
+  actions: write
+  contents: write
+
 concurrency:
   group: musa-nyc-lounge-singleton
   cancel-in-progress: true
@@ -51,7 +55,7 @@ jobs:
           python3 app.py
 
       - name: Trigger Next Relay Cycle Automatically
-        if: always()
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

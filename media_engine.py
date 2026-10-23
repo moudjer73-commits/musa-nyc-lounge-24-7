@@ -1,15 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 media_engine.py — Studio Audio & Document Engine for Musa's NYC Lounge
-Features:
-- Dual-Format Podcast Producer: Supports both Duo (2 Hosts) & Trio (3 Hosts: Marcus, Chloe, Jake)
-- Long-Form Episode Engine (3+ minutes / 30–45 rapid & deep-dive turns)
-- Concurrent Async TTS Synthesis (asyncio.gather) with Auto-Retry
-- 4-Tier Dynamic Micro-Pacing & FFmpeg Dead-Air Silence Trimming
-- Adaptive Spatial Stereo Panning (Duo 2-Mic Balance vs. Trio 3-Seat Table)
-- Automatic Timestamp [MM:SS] Tracking for Noticing Hypothesis
-- Loudness-Normalized Side-by-Side Voice Mirror (1.0x + 0.85x)
-- Printable PDF Phrasebook & Anki Flashcard Exporter
 """
 import os
 import re
@@ -37,7 +28,6 @@ logger = logging.getLogger("MusaNYCLounge.Media")
 
 MEDIA_TASK_SEMAPHORE = threading.BoundedSemaphore(4)
 
-# Backwards-compatible voice constants
 VOICE_MALE_HOST: str = PERSONAS["marcus"]["voice"]
 VOICE_FEMALE_HOST: str = PERSONAS["chloe"]["voice"]
 VOICE_JAKE_HOST: str = PERSONAS["jake"]["voice"]
@@ -71,13 +61,13 @@ class LoungeMediaEngine:
         if key in ("male_host", "marcus", "andrew", "host_1"):
             p = PERSONAS["marcus"]
             return {"key": "marcus", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
-        if key in ("female_host", "chloe", "ava", "host_2"):
+        if key in ("female_host", "chloe", "ava", "host_2", "duo_cj"):
             p = PERSONAS["chloe"]
             return {"key": "chloe", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
         if key in ("jake", "brian", "casual_host", "host_3"):
             p = PERSONAS["jake"]
             return {"key": "jake", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
-        p = PERSONAS.get(DEFAULT_PERSONA, PERSONAS["marcus"])
+        p = PERSONAS["marcus"]
         return {"key": "marcus", "voice": p["voice"], "rate": p["rate"], "pitch": p["pitch"]}
 
     @staticmethod
@@ -159,11 +149,6 @@ class LoungeMediaEngine:
         pan_filter: str = "pan=stereo|c0=0.50*c0|c1=0.50*c0",
         pad_after: float = 0.15
     ) -> bool:
-        """
-        Trims leading/trailing dead air from Edge-TTS output using FFmpeg's
-        silenceremove + areverse filter, applies adaptive stereo spatial panning
-        (for either Duo or Trio layout), and adds a calibrated micro-gap.
-        """
         af_chain = (
             "silenceremove=start_periods=1:start_silence=0.02:start_threshold=-44dB,"
             "areverse,"
@@ -172,7 +157,6 @@ class LoungeMediaEngine:
             f"{pan_filter},"
             f"apad=pad_dur={pad_after:.2f}"
         )
-
         cmd = [
             "ffmpeg", "-y", "-i", in_path,
             "-af", af_chain,
@@ -183,7 +167,6 @@ class LoungeMediaEngine:
         if res.returncode == 0 and os.path.exists(out_wav) and os.path.getsize(out_wav) > 200:
             return True
 
-        # Safe fallback without silenceremove if clip was an ultra-short reaction
         cmd_fb = [
             "ffmpeg", "-y", "-i", in_path,
             "-af", f"{pan_filter},apad=pad_dur={pad_after:.2f}",
@@ -195,10 +178,6 @@ class LoungeMediaEngine:
 
     @staticmethod
     def _to_normalized_mono_wav(in_path: str, out_wav: str, normalize_user: bool = False) -> bool:
-        """
-        Converts audio to 24kHz mono WAV. For user voice notes, applies dynamic
-        loudness normalization and trims leading/trailing silence for the Voice Mirror.
-        """
         if normalize_user:
             af_chain = (
                 "highpass=f=80,"
@@ -276,7 +255,6 @@ class LoungeMediaEngine:
                 if os.path.exists(out_ogg) and os.path.exists(raw_mp3):
                     cls.cleanup_file(raw_mp3)
 
-
     @classmethod
     def synthesize_chat_turns(
         cls,
@@ -284,11 +262,6 @@ class LoungeMediaEngine:
         fallback_text: str = "",
         fallback_persona: str = "marcus"
     ) -> Optional[str]:
-        """
-        Synthesizes a Solo (1 host), Duo (2 hosts), or Trio (3 hosts) chat reply
-        into a single Telegram .ogg voice note with each character's real voice,
-        trimmed dead-air silence, and stereo spatial panning!
-        """
         if not chat_turns or len(chat_turns) <= 1:
             if chat_turns and len(chat_turns) == 1:
                 sp = chat_turns[0].get("speaker", fallback_persona)
@@ -381,10 +354,6 @@ class LoungeMediaEngine:
         voice: str = VOICE_MALE_HOST,
         persona_key: str = ""
     ) -> Optional[str]:
-        """
-        Merges with studio loudness leveling:
-        [Normalized User Voice] -> [Chime] -> [Native 1.0x] -> [Chime] -> [Slow Study 0.85x]
-        """
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:10]
         temp_files: List[str] = []
@@ -457,10 +426,6 @@ class LoungeMediaEngine:
 
     @staticmethod
     def _compute_pad_after(text: str, pacing: str) -> float:
-        """
-        4-Tier Dynamic Micro-Pacing for 3+ minute episodes so fast interjections overlap
-        naturally while deep analytical turns leave a realistic breathing beat.
-        """
         stripped = (text or "").strip()
         p = (pacing or "normal").lower()
         word_cnt = len(stripped.split())
@@ -475,11 +440,6 @@ class LoungeMediaEngine:
 
     @staticmethod
     def _build_speaker_pan_map(speaker_keys_in_episode: List[str], requested_mode: str = "auto") -> Dict[str, str]:
-        """
-        Assigns spatial stereo positioning based on whether the episode is a
-        2-Host Duo show (Left-Center vs Right-Center) or a 3-Host Trio table
-        (Marcus Left, Chloe Center, Jake Right).
-        """
         unique_speakers = []
         for s in speaker_keys_in_episode:
             if s not in unique_speakers:
@@ -492,7 +452,6 @@ class LoungeMediaEngine:
                 unique_speakers[1]: "pan=stereo|c0=0.42*c0|c1=0.58*c0"
             }
 
-        # Default Trio 3-seat Manhattan table
         return {
             "marcus": "pan=stereo|c0=0.62*c0|c1=0.38*c0",
             "chloe": "pan=stereo|c0=0.50*c0|c1=0.50*c0",
@@ -501,13 +460,6 @@ class LoungeMediaEngine:
 
     @classmethod
     def produce_podcast(cls, episode: Any, format_mode: str = "auto") -> Optional[str]:
-        """
-        NotebookLM-Style Long-Form Audio Producer (Supports both Duo & Trio formats, 3+ mins).
-        - Synthesizes up to 45 turns concurrently via asyncio.gather (Semaphore=6)
-        - Trims Edge-TTS dead air and injects 4-tier dynamic conversational pacing
-        - Applies Duo or Trio spatial stereo panning
-        - Tracks exact [MM:SS] timestamps and total episode duration
-        """
         cls.sweep_old_temp_files()
         uid = uuid.uuid4().hex[:10]
         temp_files: List[str] = []
@@ -566,7 +518,6 @@ class LoungeMediaEngine:
 
                 async def _synthesize_all_turns():
                     sem = asyncio.Semaphore(6)
-
                     async def _worker(meta_item):
                         async with sem:
                             return await cls._async_edge_tts_to_file(
@@ -576,7 +527,6 @@ class LoungeMediaEngine:
                                 rate=meta_item["rate"],
                                 pitch=meta_item["pitch"]
                             )
-
                     return await asyncio.gather(*[_worker(m) for m in tasks_meta])
 
                 synth_results = cls._run_async(_synthesize_all_turns())
@@ -632,7 +582,6 @@ class LoungeMediaEngine:
                     for w in wav_segments:
                         f.write(f"file '{w}'\n")
 
-                # Studio master encoding with high-efficiency VBR MP3 and 90s timeout for 3+ min shows
                 cmd = [
                     "ffmpeg", "-y", "-f", "concat", "-safe", "0",
                     "-i", concat_txt,
@@ -652,12 +601,10 @@ class LoungeMediaEngine:
 
     @classmethod
     def produce_trio_podcast(cls, episode: Any) -> Optional[str]:
-        """Produces a 3-Host Trio episode (Marcus, Chloe, Jake)."""
         return cls.produce_podcast(episode, format_mode="trio")
 
     @classmethod
     def produce_dual_host_podcast(cls, episode: Any) -> Optional[str]:
-        """Produces a 2-Host Duo episode (or auto-detects Duo vs Trio from script)."""
         return cls.produce_podcast(episode, format_mode="auto")
 
     @classmethod

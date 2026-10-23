@@ -2,7 +2,6 @@
 """
 config.py — Pure Club Experience Configuration, Phonetic Precision & C2 Mastery Guide
 Musa's NYC Lounge
-Includes Solo (1), Duo (2), and Trio (3) Cast Presets for Marcus, Chloe & Jake.
 """
 import os
 import tempfile
@@ -89,7 +88,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
     }
 }
 
-# 7 Flexible Cast Presets: Choose 1 (Solo), 2 (Duo), or 3 (Trio) Hosts for Spontaneous Chat
 CAST_PRESETS: Dict[str, Dict[str, Any]] = {
     "trio": {
         "label": "🗽 Trio: Marcus, Chloe & Jake (3 Hosts)",
@@ -182,35 +180,26 @@ GUIDE_CHAPTERS: Dict[str, str] = {
     "overview": (
         "📖 <b>Musa's NYC Lounge — Detailed Member's Handbook</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Welcome to your private Manhattan club for mastering <b>Spoken American English (C1/C2)</b>—from effortless everyday banter and workplace diplomacy to razor-sharp pronunciation and cultural subtext.\n\n"
+        "Welcome to your private Manhattan club for mastering <b>Spoken American English (C1/C2)</b>.\n\n"
         "<blockquote expandable>🗽 <b>1. Choose Your Table Cast (1, 2, or 3 Hosts)</b>\n"
-        "Tap <code>👥 Choose Hosts (1/2/3)</code> anytime to customize your conversation:\n"
+        "Tap <code>👥 Chat Hosts</code> anytime to customize your conversation:\n"
         "• <b>👤 Solo (1 Host):</b> Chat 1-on-1 with 🧔‍♂️ <b>Marcus</b>, 👩🏼‍💼 <b>Chloe</b>, or 🧢 <b>Jake</b>.\n"
         "• <b>👥 Duo (2 Hosts):</b> Dynamic 2-person banter (<i>Marcus & Chloe</i>, <i>Chloe & Jake</i>, or <i>Marcus & Jake</i>).\n"
         "• <b>🗽 Trio (All 3 Hosts):</b> Full roundtable where all three hosts react to you and debate each other live!</blockquote>\n\n"
         "<blockquote expandable>🎛️ <b>2. Action Bar Controls (Under Every Reply)</b>\n"
         "• <code>🎧 Hear Hosts</code>: Hear the reply spoken aloud with each host's real voice and stereo positioning!\n"
         "• <code>🗣️ My Recast</code>: Hear the polished American version of your own message.\n"
-        "• <code>🪞 Voice Mirror</code>: Appears on voice notes—plays <b>Your Voice ➔ Native 1.0x ➔ Slow Study 0.85x</b> with studio volume leveling.\n"
+        "• <code>🪞 Voice Mirror</code>: Plays <b>Your Voice ➔ Native 1.0x ➔ Slow Study 0.85x</b> with studio volume leveling.\n"
         "• <code>🎙️ Take 2</code>: Retry your sentence using the suggested upgrades.\n"
-        "• <code>⭐ Save (1/2/3)</code>: Saves that specific expression to your Vault & Daily Review.</blockquote>\n\n"
-        "👇 <b>Tap any chapter button below for the complete step-by-step guide:</b>"
+        "• <code>⭐ Save (1/2/3)</code>: Saves that specific expression to your Vault & Daily Review.</blockquote>"
     ),
     "ch1_xray": (
         "🔬 <b>Chapter 1: Coaching Notes, Self-Repair & The Voice Mirror</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>1. The 3 Living American Vibes:</b>\n"
-        "Every turn recasts your exact thought across:\n"
         "• <b>🎙️ Articulate (Marcus):</b> Clear, expressive, rich in precise collocations.\n"
         "• <b>☕ Casual (Jake):</b> Fast, warm everyday talk with natural ellipsis and contractions.\n"
-        "• <b>🎭 Witty (Chloe):</b> Dry understatement, playful irony, and clever rhetorical edge.\n\n"
-        "<blockquote expandable>🔄 <b>2. Mid-Sentence Self-Repair & Pivot Coaching</b>\n"
-        "Native speakers constantly adjust thoughts mid-sentence without losing flow. We coach you on authentic repair markers:\n"
-        "• <i>'Actually, let me walk that back—what I mean is...'</i>\n"
-        "• <i>'Or rather, to put a finer point on it...'</i>\n"
-        "• <i>'Scratch that—the real issue is...'</i></blockquote>\n\n"
-        "<blockquote expandable>🪞 <b>3. The Side-by-Side Voice Mirror</b>\n"
-        "Send a voice note and tap <code>🪞 Voice Mirror</code> to hear your pronunciation compared directly to native cadence with automatic loudness normalization.</blockquote>"
+        "• <b>🎭 Witty (Chloe):</b> Dry understatement, playful irony, and clever rhetorical edge.\n"
+        "• <b>🔄 Mid-Sentence Pivot:</b> Learn how native speakers adjust thoughts mid-stream without losing flow."
     ),
     "ch2_studios": (
         "🗽 <b>Chapter 2: The Conversation & Sparring Rooms</b>\n"
@@ -223,27 +212,21 @@ GUIDE_CHAPTERS: Dict[str, str] = {
         "• <b>⚡ What to Say When...:</b> Get the exact instinctive phrase Americans reach for in any awkward second."
     ),
     "ch3_audio_podcast": (
-        "🎙️ <b>Chapter 3: The NYC Radio Lounge (NotebookLM Style)</b>\n"
+        "🎙️ <b>Chapter 3: The NYC Podcast Lounge (NotebookLM Style)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "An immersive studio experience featuring <b>Marcus, Chloe, and Jake</b> with rapid-fire turns, natural interjections, and spatial audio stereo panning!\n\n"
-        "• <b>🗽 Trio Roundtable (3+ Min):</b> All 3 hosts weave your saved phrases into an unscripted debate.\n"
-        "• <b>🎙️ Duo Deep-Dive (3+ Min):</b> Choose <i>Marcus & Chloe</i> or <i>Chloe & Jake</i>.\n"
-        "• <b>✍️ Custom Topic Debate:</b> Throw any dilemma at the hosts and listen to them dissect it."
+        "An immersive 3+ minute studio experience featuring <b>Marcus, Chloe, and Jake</b> with rapid-fire turns, natural interjections, and spatial audio stereo panning!"
     ),
     "ch4_miner_drills": (
         "🎯 <b>Chapter 4: Phrase Finder & Speaking Workouts</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "• <b>🔎 Collocation Finder:</b> Look up any word to explore its spoken American collocations.\n"
         "• <b>🔬 Native Text Miner:</b> Extract high-value spoken idioms from any pasted text.\n"
-        "• <b>🔥 The 3-Phrase Speaking Challenge:</b> Weave 3 Vault phrases into a single live scenario.\n"
-        "• <b>🎭 Contrastive Stress Lab:</b> Learn how shifting sentence stress flips the hidden subtext.\n"
-        "• <b>🎙️ Rhythm & Shadowing:</b> Master Flap-T, glottal stops, and thought-group pauses."
+        "• <b>🔥 3-Phrase Challenge & Contrastive Stress Lab:</b> Active workouts tailored to your Vault."
     ),
     "ch5_vault_routine": (
         "🧠 <b>Chapter 5: Vault, Daily Review & Routine</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "• <b>Active Daily Review:</b> Send a voice note or sentence using your due phrases for instant coaching.\n"
-        "• <b>Phrasebook (PDF) & Anki Deck:</b> Export your personal expressions anytime.\n"
-        "• <b>15-Minute Daily Routine:</b> Review 3 cards in the morning, do 2 banter turns at lunch, and shadow one rhythm clip in the evening."
+        "• <b>Phrasebook (PDF) & Anki Deck:</b> Export your personal expressions anytime."
     )
 }
