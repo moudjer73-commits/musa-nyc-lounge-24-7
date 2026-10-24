@@ -509,11 +509,24 @@ class NYCLoungeAI:
                 (it.get("chunk", "") if isinstance(it, dict) else str(it)).strip().lower()
                 for it in (stealth_items if "stealth_items" in locals() else [])
             }
+            if len((user_text or "").split()) >= 40:
+                res.diagnostics = []
+            _pref_r = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
+            _badge_r = REGISTERS_MAP.get(_pref_r, "🎙️ Articulate")
+            for _u_item in (getattr(res, "lexical_upgrades", None) or []):
+                _u_item.register_tag = _badge_r
             if _vault_lower and getattr(res, "lexical_upgrades", None):
                 res.lexical_upgrades = [
                     u for u in res.lexical_upgrades
                     if getattr(u, "chunk", "").strip().lower() not in _vault_lower
                 ]
+        except Exception:
+            pass
+        try:
+            _pref_r = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
+            _badge = REGISTERS_MAP.get(_pref_r, "🎙️ Articulate")
+            for _u in (getattr(res, "lexical_upgrades", None) or []):
+                _u.register_tag = _badge
         except Exception:
             pass
         return res, used_stealth_ids

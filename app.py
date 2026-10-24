@@ -1350,7 +1350,7 @@ if bot:
                 return
 
         # --- C. Collocation & Phrase Finder ---
-        if mode == "fast_lookup" and len(text.split()) <= 15:
+        if mode == "__disabled_fast_lookup__" and len(text.split()) <= 15:
             local_hits = db.lookup_collocations(text, user_id=uid, limit=4)
             wait_msg = bot.reply_to(message, f"🔎 <b>Exploring natural American collocations for <code>{html.escape(text)}</code>...</b>")
             try:
@@ -1434,7 +1434,7 @@ if bot:
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
-            if mode == "chunk_miner":
+            if mode == "__disabled_chunk_miner__":
                 res = ai_engine.mine_text_and_subtext(user, text)
                 stealth_ids = []
                 active_uptakes = []
@@ -1499,7 +1499,7 @@ def sync_bot_profile_metadata():
             "• Live NYC Trio: Unscripted banter, Devil's Advocate & storytelling with Marcus (🎙️ Articulate), Chloe (🎭 Witty) & Jake (☕ Casual).\n"
             "• Podcast Lounge: 3+ min Trio & Duo episodes with stereo audio & [MM:SS] timestamps.\n"
             "• Voice Mirror: 1.0x/0.85x accent mirror, stress & linking map.\n"
-            "• Vault & Finder: B2→C2 upgrades, collocations & PDF/Anki exports."
+            "• Personal Phrasebook Vault: Save C1–C2 spoken expressions from chat & podcasts with Anki/PDF export."
         )
         commands = [
             telebot.types.BotCommand("start", "🗽 Main Club Menu & Dashboard"),
