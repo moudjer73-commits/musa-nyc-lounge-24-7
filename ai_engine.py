@@ -525,25 +525,44 @@ class NYCLoungeAI:
         vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
         level = user.get("level", "C1")
 
+        has_arabic = bool(re.search(r"[\u0600-\u06FF]", clean_hw))
+        word_count = len(clean_hw.split())
+        is_concept_query = has_arabic or word_count >= 3
+
+        if not is_concept_query:
+            mode_instruction = (
+                f"MODE A — EXACT HEADWORD COLLOCATION MAP FOR '{clean_hw}':\n"
+                f"1. DO NOT replace '{clean_hw}' with unrelated synonyms! Every single one of the 4 `collocation_frames` MUST explicitly contain the word/phrase '{clean_hw}' (or its direct inflection) inside `chunk`!\n"
+                f"   - Example for 'Pushback': (1) 'get pushback from [someone]', (2) 'give pushback on [something]', (3) 'anticipate / expect some pushback', (4) 'zero / minimal pushback'.\n"
+                f"   - Example for 'Happy': (1) 'not a happy camper', (2) 'strike a happy medium', (3) 'couldn\'t be happier', (4) 'happy to jump in / happy to report'.\n"
+                f"   - Example for 'Bandwidth': (1) 'have the bandwidth to take on', (2) 'stretched for bandwidth', (3) 'free up some bandwidth', (4) 'bandwidth issue'.\n"
+                f"2. Highlight the natural spoken combinations: [Verb + '{clean_hw}'], [Adjective + '{clean_hw}'], or ['{clean_hw}' + Preposition]."
+            )
+        else:
+            mode_instruction = (
+                f"MODE B — CONCEPT-TO-IDIOM FINDER FOR '{clean_hw}':\n"
+                f"1. The member described a meaning or situation ('{clean_hw}'). Convert this meaning into the 4 sharpest, most instinctive SPOKEN American idioms/collocations that native speakers reach for in this exact moment (e.g., for 'Change my mind suddenly': 'do a complete 180', 'have second thoughts', 'pull an audible', 'backtrack on')."
+            )
+
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"TASK: Build a 100% SPOKEN American Collocation & Idiomatic Frame Map for '{clean_hw}' ({self._level_calibration_guide(level)}).\n"
+            f"TASK: Build a 100% SPOKEN American Collocation Map for '{clean_hw}' ({self._level_calibration_guide(level)}).\n"
             f"ACTIVE SPOKEN VIBE: {vibe_badge}\n"
             f"ACTIVE VIBE VOICE RULES: {vibe_rules}\n\n"
-            "CRITICAL LINGUISTIC & REGISTER RULES:\n"
-            "1. HANDLE EVERY INPUT TYPE WITHOUT EXCEPTION:\n"
-            "   - Single noun/verb/adjective (e.g., 'Pushback', 'Bandwidth', 'Happy', 'Awkward'): provide the 4 most natural spoken American collocations & frames built around it (e.g., for 'Pushback': 'get pushback from', 'give pushback on', 'expect some pushback', 'zero pushback').\n"
-            "   - Phrasal verb or discourse marker (e.g., 'Bail on', 'By far', 'Pull off'): provide 4 spoken structural patterns & collocation frames.\n"
-            "   - Multi-word concept/intent or Arabic description (e.g., 'Change my mind suddenly', 'Cancel last minute'): convert the concept into the 4 sharpest idiomatic spoken American expressions for that exact meaning (e.g., for 'Change my mind suddenly': 'do a 180', 'have second thoughts', 'pull an audible', 'flip the script').\n"
-            f"2. STRICT ACTIVE VIBE MATCH ({vibe_badge}):\n"
-            f"   - Every single `example` and `followup` sentence MUST genuinely sound like {vibe_badge} ({vibe_rules}).\n"
-            "3. Return 4 complete `collocation_frames` with `chunk`, `register_tag`, `b2_foil`, `explanation`, `trigger`, `pattern`, `followup`, and `example`."
+            f"{mode_instruction}\n\n"
+            "CRITICAL SPOKEN AUTHENTICITY RULES:\n"
+            f"- 100% FIRST-PERSON CONVERSATIONAL EXAMPLES: Every `example` and `followup` MUST sound like real spoken dialogue using 'I', 'we', or 'you' with natural contractions ('we\'re', 'I\'d', 'don\'t', 'gonna'). NEVER write third-person newspaper/journalistic sentences like 'The CEO faced...' or 'The zoning laws encountered...'!\n"
+            f"- Strictly match the member's active Vibe ({vibe_badge}) in tone and vocabulary.\n"
+            "- Return 4 complete `collocation_frames` with `chunk`, `register_tag`, `b2_foil`, `explanation`, `trigger`, `pattern`, `followup`, and `example`."
         )
 
         user_prompt = (
-            f"Input to map: '{clean_hw}'\n"
-            f"If this is a single word or phrase (like 'Pushback'), map its top 4 spoken American collocations. "
-            f"If this describes an action or meaning (like 'Change my mind suddenly'), map the top 4 spoken American idioms/collocations that express that exact meaning in {vibe_badge}."
+            f"Target input: '{clean_hw}' | Active Spoken Vibe: {vibe_badge}\n"
+            + (
+                f"Generate 4 high-frequency spoken American collocations that ALL explicitly include '{clean_hw}' inside the chunk, with 1st-person spoken examples."
+                if not is_concept_query else
+                f"Generate 4 natural spoken American idioms/collocations that express the meaning of '{clean_hw}' in {vibe_badge} style, with 1st-person spoken examples."
+            )
         )
 
         last_err = None
@@ -552,9 +571,9 @@ class NYCLoungeAI:
                 if attempt > 0:
                     time.sleep(1.5 * attempt)
                 explorer: CollocationExplorerSchema = self._call_structured(
-                    contents=[user_prompt if attempt == 0 else f"Give 4 spoken American collocations or idioms for '{clean_hw}' in {vibe_badge} style."],
+                    contents=[user_prompt],
                     schema_cls=CollocationExplorerSchema,
-                    system_instruction=system_prompt if attempt < 2 else f"{CORE_NYC_PERSONA_PROMPT}\nReturn valid CollocationExplorerSchema JSON.",
+                    system_instruction=system_prompt,
                     temperature=0.55 if attempt == 0 else 0.40
                 )
                 if explorer and getattr(explorer, "collocation_frames", None):
