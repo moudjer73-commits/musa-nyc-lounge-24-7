@@ -316,8 +316,7 @@ class NYCLoungeAI:
                 clean_line = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", (ct.text or "").strip(), flags=re.IGNORECASE)
                 ct.text = clean_line
                 if clean_line:
-                    _safe_ln = html.escape(clean_line).replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
-                formatted_bubbles.append(f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {_safe_ln}")
+                    formatted_bubbles.append(f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {clean_line}")
             if formatted_bubbles:
                 res.lounge_reply = "\n\n".join(formatted_bubbles)
                 res.responding_persona = res.chat_turns[0].speaker
