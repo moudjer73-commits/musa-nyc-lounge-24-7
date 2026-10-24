@@ -1360,8 +1360,10 @@ if bot:
                 first_ex = ' ... '.join([f.example for f in explorer.collocation_frames[:4]]) if explorer.collocation_frames else text
                 db.store_atomic_batch(uid, token_key, frames_dicts, audio_clean_text=first_ex)
 
+                _is_concept = bool(re.search(r"[\u0600-\u06FF]", text)) or len(text.split()) >= 3
+                _map_title = "Spoken Collocation & Idiom Map" if _is_concept else "Spoken Collocation Map"
                 lines = [
-                    f"🔎 <b>Spoken Collocation Map: <code>{html.escape(explorer.headword)}</code></b>",
+                    f"🔎 <b>{_map_title}: <code>{html.escape(explorer.headword)}</code></b>",
                     "━━━━━━━━━━━━━━━━━━━━",
                     f"💡 <b>Lexical Priming & Feel:</b> {html.escape(explorer.semantic_note)}\n"
                 ]
@@ -1371,7 +1373,7 @@ if bot:
                         lines.append(f"• <b>{html.escape(h['chunk'])}</b> ({html.escape(h['register_tag'])}) — <i>\"{html.escape(h['example_sentence'])}\"</i>")
                     lines.append("")
 
-                lines.append("💎 <b>Top Spoken Collocations (Tap ⭐ Save 1–4 below):</b>")
+                lines.append("💎 <b>2 Precision Collocations + 2 Spoken Idioms (Tap ⭐ Save 1–4):</b>" if (bool(re.search(r"[\u0600-\u06FF]", text)) or len(text.split()) >= 3) else "💎 <b>Top Spoken Collocations (Tap ⭐ Save 1–4 below):</b>")
                 for idx, cf in enumerate(explorer.collocation_frames[:4], 1):
                     b2_f = getattr(cf, "b2_foil", "")
                     foil_s = f"  • 🔄 <b>Upgrade from:</b> <s>{html.escape(b2_f)}</s>\n" if b2_f else ""

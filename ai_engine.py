@@ -531,27 +531,32 @@ class NYCLoungeAI:
 
         if not is_concept_query:
             mode_instruction = (
-                f"MODE A — EXACT HEADWORD COLLOCATION MAP FOR '{clean_hw}':\n"
-                f"1. DO NOT replace '{clean_hw}' with unrelated synonyms! Every single one of the 4 `collocation_frames` MUST explicitly contain the word/phrase '{clean_hw}' (or its direct inflection) inside `chunk`!\n"
-                f"   - Example for 'Pushback': (1) 'get pushback from [someone]', (2) 'give pushback on [something]', (3) 'anticipate / expect some pushback', (4) 'zero / minimal pushback'.\n"
-                f"   - Example for 'Happy': (1) 'not a happy camper', (2) 'strike a happy medium', (3) 'couldn\'t be happier', (4) 'happy to jump in / happy to report'.\n"
-                f"   - Example for 'Bandwidth': (1) 'have the bandwidth to take on', (2) 'stretched for bandwidth', (3) 'free up some bandwidth', (4) 'bandwidth issue'.\n"
-                f"2. Highlight the natural spoken combinations: [Verb + '{clean_hw}'], [Adjective + '{clean_hw}'], or ['{clean_hw}' + Preposition]."
+                f"MODE A — PURE LEXICAL COLLOCATION MAP FOR HEADWORD '{clean_hw}' (4 Pure Collocations):\n"
+                f"1. Every single one of the 4 `collocation_frames` MUST explicitly keep '{clean_hw}' (or its direct inflection) inside `chunk`!\n"
+                f"2. Show the strongest spoken C1/C2 combinations: [Verb + '{clean_hw}'], [Adjective + '{clean_hw}'], or ['{clean_hw}' + Preposition].\n"
+                f"   - Example for 'Pushback': (1) 'get some pushback from', (2) 'give pushback on', (3) 'anticipate some pushback', (4) 'zero pushback'.\n"
+                f"   - Example for 'Happy': (1) 'strike a happy medium', (2) 'not a happy camper', (3) 'couldn\'t be happier', (4) 'more than happy to'."
             )
         else:
             mode_instruction = (
-                f"MODE B — CONCEPT-TO-IDIOM FINDER FOR '{clean_hw}':\n"
-                f"1. The member described a meaning or situation ('{clean_hw}'). Convert this meaning into the 4 sharpest, most instinctive SPOKEN American idioms/collocations that native speakers reach for in this exact moment (e.g., for 'Change my mind suddenly': 'do a complete 180', 'have second thoughts', 'pull an audible', 'backtrack on')."
+                f"MODE B — DUAL C1/C2 LEXICAL-IDIOMATIC SPECTRUM FOR '{clean_hw}' (2 True Collocations + 2 Spoken Idioms):\n"
+                f"The member entered a multi-word phrase or meaning description ('{clean_hw}'). You MUST structure the 4 items into TWO distinct linguistic tiers:\n"
+                f"1. ITEMS (1) AND (2) MUST BE TRUE LEXICAL COLLOCATIONS (Verb + Noun, Adjective + Noun, or Verb + Adverb):\n"
+                f"   - Upgrade the core noun/verb of '{clean_hw}' using high-precision C1/C2 collocates (NOT metaphors/slang).\n"
+                f"   - Example for 'Change my mind suddenly': (1) 'have a sudden change of heart' or 'make a snap decision', (2) 'reverse course abruptly' or 'backtrack on a decision'.\n"
+                f"2. ITEMS (3) AND (4) MUST BE SPOKEN IDIOMATIC CHUNKS / METAPHORICAL EXPRESSIONS:\n"
+                f"   - Provide the 2 sharpest spoken American idioms or phrasal chunks that native speakers use for '{clean_hw}'.\n"
+                f"   - Example for 'Change my mind suddenly': (3) 'do a complete 180', (4) 'call an audible'."
             )
 
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"TASK: Build a 100% SPOKEN American Collocation Map for '{clean_hw}' ({self._level_calibration_guide(level)}).\n"
+            f"TASK: Build a C1/C2 Spoken American Lexical Map for '{clean_hw}' ({self._level_calibration_guide(level)}).\n"
             f"ACTIVE SPOKEN VIBE: {vibe_badge}\n"
             f"ACTIVE VIBE VOICE RULES: {vibe_rules}\n\n"
             f"{mode_instruction}\n\n"
             "CRITICAL SPOKEN AUTHENTICITY RULES:\n"
-            f"- 100% FIRST-PERSON CONVERSATIONAL EXAMPLES: Every `example` and `followup` MUST sound like real spoken dialogue using 'I', 'we', or 'you' with natural contractions ('we\'re', 'I\'d', 'don\'t', 'gonna'). NEVER write third-person newspaper/journalistic sentences like 'The CEO faced...' or 'The zoning laws encountered...'!\n"
+            f"- 100% FIRST-PERSON CONVERSATIONAL EXAMPLES: Every `example` and `followup` MUST sound like real spoken dialogue using 'I', 'we', or 'you' with natural contractions ('we\'re', 'I\'ve', 'don\'t', 'gonna'). NEVER write third-person newspaper sentences!\n"
             f"- Strictly match the member's active Vibe ({vibe_badge}) in tone and vocabulary.\n"
             "- Return 4 complete `collocation_frames` with `chunk`, `register_tag`, `b2_foil`, `explanation`, `trigger`, `pattern`, `followup`, and `example`."
         )
@@ -561,7 +566,7 @@ class NYCLoungeAI:
             + (
                 f"Generate 4 high-frequency spoken American collocations that ALL explicitly include '{clean_hw}' inside the chunk, with 1st-person spoken examples."
                 if not is_concept_query else
-                f"Generate 4 natural spoken American idioms/collocations that express the meaning of '{clean_hw}' in {vibe_badge} style, with 1st-person spoken examples."
+                f"Generate exactly 4 items for '{clean_hw}' in {vibe_badge} style: Items 1 & 2 MUST be true C1/C2 lexical collocations (Verb+Noun / Adj+Noun / Verb+Adv), and Items 3 & 4 MUST be spoken American idioms/chunks, all with 1st-person spoken examples."
             )
         )
 
@@ -577,8 +582,12 @@ class NYCLoungeAI:
                     temperature=0.55 if attempt == 0 else 0.40
                 )
                 if explorer and getattr(explorer, "collocation_frames", None):
-                    for c in explorer.collocation_frames:
-                        c.register_tag = vibe_badge
+                    for idx, c in enumerate(explorer.collocation_frames):
+                        if is_concept_query:
+                            tier_label = "🔗 Collocation" if idx < 2 else "🎭 Idiom"
+                            c.register_tag = f"{vibe_badge} • {tier_label}"
+                        else:
+                            c.register_tag = vibe_badge
                         if not getattr(c, "b2_foil", "") and getattr(c, "b2_equivalent", ""):
                             c.b2_foil = c.b2_equivalent
                     try:
