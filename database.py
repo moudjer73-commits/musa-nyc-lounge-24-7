@@ -695,32 +695,38 @@ class LoungeDatabase:
             "good", "ok", "okay", "yes", "no", "thanks", "thank you"
         }
         now = int(time.time())
-        with self._connect() as conn:
-            for d in diagnostics:
-                cat = (d.get("category") or "🎭 Natural Flow").strip()
-                said = (d.get("user_said") or "").strip()
-                fix = (d.get("native_fix") or "").strip()
-                why = (d.get("why_note") or "").strip()
-                if not said or not fix:
-                    continue
-                if "/" in fix or "Vowel" in cat or "Rhythm" in cat or "Acoustic" in cat:
-                    continue
-                if len(said) < 4 or said.lower() in trivial or len(said.split()) < 2:
-                    continue
-                row = conn.execute(
-                    "SELECT id, occurrence_count FROM weaknesses WHERE user_id = ? AND LOWER(user_said) = LOWER(?)",
-                    (user_id, said)
-                ).fetchone()
-                if row:
-                    conn.execute(
-                        "UPDATE weaknesses SET occurrence_count = ?, native_fix = ?, why_note = ?, category = ?, last_seen = ? WHERE id = ?",
-                        (row["occurrence_count"] + 1, fix, why, cat, now, row["id"])
-                    )
-                else:
-                    conn.execute(
-                        "INSERT INTO weaknesses (user_id, category, user_said, native_fix, why_note, occurrence_count, last_seen) VALUES (?, ?, ?, ?, ?, 1, ?)",
-                        (user_id, cat, said, fix, why, now)
-                    )
+        try:
+            with self._get_conn() as conn:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(weaknesses)").fetchall()]
+                count_col = "hit_count" if "hit_count" in cols else ("occurrence_count" if "occurrence_count" in cols else "count")
+                time_col = "updated_at" if "updated_at" in cols else ("last_seen" if "last_seen" in cols else "created_at")
+                for d in diagnostics:
+                    cat = (d.get("category") or "🎭 Natural Flow").strip()
+                    said = (d.get("user_said") or "").strip()
+                    fix = (d.get("native_fix") or "").strip()
+                    why = (d.get("why_note") or "").strip()
+                    if not said or not fix:
+                        continue
+                    if "/" in fix or "Vowel" in cat or "Rhythm" in cat or "Acoustic" in cat:
+                        continue
+                    if len(said) < 4 or said.lower() in trivial or len(said.split()) < 2:
+                        continue
+                    row = conn.execute(
+                        f"SELECT id, {count_col} FROM weaknesses WHERE user_id = ? AND LOWER(user_said) = LOWER(?)",
+                        (user_id, said)
+                    ).fetchone()
+                    if row:
+                        conn.execute(
+                            f"UPDATE weaknesses SET {count_col} = ?, native_fix = ?, why_note = ?, category = ?, {time_col} = ? WHERE id = ?",
+                            ((row[count_col] or 1) + 1, fix, why, cat, now, row["id"])
+                        )
+                    else:
+                        conn.execute(
+                            f"INSERT INTO weaknesses (user_id, category, user_said, native_fix, why_note, {count_col}, {time_col}) VALUES (?, ?, ?, ?, ?, 1, ?)",
+                            (user_id, cat, said, fix, why, now)
+                        )
+        except Exception:
+            pass
 
     def get_weaknesses(self, user_id: int, limit: int = 6) -> List[Dict[str, Any]]:
         with self._lock, self._conn() as conn:
@@ -741,28 +747,24 @@ class LoungeDatabase:
     # Active Productive Uptake Detector (Swain's Output Hypothesis)
     # =================================================================
     def detect_and_record_active_uptake(self, user_id: int, user_text: str) -> List[str]:
-        if not user_text or len(user_text.strip()) < 3:
+        if not user_text or len(user_text.strip()) < 2:
             return []
         matched_chunks: List[str] = []
-        now = int(time.time())
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, chunk, active_used_count, repetitions, interval_days, ease_factor FROM srs_vault WHERE user_id = ?",
-                (user_id,)
-            ).fetchall()
-            for r in rows:
-                chunk = (r["chunk"] or "").strip()
-                if chunk and self.smart_chunk_match(chunk, user_text):
-                    matched_chunks.append(chunk)
-                    new_used = (r["active_used_count"] or 0) + 1
-                    reps = (r["repetitions"] or 0) + 1
-                    ef = min(3.0, (r["ease_factor"] or 2.5) + 0.1)
-                    interval = max(1.0, (r["interval_days"] or 1.0) * ef)
-                    next_due = now + int(interval * 86400)
-                    conn.execute(
-                        "UPDATE srs_vault SET active_used_count = ?, repetitions = ?, ease_factor = ?, interval_days = ?, next_review_ts = ? WHERE id = ?",
-                        (new_used, reps, ef, interval, next_due, r["id"])
-                    )
+        try:
+            with self._get_conn() as conn:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(srs_vault)").fetchall()]
+                rows = conn.execute("SELECT * FROM srs_vault WHERE user_id = ?", (user_id,)).fetchall()
+                for r in rows:
+                    r_dict = dict(r)
+                    chunk = (r_dict.get("chunk") or "").strip()
+                    if chunk and self.smart_chunk_match(chunk, user_text):
+                        matched_chunks.append(chunk)
+                        if "active_used_count" in cols:
+                            conn.execute("UPDATE srs_vault SET active_used_count = COALESCE(active_used_count, 0) + 1 WHERE id = ?", (r_dict["id"],))
+                        elif "times_used" in cols:
+                            conn.execute("UPDATE srs_vault SET times_used = COALESCE(times_used, 0) + 1 WHERE id = ?", (r_dict["id"],))
+        except Exception:
+            pass
         return matched_chunks
 
     def store_atomic_batch(
@@ -1096,9 +1098,12 @@ class LoungeDatabase:
             "hey", "hey guys", "hi", "hello", "yo", "what's up", "whats up",
             "good", "ok", "okay", "yes", "no", "thanks", "thank you"
         )
-        with self._connect() as conn:
-            conn.execute(
-                "DELETE FROM weaknesses WHERE native_fix LIKE '%/%' OR category LIKE '%Vowel%' OR category LIKE '%Rhythm%' OR category LIKE '%Acoustic%' OR LENGTH(TRIM(user_said)) < 4"
-            )
-            for t in trivial:
-                conn.execute("DELETE FROM weaknesses WHERE LOWER(TRIM(user_said)) = ?", (t,))
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "DELETE FROM weaknesses WHERE native_fix LIKE '%/%' OR category LIKE '%Vowel%' OR category LIKE '%Rhythm%' OR category LIKE '%Acoustic%' OR LENGTH(TRIM(user_said)) < 4"
+                )
+                for t in trivial:
+                    conn.execute("DELETE FROM weaknesses WHERE LOWER(TRIM(user_said)) = ?", (t,))
+        except Exception:
+            pass

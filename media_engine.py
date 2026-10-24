@@ -74,24 +74,19 @@ class LoungeMediaEngine:
     def clean_text_for_tts(text: str) -> str:
         if not text:
             return ""
-        # 1. توحيد علامات الاختصار والتنصيص الذكية (Smart Quotes/Apostrophes) والشرطات الطويلة قبل التصفية
         t = text.replace("’", "'").replace("‘", "'").replace("`", "'")
         t = t.replace("“", '"').replace("”", '"')
-        t = t.replace("—", ", ").replace("–", ", ").replace("…", ", ").replace("...", ", ")
-        # 2. إزالة وسوم HTML والتعليقات بين الأقواس المربعة والرموز الصوتية IPA بين /.../
+        t = t.replace("—", ", ").replace("–", ", ").replace("…", "... ")
+        t = re.sub(r"\.{3,}", "... ", t)
         t = re.sub(r"<[^>]+>", " ", t)
         t = re.sub(r"\[[^\]]*\]", " ", t)
         t = re.sub(r"/[^/\s]{1,15}/", " ", t)
-        # 3. تحويل فواصل المجموعات الكلامية (|) إلى فاصلة عادية لوقفة صوتية طبيعية
         t = t.replace("|", ", ")
-        # 4. إزالة جميع أنواع الأسهم (↘ ↗ ➔ → ↔ ↑ ↓) والرموز الخاصة
         t = re.sub(r"[↘↗➔→←↑↓↔⇒⇐⇑⇓▸▹►▻•●◆▪▫━─═]", " ", t)
-        # 5. السماح فقط بالحروف والأرقام الإنجليزية وعلامات الترقيم المنطوقة الطبيعية
         t = re.sub(r"[^a-zA-Z0-9\s.,!?'\"\-;:$%&()]", " ", t)
-        # 6. تحويل الكلمات المكتوبة بحروف كبيرة للنبر (مثل US, IT, IN, AM, OR) إلى حروف صغيرة حتى لا تُقرأ كاختصارات
         def _decap(m):
             w = m.group(0)
-            return w if w in ("I", "NYC", "JFK", "FBI", "CIA", "CEO", "TV", "DJ", "AI", "UK", "USA") else w.lower()
+            return w if w in ("I", "NYC", "JFK", "FBI", "CIA", "CEO", "TV", "DJ", "AI", "UK", "USA", "EQ", "PR", "HR") else w.lower()
         t = re.sub(r"\b[A-Z]{2,}\b", _decap, t)
         t = re.sub(r"\s+", " ", t).strip()
         return t

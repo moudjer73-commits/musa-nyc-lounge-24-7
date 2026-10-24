@@ -29,12 +29,10 @@ logger = logging.getLogger("MusaNYCLounge.AI")
 
 
 class DiagnosticItem(BaseModel):
-    category: str = Field(
-        description="Pick ONE phrasing category: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'. NEVER use pronunciation/vowel categories."
-    )
+    category: str = Field(description="Pick ONE spoken American category: '🎭 Pragmatic & Social Fit', '💎 Idiomatic & Phrasal Verb', '📐 Spoken Syntax (Ellipsis/Fronting/Cleft)', or '🔗 Discourse Glue & Hedging'.")
     user_said: str = Field(description="Exact segment from the member's message that can be phrased more naturally.")
-    native_fix: str = Field(description="Crisp, natural spoken American phrasing upgrade (NEVER put IPA phonetic symbols like /.../ here).")
-    why_note: str = Field(description="1-sentence pragmatic or stylistic explanation of why native speakers prefer this phrasing.")
+    native_fix: str = Field(description="Crisp, authentic spoken American upgrade matching the active Vibe (NO IPA symbols).")
+    why_note: str = Field(description="1-sentence explanation of the social occasion, pragmatic nuance, or spoken grammar rule behind this upgrade.")
 
 
 class LexicalFrameUpgrade(BaseModel):
@@ -85,9 +83,9 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(description="Alternative 1 (Smooth & Natural): A natural native recast of the member's message strictly in the member's ACTIVE VIBE (same register, NO register shifting).")
-    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal): A second distinct native recast using rich collocations/phrasal verbs, ALSO strictly in the member's ACTIVE VIBE.")
-    rewrite_witty: str = Field(description="Alternative 3 (Short & Punchy): A third concise, high-impact native recast, ALSO strictly in the member's ACTIVE VIBE.")
+    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow): Smooth spoken American recast in the active Vibe using natural contractions (I'm, don't, should've) and conversational discourse glue (honestly, look, I mean).")
+    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal): Distinct spoken recast in the active Vibe rich in phrasal verbs, native collocations, and natural spoken fillers (you know, kind of, pretty much).")
+    rewrite_witty: str = Field(description="Alternative 3 (Punchy Ellipsis & Spoken Syntax): Concise, high-impact spoken recast in the active Vibe demonstrating conversational ellipsis (dropping initial pronoun/auxiliary), topic fronting, or a conversational tail.")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
     tts_clean_target: str = Field(
@@ -153,6 +151,17 @@ class SpokenFluencyAuditSchema(BaseModel):
     naturalness_highlights: List[str] = Field(description="2 to 3 specific strengths.")
     focus_areas_under_pressure: List[str] = Field(description="2 to 3 specific habits to polish next.")
     recommended_next_steps: str = Field(description="Concrete 3-step coaching plan from Marcus, Chloe, and Jake.")
+
+
+class SRSEvaluationSchema(BaseModel):
+    passed: bool = Field(default=True, description="True if the member used the target expression naturally and accurately.")
+    is_natural: bool = Field(default=True, description="True if the member used the target expression naturally and accurately.")
+    grade: int = Field(default=5, description="SRS grade from 1 to 5.")
+    score_1_to_5: int = Field(default=5, description="Score from 1 to 5.")
+    feedback: str = Field(default="", description="Warm, concise coaching note on phrasing and pragmatic fit.")
+    coach_feedback: str = Field(default="", description="Warm, concise coaching note on phrasing and pragmatic fit.")
+    native_polish: str = Field(default="", description="100% natural spoken American recast of the member's sentence in their active Vibe.")
+    polished_version: str = Field(default="", description="100% natural spoken American recast of the member's sentence in their active Vibe.")
 
 
 class NYCLoungeAI:
@@ -243,15 +252,25 @@ class NYCLoungeAI:
                         break
         raise RuntimeError(f"Service temporarily busy: {last_err}")
 
-    @staticmethod
-    def _level_calibration_guide(level: str) -> str:
-        calibrations = {
-            "B1": "Intermediate depth: clear, high-frequency everyday American phrasal verbs.",
-            "B2": "Upper-Intermediate depth: natural idiomatic collocations and conversational gambits.",
-            "C1": "Advanced depth: sophisticated spoken structure (Heads & Tails, clefts, natural hedging), subtle subtext, and high-utility collocations.",
-            "C2": "Mastery depth: native-like intuition, dry understatement, fast connected-speech reductions, semantic precision, and razor-sharp wit."
-        }
-        return calibrations.get(level, calibrations["C1"])
+    def _level_calibration_guide(self, level: str) -> str:
+        lvl = (level or "C1").upper()
+        if lvl in ("B1", "B2"):
+            return (
+                f"TARGET LEVEL: {lvl} (Transitioning to Advanced Spoken American). "
+                "Use high-frequency everyday American phrasal verbs, clear conversational glue ('Actually,', 'The thing is,'), "
+                "spoken contractions, and accessible idioms while keeping sentences crystal-clear and socially natural."
+            )
+        if lvl == "C1":
+            return (
+                "TARGET LEVEL: C1 (Advanced Spoken American Fluency). "
+                "Use rich idiomatic collocations, spoken contractions, ellipsis, cleft sentences for emphasis ('What really stands out is...'), "
+                "tactful hedging, and situational speech acts suited to real NYC social and professional life."
+            )
+        return (
+            "TARGET LEVEL: C2 (Near-Native Mastery & Pragmatic Precision). "
+            "Operate at full native sophistication: subtle cultural subtext, high-leverage metaphors, effortless spoken syntax "
+            "(contractions, fronting, tails, ellipsis, discourse markers), razor-sharp register control, and nuanced social pragmatics."
+        )
 
     @staticmethod
     def _detect_addressed_host(user_text: str) -> Optional[str]:
@@ -318,25 +337,23 @@ class NYCLoungeAI:
         return res
 
     def _build_mode_specific_directive(self, mode: str, session_meta: Dict[str, Any]) -> str:
+        if mode == "storytelling_gym":
+            return (
+                "ACTIVE ROOM: 🍸 STORYTELLING & NARRATIVE GYM. "
+                "Model and coach high-impact American storytelling: vivid setup hooks ('So get this—', 'Picture this:'), "
+                "historical present tense for drama, pacing pauses, and punchy payoffs/morals."
+            )
         if mode == "devils_advocate":
-            return "ACTIVE ROOM: 🥊 DEVIL'S ADVOCATE. Challenge the member's premise with sharp New York pushback."
-        elif mode == "storytelling_gym":
-            return "ACTIVE ROOM: 🎭 STORYTELLING GYM (Delivered strictly in the member's ACTIVE VIBE). Coach dramatic present-tense storytelling and punchlines."
-        elif mode == "register_lab":
-            return "ACTIVE ROOM: 🎛️ VIBE & STYLE SHIFTER. Contrast Articulate, Casual, and Witty registers."
-        elif mode == "subtext_decoder":
-            return "ACTIVE ROOM: 🕵️‍♂️ SUBTEXT & NUANCE DECODER. Decode unspoken American hints and give 3 responses."
-        elif mode == "situation_gambit":
-            return "ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... Give instinctive phrases Americans reach for in that exact moment."
-        elif mode == "podcast_guest":
-            return "ACTIVE ROOM: 🎙️ LIVE RADIO INTERVIEW ('YOU ARE THE GUEST' with Marcus, Chloe & Jake)."
-        elif mode == "weakness_drill":
-            targets = session_meta.get("forced_targets", [])
-            return f"ACTIVE ROOM: 🔥 3-PHRASE CHALLENGE. Target phrases: {targets}."
-        elif mode == "shadowing_drill":
-            target_sent = session_meta.get("drill_target_sentence", "")
-            return f"ACTIVE ROOM: 🎙️ RHYTHM & SHADOWING WORKOUT. Target sentence: '{target_sent}'."
-        return "ACTIVE ROOM: 🗣️ NYC SPONTANEOUS BANTER. Engage in genuine, unscripted New York conversation strictly locked to the member's ACTIVE VIBE."
+            return (
+                "ACTIVE ROOM: 😈 DEVIL'S ADVOCATE & SMART PUSHBACK LAB. "
+                "Challenge the member's premise with charisma and intellectual rigor in the active Vibe. "
+                "Model how Americans push back, concede a partial point ('I'll grant you that, but...'), and reframe arguments."
+            )
+        return (
+            "ACTIVE ROOM: 💬 LIVE SPOKEN AMERICAN LOUNGE. "
+            "Adapt naturally to the social occasion of the member's message (casual catch-up, intellectual debate, workplace dilemma, "
+            "venting, celebrating, or brainstorming) while modeling authentic spoken American syntax and pragmatics."
+        )
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
         pref_reg = user.get("preferred_register", "articulate")
@@ -440,7 +457,11 @@ class NYCLoungeAI:
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
             f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
-            f"- REAL HUMAN FLOW & ZERO-QUOTA PIVOTS: Use asymmetric turn lengths, co-construction (latching directly onto each other's words), gentle nuance/pushback, spoken American syntax (ellipsis/fronting), non-interrogative handoffs, and natural mid-sentence recalibrations (strictly in {active_vibe_badge}) with zero numerical quota—only when a thought genuinely shifts mid-stream without disrupting spontaneity.\n"
+            f"- AUTHENTIC SPOKEN TEXTURE CHECKLIST (APPLY NATURALLY IN `chat_turns` AND RECASTS):\n"
+            f"  • Contractions: Always use natural spoken contractions ('I'm', 'that's', 'don't', 'should've', 'we're', plus 'gonna'/'wanna'/'kinda' when fitting {active_vibe_badge}).\n"
+            f"  • Ellipsis & Spoken Syntax: Naturally drop obvious initial subjects/auxiliaries ('Sounds like a stretch', 'Makes sense'), and use fronting or clefts ('What gets me is...').\n"
+            f"  • Fillers & Discourse Markers: Weave natural spoken glue ('I mean,', 'you know,', 'look,', 'honestly,', 'thing is,', 'sort of', 'pretty much').\n"
+            f"  • Real-Time Hesitation & Zero-Quota Mid-Sentence Pivots: Let hosts sound like real people thinking out loud—using natural hesitation ('well, let's see...', 'how do I put this—') or a mid-sentence pivot ('—or rather,', '—actually, scratch that,') ONLY when a thought genuinely shifts mid-stream without disrupting spontaneity.\n"
             f"- {lang_rule}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
@@ -455,19 +476,19 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `mirror_clean_target`, phrasing-only `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` and `self_repair_pivot` empty."
+                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` with authentic spoken American texture (contractions, ellipsis, natural fillers, hesitation/pivots when organic), provide 3 distinct spoken recast alternatives (`rewrite_articulate` = Natural Spoken Flow, `rewrite_casual` = Idiomatic & Phrasal, `rewrite_witty` = Punchy Ellipsis/Syntax) ALL strictly in the member's ACTIVE VIBE, `mirror_clean_target`, spoken-phrasing `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` and `self_repair_pivot` empty."
             )
         else:
             contents.append(
                 f"MEMBER MESSAGE:\n{user_text}\n\n"
-                "Populate `chat_turns` with the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, and provide phrasing-only `diagnostics` (NO pronunciation/vowel/IPA comments) and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` and `self_repair_pivot` empty."
+                "Populate `chat_turns` with authentic spoken American texture (contractions, ellipsis, natural fillers, hesitation/pivots when organic), provide 3 distinct spoken recast alternatives (`rewrite_articulate` = Natural Spoken Flow, `rewrite_casual` = Idiomatic & Phrasal, `rewrite_witty` = Punchy Ellipsis/Syntax) ALL strictly in the member's ACTIVE VIBE, and provide spoken-phrasing `diagnostics` (NO pronunciation/vowel/IPA comments) and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` and `self_repair_pivot` empty."
             )
 
         res: LoungeTurnResponse = self._call_structured(
             contents=contents,
             schema_cls=LoungeTurnResponse,
             system_instruction=system_prompt,
-            temperature=0.74,
+            temperature=0.75,
             max_output_tokens=4096
         )
 
@@ -478,7 +499,6 @@ class NYCLoungeAI:
         res = self._finalize_chat_turns(res, active_persona=active_persona, user_text=user_text or res.transcription)
 
         used_stealth_ids: List[int] = []
-        reply_lower = (res.lounge_reply or "").lower()
         for it in stealth_items:
             if self.db.smart_chunk_match(it["chunk"], res.lounge_reply or ""):
                 used_stealth_ids.append(it["id"])
@@ -647,16 +667,16 @@ class NYCLoungeAI:
             f"- Candidate Vault Phrases (weave in ONLY the ones that fit the topic 100% naturally; ignore any that feel forced): {vault_chunks}\n"
             f"- Target Phrasing Upgrades (use organically if relevant): {weak_fixes}\n"
             "- Write a 10 to 12 turn unscripted-feeling dialogue between `male_host` (Andrew) and `female_host` (Ava).\n"
-            "- AUTHENTIC HUMAN MICRO-DYNAMICS FOR AUDIO:\n"
-            "  1. ASYMMETRIC CADENCE: Mix short, punchy 3-to-7 word reactive turns ('Wait, hold on—seriously?', 'No, that is spot on.', 'Okay, hear me out though.') with longer storytelling or analytical turns so the audio rhythm breathes like a real studio recording.\n"
-            "  2. CO-CONSTRUCTION & OVERLAPPING THOUGHTS: Let one host pick up the exact thread or finish the other host's point mid-stream.\n"
-            "  3. NUANCED BANTER & PLAYFUL PUSHBACK: Don't make them agree 100% automatically; let them challenge a premise, refine an angle, or callback to an earlier joke in the episode.\n"
-            "  4. THINKING OUT LOUD (ZERO QUOTA): Without any fixed quota or numerical limit, let the hosts naturally recalibrate or pivot mid-sentence whenever the flow of thought genuinely calls for it, without ever disrupting spontaneity.\n"
+            "- AUTHENTIC SPOKEN RADIO MICRO-DYNAMICS:\n"
+            "  1. MANDATORY SPOKEN CONTRACTIONS & ELLIPSIS: Use natural spoken contractions ('I'm', 'that's', 'don't', 'should've', 'we're') and situational ellipsis ('Makes sense.', 'Didn't think of that.').\n"
+            "  2. FILLERS, HESITATION & WORD-SEARCHING: Include realistic spoken fillers ('I mean,', 'you know,', 'honestly,', 'look,', 'sort of') and occasional real-time hesitation ('Wait, how do I put this—', 'Well, let's see...').\n"
+            "  3. ASYMMETRIC CADENCE & CO-CONSTRUCTION: Mix short 3-to-7 word reactive turns ('Wait, hold on—seriously?', 'No, that tracks.') with longer turns, latching directly onto each other's words.\n"
+            "  4. THINKING OUT LOUD (ZERO QUOTA PIVOTS): Without any fixed quota or numerical limit, let the hosts naturally recalibrate or pivot mid-sentence ('—or rather,', '—actually, scratch that,') whenever the flow of thought genuinely calls for it.\n"
             "  5. NO DIDACTIC META-PAUSES: Never pause the conversation to lecture or say 'I love how you used that phrase.' Keep the illusion of a real, spontaneous NYC podcast 100% intact."
         )
 
         ep: PodcastEpisodeSchema = self._call_structured(
-            contents=[f"Record the complete Dual-Host NYC Radio episode strictly in {vibe_badge} mode with 100% authentic human conversational dynamics now."],
+            contents=[f"Record the complete Dual-Host NYC Radio episode strictly in {vibe_badge} mode with 100% authentic spoken American contractions, ellipsis, fillers, and real-time human dynamics now."],
             schema_cls=PodcastEpisodeSchema,
             system_instruction=system_prompt,
             temperature=0.78

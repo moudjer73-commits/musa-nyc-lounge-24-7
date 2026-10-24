@@ -195,10 +195,10 @@ def format_lounge_turn_html(
     xray_lines = [
         "🔬 <b>Coaching Notes & C1/C2 Expressions (Tap to Expand)</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"🎭 <b>3 Native Alternatives ({vibe_label} Mode):</b>",
-        f"• <b>Option 1 (Natural):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
-        f"• <b>Option 2 (Idiomatic):</b> <code>{html.escape(res.rewrite_casual)}</code>",
-        f"• <b>Option 3 (Punchy):</b> <code>{html.escape(res.rewrite_witty)}</code>",
+        f"🎭 <b>3 Native Spoken Alternatives ({vibe_label} Mode):</b>",
+        f"• <b>Option 1 (Natural Spoken):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
+        f"• <b>Option 2 (Idiomatic & Phrasal):</b> <code>{html.escape(res.rewrite_casual)}</code>",
+        f"• <b>Option 3 (Ellipsis & Punchy):</b> <code>{html.escape(res.rewrite_witty)}</code>",
     ]
 
     if res.diagnostics:
@@ -776,7 +776,7 @@ if bot:
                     )
 
             elif data.startswith("action:cycle_register"):
-                order = ["articulate", "casual", "witty"]
+                order = ["articulate", "casual", "witty", "executive", "diplomatic"]
                 cur = user.get("preferred_register", "articulate")
                 nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "articulate"
                 db.update_user(uid, preferred_register=nxt)
