@@ -99,11 +99,8 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="A clean, grammatically natural version of the user's sentence keeping their original word sequence for 1-to-1 Voice Mirror comparison."
     )
-    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="1 to 3 high-value phrasing, collocation, or spoken-structure upgrades based ONLY on what the member actually wrote/said. NEVER include pronunciation, vowel, or IPA (/.../) comments.")
-    lexical_upgrades: List[LexicalFrameUpgrade] = Field(
-        default_factory=list,
-        description="Exactly 3 numbered Spoken American Expressions tailored to this turn, ALL 3 strictly matching the member's ACTIVE VIBE."
-    )
+    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="Up to 2 spoken phrasing upgrades on the member's sentence tailored to the active Vibe. CRITICAL: Leave EMPTY `[]` if the member sent a short greeting ('Hi guys') OR if the member is describing a scenario/topic title ('Apologizing for being late', 'How to disagree').")
+    lexical_upgrades: List[LexicalUpgradeItem] = Field(default_factory=list, description="3 fresh, 100% SPOKEN C1/C2 American expressions FOR THE MEMBER'S OWN ROLE that strictly match BOTH the active Spoken Vibe (Articulate/Casual/Witty/Executive/Diplomatic) AND the active Chat Mode/Room (Spontaneous Chat, Storytelling Gym, Devil's Advocate, or What to Say When). Never repeat Candidate Vault Phrases and never use stiff written corporate-memo phrases.")
 
 
 class PodcastTurnLine(BaseModel):
@@ -488,6 +485,31 @@ class NYCLoungeAI:
                 "Populate `chat_turns` with the active cast (1, 2, or 3 hosts) and provide phrasing-only `diagnostics` (NO pronunciation/vowel/IPA comments) and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
             )
 
+        # مصفوفة مطابقة العبارات الثلاث المتقدمة مع النبرة النشطة (Active Vibe) ومود غرفة الدردشة (Active Chat Mode)
+        _vibe_lexical_guide = {
+            "articulate": "🎙️ ARTICULATE SPOKEN IDIOMS: Eloquent, analytical, culturally sharp spoken collocations & idioms (e.g., 'pressed for time', 'slip through the cracks', 'strike a balance', 'on the same wavelength')—eloquent in speech, NEVER stiff written/bureaucratic prose.",
+            "casual": "☕ CASUAL HANGOUT PHRASAL VERBS & CHUNKS: Relaxed, street-smart everyday NYC phrasal verbs & spoken idioms (e.g., 'running behind', 'hold things up', 'swing by', 'kick it', 'bail on').",
+            "witty": "🎭 WITTY & PLAYFUL NYC BANTER CHUNKS: Clever, dry, ironic, charismatic spoken expressions & comebacks (e.g., 'famous last words', 'dodge a bullet', 'tempt fate', 'wishful thinking').",
+            "executive": "💼 EXECUTIVE & BOARDROOM SPOKEN CHUNKS: High-stakes leadership, strategy, and meeting idioms spoken out loud (e.g., 'have a hard stop', 'bandwidth', 'move the needle', 'push back the timeline', 'keep someone in the loop').",
+            "diplomatic": "🤝 DIPLOMATIC & HIGH-EQ SPOKEN SOFTENERS: Tactful, empathetic, face-saving spoken expressions for delicate moments (e.g., 'smooth things over', 'give a heads-up', 'meet halfway', 'soften the blow', 'on the same page')."
+        }.get(active_reg, "")
+
+        _room_lexical_guide = {
+            "spontaneous_chat": "💬 LIVE LOUNGE CONVERSATION: All 3 expressions in `lexical_upgrades` must fit the exact topic being discussed right now and help the member express their next thought naturally.",
+            "storytelling_gym": "🍸 STORYTELLING GYM: All 3 expressions in `lexical_upgrades` must be C1/C2 spoken storytelling tools (setting the scene, building narrative tension, or landing a punchy payoff).",
+            "devils_advocate": "😈 DEVIL'S ADVOCATE: All 3 expressions in `lexical_upgrades` must be C1/C2 spoken debate & pushback tools (conceding a point gracefully, challenging a premise, or reframing an argument).",
+            "what_to_say": "⚡ WHAT TO SAY WHEN (SITUATIONAL PLAYBOOK): All 3 expressions in `lexical_upgrades` must be instinctive spoken phrases the MEMBER uses in that exact social/workplace scenario."
+        }.get(mode, "⚡ SITUATIONAL / ACTIVE MODE: All 3 expressions in `lexical_upgrades` must directly serve the member's active chat mode and role.")
+
+        system_prompt += (
+            "\n\nCRITICAL LEXICAL & PRAGMATIC ALIGNMENT FOR THIS TURN:\n"
+            f"1. VIBE-MATCHED EXPRESSIONS: {_vibe_lexical_guide}\n"
+            f"2. CHAT-MODE-MATCHED EXPRESSIONS: {_room_lexical_guide}\n"
+            "3. 100% MEMBER ROLE IN `lexical_upgrades` & REWRITES: All 3 expressions in `lexical_upgrades` and all 3 `rewrite_*` alternatives MUST be for the MEMBER'S OWN ROLE/POV (e.g. what the late person says when apologizing, NEVER what the listener replies!).\n"
+            "4. NO VAULT DUPLICATES IN `lexical_upgrades`: NEVER copy any phrase from Candidate Vault Phrases into `lexical_upgrades` (the member already saved those!).\n"
+            "5. SCENARIO & PROMPT DETECTION: If the member's message is a scenario title or topic prompt (e.g. 'Apologizing for being late', 'Apologize for...', 'How to...'), return an empty list `[]` for `diagnostics`."
+        )
+
         res: LoungeTurnResponse = self._call_structured(
             contents=contents,
             schema_cls=LoungeTurnResponse,
@@ -507,6 +529,15 @@ class NYCLoungeAI:
         for it in stealth_items:
             if it["chunk"].lower() in reply_lower:
                 used_stealth_ids.append(it["id"])
+
+        _ut_clean = (user_text or "").strip().lower()
+        if (
+            len(_ut_clean.split()) <= 6
+            and (_ut_clean.startswith(("apologiz", "how to ", "what to ", "asking ", "declin", "disagree", "politely ", "saying ", "telling ")) or mode != "spontaneous_chat")
+        ):
+            res.diagnostics = []
+        _vault_set = {it["chunk"].strip().lower() for it in stealth_items}
+        res.lexical_upgrades = [u for u in res.lexical_upgrades if u.chunk.strip().lower() not in _vault_set]
 
         return res, used_stealth_ids
 
@@ -613,6 +644,31 @@ class NYCLoungeAI:
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
             f"ACTIVE ROOM: 🔬 NATIVE TEXT & SUBTEXT MINER ({self._level_calibration_guide(level)})."
         )
+        # مصفوفة مطابقة العبارات الثلاث المتقدمة مع النبرة النشطة (Active Vibe) ومود غرفة الدردشة (Active Chat Mode)
+        _vibe_lexical_guide = {
+            "articulate": "🎙️ ARTICULATE SPOKEN IDIOMS: Eloquent, analytical, culturally sharp spoken collocations & idioms (e.g., 'pressed for time', 'slip through the cracks', 'strike a balance', 'on the same wavelength')—eloquent in speech, NEVER stiff written/bureaucratic prose.",
+            "casual": "☕ CASUAL HANGOUT PHRASAL VERBS & CHUNKS: Relaxed, street-smart everyday NYC phrasal verbs & spoken idioms (e.g., 'running behind', 'hold things up', 'swing by', 'kick it', 'bail on').",
+            "witty": "🎭 WITTY & PLAYFUL NYC BANTER CHUNKS: Clever, dry, ironic, charismatic spoken expressions & comebacks (e.g., 'famous last words', 'dodge a bullet', 'tempt fate', 'wishful thinking').",
+            "executive": "💼 EXECUTIVE & BOARDROOM SPOKEN CHUNKS: High-stakes leadership, strategy, and meeting idioms spoken out loud (e.g., 'have a hard stop', 'bandwidth', 'move the needle', 'push back the timeline', 'keep someone in the loop').",
+            "diplomatic": "🤝 DIPLOMATIC & HIGH-EQ SPOKEN SOFTENERS: Tactful, empathetic, face-saving spoken expressions for delicate moments (e.g., 'smooth things over', 'give a heads-up', 'meet halfway', 'soften the blow', 'on the same page')."
+        }.get(active_reg, "")
+
+        _room_lexical_guide = {
+            "spontaneous_chat": "💬 LIVE LOUNGE CONVERSATION: All 3 expressions in `lexical_upgrades` must fit the exact topic being discussed right now and help the member express their next thought naturally.",
+            "storytelling_gym": "🍸 STORYTELLING GYM: All 3 expressions in `lexical_upgrades` must be C1/C2 spoken storytelling tools (setting the scene, building narrative tension, or landing a punchy payoff).",
+            "devils_advocate": "😈 DEVIL'S ADVOCATE: All 3 expressions in `lexical_upgrades` must be C1/C2 spoken debate & pushback tools (conceding a point gracefully, challenging a premise, or reframing an argument).",
+            "what_to_say": "⚡ WHAT TO SAY WHEN (SITUATIONAL PLAYBOOK): All 3 expressions in `lexical_upgrades` must be instinctive spoken phrases the MEMBER uses in that exact social/workplace scenario."
+        }.get(mode, "⚡ SITUATIONAL / ACTIVE MODE: All 3 expressions in `lexical_upgrades` must directly serve the member's active chat mode and role.")
+
+        system_prompt += (
+            "\n\nCRITICAL LEXICAL & PRAGMATIC ALIGNMENT FOR THIS TURN:\n"
+            f"1. VIBE-MATCHED EXPRESSIONS: {_vibe_lexical_guide}\n"
+            f"2. CHAT-MODE-MATCHED EXPRESSIONS: {_room_lexical_guide}\n"
+            "3. 100% MEMBER ROLE IN `lexical_upgrades` & REWRITES: All 3 expressions in `lexical_upgrades` and all 3 `rewrite_*` alternatives MUST be for the MEMBER'S OWN ROLE/POV (e.g. what the late person says when apologizing, NEVER what the listener replies!).\n"
+            "4. NO VAULT DUPLICATES IN `lexical_upgrades`: NEVER copy any phrase from Candidate Vault Phrases into `lexical_upgrades` (the member already saved those!).\n"
+            "5. SCENARIO & PROMPT DETECTION: If the member's message is a scenario title or topic prompt (e.g. 'Apologizing for being late', 'Apologize for...', 'How to...'), return an empty list `[]` for `diagnostics`."
+        )
+
         res: LoungeTurnResponse = self._call_structured(
             contents=[f"MINE THIS PASSAGE FOR SPOKEN EXPRESSIONS & SUBTEXT:\n{source_text}"],
             schema_cls=LoungeTurnResponse,
