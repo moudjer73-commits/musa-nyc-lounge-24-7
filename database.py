@@ -477,7 +477,7 @@ class LoungeDatabase:
                     pass
             conn.commit()
 
-    def lookup_collocations(self, query: str, user_id: int = 0, limit: int = 8) -> List[Dict[str, Any]]:
+    def _raw_lookup_collocations(self, query: str, user_id: int = 0, limit: int = 8) -> List[Dict[str, Any]]:
         clean_q = re.sub(r"[^a-zA-Z0-9\s'-]", "", query).strip()
         if not clean_q:
             return []
@@ -1027,6 +1027,39 @@ class LoungeDatabase:
         except Exception as e:
             logger.warning(f"Could not auto-restore from pinned message: {e}")
         return False
+
+    def lookup_collocations(self, query: str, user_id: Optional[int] = None, limit: int = 5) -> List[Dict[str, Any]]:
+        q_clean = re.sub(r"[^a-zA-Z0-9'\s-]", "", (query or "")).strip().lower()
+        if not q_clean:
+            return []
+        stopwords = {
+            "a", "an", "the", "by", "to", "in", "on", "of", "for", "with", "at", "from",
+            "up", "down", "out", "off", "over", "under", "as", "is", "are", "was", "were",
+            "be", "been", "it", "this", "that", "my", "your", "our", "their", "his", "her",
+            "and", "or", "but", "so", "if", "into", "about", "far", "very", "much", "more"
+        }
+        raw_hits = self._raw_lookup_collocations(query, user_id=user_id, limit=25)
+        full_pat = re.compile(r"\b" + re.escape(q_clean) + r"\b", re.IGNORECASE)
+        content_tokens = [t for t in q_clean.split() if len(t) >= 4 and t not in stopwords]
+
+        filtered = []
+        seen = set()
+        for h in raw_hits:
+            chunk_txt = (h.get("chunk") or "").strip()
+            key = chunk_txt.lower()
+            if not key or key in seen:
+                continue
+            # 1) تطابق العبارة الكاملة داخل حقل chunk نفسه (وليس في جملة المثال)
+            if full_pat.search(chunk_txt):
+                seen.add(key)
+                filtered.append(h)
+            # 2) أو تطابق كلمة دلالية رئيسية (>= 4 أحرف وليست من حروف الجر) ككلمة مستقلة داخل chunk
+            elif content_tokens and all(re.search(r"\b" + re.escape(tok) + r"\b", chunk_txt, re.IGNORECASE) for tok in content_tokens):
+                seen.add(key)
+                filtered.append(h)
+            if len(filtered) >= limit:
+                break
+        return filtered
 
     def set_user_mode(self, user_id: int, mode: str):
         try:

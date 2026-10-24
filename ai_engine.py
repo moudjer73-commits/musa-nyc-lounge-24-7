@@ -519,24 +519,54 @@ class NYCLoungeAI:
         return res, used_stealth_ids
 
     def explore_collocations_live(self, user: Dict[str, Any], query_word: str) -> CollocationExplorerSchema:
+        clean_hw = (query_word or "").strip().strip('"').strip("'")
         pref_reg = user.get("preferred_register", "articulate")
         vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
         vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
-        active_vibe_badge = vibe_badge
         level = user.get("level", "C1")
+
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"TASK: Build a Spoken American Collocation Map for '{query_word}' ({self._level_calibration_guide(level)})."
+            f"TASK: Build a 100% SPOKEN American Collocation & Idiomatic Frame Map for '{clean_hw}' ({self._level_calibration_guide(level)}).\n"
+            f"ACTIVE SPOKEN VIBE: {vibe_badge}\n"
+            f"ACTIVE VIBE VOICE RULES: {vibe_rules}\n\n"
+            "CRITICAL LINGUISTIC & REGISTER RULES:\n"
+            "1. HANDLE ALL INPUT TYPES SEAMLESSLY (NEVER REFUSE OR FAIL):\n"
+            "   - Single everyday adjective/verb/noun (e.g., 'Happy', 'Tired', 'Problem', 'Make'): provide 4 high-value spoken American idiomatic chunks/collocations built around that word OR upgrading that exact feeling/concept (e.g., for 'Happy': 'not a happy camper', 'strike a happy medium', 'couldn\'t be happier', 'thrilled for you / hyped').\n"
+            "   - Phrasal verb, discourse marker, or short phrase (e.g., 'By far', 'Push back', 'Pull off'): provide the 4 sharpest spoken structural frames & collocation patterns for using it naturally.\n"
+            "   - Multi-word concept or Arabic meaning description: provide the 4 most instinctive spoken American collocations for that exact meaning.\n"
+            f"2. STRICT ACTIVE VIBE MATCH ({vibe_badge}):\n"
+            f"   - Every single `example` and `followup` sentence MUST genuinely sound like {vibe_badge} ({vibe_rules}). If the Vibe is ☕ Casual, use relaxed everyday NYC speech with natural contractions ('gonna', 'wanna', 'kinda', 'honestly')—NEVER stiff corporate examples! If 💼 Executive, use crisp boardroom framing; if 🎭 Witty, use dry playful NYC banter.\n"
+            "3. Return 4 complete `collocation_frames`—each frame MUST include `chunk`, `register_tag`, `b2_foil` (or `b2_equivalent`), `explanation`, `trigger`, `pattern`, `followup`, and a spoken `example`."
         )
-        explorer: CollocationExplorerSchema = self._call_structured(
-            contents=[f"Build a Spoken American Collocation Map for: {query_word}"],
-            schema_cls=CollocationExplorerSchema,
-            system_instruction=system_prompt,
-            temperature=0.60
+
+        user_prompt = (
+            f"Build a Spoken American Collocation Map (4 frames) for: '{clean_hw}'\n"
+            f"Target Spoken Vibe: {vibe_badge} — ensure all 4 example and followup sentences strictly match {vibe_badge} tone and spoken contractions."
         )
+
+        try:
+            explorer: CollocationExplorerSchema = self._call_structured(
+                contents=[user_prompt],
+                schema_cls=CollocationExplorerSchema,
+                system_instruction=system_prompt,
+                temperature=0.60
+            )
+        except Exception as e:
+            logger.warning(f"Primary explore_collocations_live failed for '{clean_hw}', retrying: {e}")
+            explorer = self._call_structured(
+                contents=[f"Generate 4 complete spoken American English collocations or idiomatic expressions for '{clean_hw}' in {vibe_badge} style (including chunk, register_tag, b2_foil, explanation, trigger, pattern, followup, and example)."],
+                schema_cls=CollocationExplorerSchema,
+                system_instruction=f"{CORE_NYC_PERSONA_PROMPT}\nAlways return valid CollocationExplorerSchema JSON with all required fields.",
+                temperature=0.45
+            )
+
         for c in explorer.collocation_frames:
             c.register_tag = vibe_badge
-        self.db.ingest_chunks_to_corpus([c.model_dump() for c in explorer.collocation_frames])
+        try:
+            self.db.ingest_chunks_to_corpus([c.model_dump() for c in explorer.collocation_frames])
+        except Exception:
+            pass
         return explorer
 
     def evaluate_active_srs_usage(
