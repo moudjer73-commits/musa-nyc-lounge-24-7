@@ -87,9 +87,9 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow — STRICTLY FROM THE MEMBER'S OWN POV): How the MEMBER themselves could express their exact message/intent in the active Vibe using natural contractions and spoken glue. NEVER write this from the hosts' perspective!")
-    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal — STRICTLY FROM THE MEMBER'S OWN POV): A second way the MEMBER themselves could voice their exact message/intent in the active Vibe using phrasal verbs and native collocations. NEVER write a host reply here!")
-    rewrite_witty: str = Field(description="Alternative 3 (Punchy Ellipsis & Spoken Syntax — STRICTLY FROM THE MEMBER'S OWN POV): A concise, high-impact way the MEMBER themselves could say their message using spoken ellipsis or fronting. NEVER flip perspective to the hosts!")
+    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow — 100% MEMBER'S FIRST-PERSON POV): How the MEMBER themselves expresses their message or performs the requested social act (e.g., if member says 'Apologize for being late', write what the late person says: 'Hey, so sorry I'm running late—the trains were backed up'). NEVER write the hosts' response ('Don't worry about it') here!")
+    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal — 100% MEMBER'S FIRST-PERSON POV): A second idiomatic way the MEMBER themselves voices their message or performs the requested social act using phrasal verbs (e.g., 'My bad for holding things up, guys—got totally stuck on the L train'). NEVER write the hosts' reply ('No biggie / Don't sweat it') here!")
+    rewrite_witty: str = Field(description="Alternative 3 (Ellipsis & Punchy — 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting (e.g., 'Barely made it out alive—sorry for the wait, guys'). NEVER write from the hosts' perspective!")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
     tts_clean_target: str = Field(
@@ -337,25 +337,31 @@ class NYCLoungeAI:
         return res
 
     def _build_mode_specific_directive(self, mode: str, session_meta: Dict[str, Any]) -> str:
+        if mode in ("what_to_say", "situational_playbook", "pragmatic_playbook"):
+            return (
+                "ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... (SITUATIONAL PRAGMATICS PLAYBOOK).\n"
+                "- The member is describing a social or workplace situation/occasion (in English or Arabic), NOT speaking a literal line of dialogue.\n"
+                "- 1. In `chat_turns`, have Marcus, Chloe, and Jake warmly coach the member and roleplay what real Americans instinctively say in that exact moment.\n"
+                "- 2. In `rewrite_articulate`, `rewrite_casual`, and `rewrite_witty`, provide 3 READY-TO-USE spoken lines that the MEMBER themselves can say in that exact situation (all locked to the active Vibe).\n"
+                "- 3. In `lexical_upgrades`, provide 3 high-utility C1/C2 spoken expressions for the PERSON IN THAT SITUATION (e.g., if the situation is apologizing for being late, give phrases for apologizing/explaining a delay like 'running behind', 'held up', 'my bad'—NOT phrases for accepting an apology!).\n"
+                "- 4. Leave `diagnostics` empty `[]` unless the member explicitly asked to fix a specific sentence."
+            )
+        if mode == "storytelling_gym":
+            return (
+                "ACTIVE ROOM: 🍸 STORYTELLING & NARRATIVE GYM. "
+                "Model and coach high-impact American storytelling: vivid setup hooks ('So get this—', 'Picture this:'), "
+                "historical present tense for drama, pacing pauses, and punchy payoffs."
+            )
         if mode == "devils_advocate":
-            return "ACTIVE ROOM: 🥊 DEVIL'S ADVOCATE. Challenge the member's premise with sharp New York pushback."
-        elif mode == "storytelling_gym":
-            return "ACTIVE ROOM: 🎭 STORYTELLING GYM (Delivered strictly in the member's ACTIVE VIBE). Coach dramatic present-tense storytelling and punchlines."
-        elif mode == "register_lab":
-            return "ACTIVE ROOM: 🎛️ VIBE & STYLE SHIFTER. Contrast Articulate, Casual, and Witty registers."
-        elif mode == "subtext_decoder":
-            return "ACTIVE ROOM: 🕵️‍♂️ SUBTEXT & NUANCE DECODER. Decode unspoken American hints and give 3 responses."
-        elif mode == "situation_gambit":
-            return "ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... Give instinctive phrases Americans reach for in that exact moment."
-        elif mode == "podcast_guest":
-            return "ACTIVE ROOM: 🎙️ LIVE RADIO INTERVIEW ('YOU ARE THE GUEST' with Marcus, Chloe & Jake)."
-        elif mode == "weakness_drill":
-            targets = session_meta.get("forced_targets", [])
-            return f"ACTIVE ROOM: 🔥 3-PHRASE CHALLENGE. Target phrases: {targets}."
-        elif mode == "shadowing_drill":
-            target_sent = session_meta.get("drill_target_sentence", "")
-            return f"ACTIVE ROOM: 🎙️ RHYTHM & SHADOWING WORKOUT. Target sentence: '{target_sent}'."
-        return "ACTIVE ROOM: 🗣️ NYC SPONTANEOUS BANTER. Engage in genuine, unscripted New York conversation strictly locked to the member's ACTIVE VIBE."
+            return (
+                "ACTIVE ROOM: 😈 DEVIL'S ADVOCATE & SMART PUSHBACK LAB. "
+                "Challenge the member's premise with charisma and intellectual rigor in the active Vibe. "
+                "Model how Americans push back, concede a partial point ('I'll grant you that, but...'), and reframe arguments."
+            )
+        return (
+            "ACTIVE ROOM: 💬 LIVE SPOKEN AMERICAN LOUNGE.\n"
+            "- NOTE ON SCENARIO DESCRIPTIONS: If the member's message is a meta-description of a situation (e.g., 'Apologize for being late', 'Politely disagree with a boss'), treat it as a situational coaching request: give 3 ready-to-speak lines for the MEMBER'S role in `rewrite_articulate`/`rewrite_casual`/`rewrite_witty`, and 3 expressions for the MEMBER'S role in `lexical_upgrades`."
+        )
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
         pref_reg = user.get("preferred_register", "articulate")
