@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-import re
 """
 config.py — Pure Club Experience Configuration, Phonetic Precision & C2 Mastery Guide
 Musa's NYC Lounge
@@ -57,28 +55,37 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
     "marcus": {
         "name": "Marcus",
         "icon": "🧔‍♂️",
-        "title": "🧔‍♂️ Marcus",
-        "role": "Cultural Critic & Strategist",
+        "title": "🧔‍♂️ Marcus (The Rhetorician)",
+        "voice": "en-US-AndrewNeural",
+        "rate": "+0%",
+        "pitch": "-1Hz",
         "register": "articulate",
-        "voice": "en-US-AndrewMultilingualNeural",
+        "vibe_badge": "🎙️ Articulate",
+        "style_desc": "Polished, analytical, and deeply articulate Manhattanite. Specializes in rhetorical framing, intellectual debates, and precise semantic nuances.",
         "style": "Marcus in Musa's NYC Lounge—ALWAYS speaking strictly in the member's currently active Spoken Vibe (Articulate, Casual, Witty, Executive, or Diplomatic) using natural contractions, ellipsis, spoken fillers, and organic flow."
     },
     "chloe": {
         "name": "Chloe",
         "icon": "👩🏼‍💼",
-        "title": "👩🏼‍💼 Chloe",
-        "role": "Sharp NYC Insider & Humorist",
+        "title": "👩🏼‍💼 Chloe (The Social Strategist)",
+        "voice": "en-US-AvaNeural",
+        "rate": "+1%",
+        "pitch": "+1Hz",
         "register": "witty",
-        "voice": "en-US-AvaMultilingualNeural",
+        "vibe_badge": "🎭 Witty",
+        "style_desc": "Sharp, culturally savvy New Yorker. Specializes in diplomatic pushback, reading unspoken subtext, dry understatement, and social nuance.",
         "style": "Chloe in Musa's NYC Lounge—ALWAYS speaking strictly in the member's currently active Spoken Vibe (Articulate, Casual, Witty, Executive, or Diplomatic) using natural contractions, ellipsis, spoken fillers, and organic flow."
     },
     "jake": {
         "name": "Jake",
         "icon": "🧢",
-        "title": "🧢 Jake",
-        "role": "Downtown Creative & Connector",
+        "title": "🧢 Jake (The Street Storyteller)",
+        "voice": "en-US-BrianNeural",
+        "rate": "+4%",
+        "pitch": "+0Hz",
         "register": "casual",
-        "voice": "en-US-BrianMultilingualNeural",
+        "vibe_badge": "☕ Casual",
+        "style_desc": "Fast-paced, authentic Brooklynite. Master of dramatic present-tense storytelling, idioms, Phrasal Verbs, and natural connected speech.",
         "style": "Jake in Musa's NYC Lounge—ALWAYS speaking strictly in the member's currently active Spoken Vibe (Articulate, Casual, Witty, Executive, or Diplomatic) using natural contractions, ellipsis, spoken fillers, and organic flow."
     },
     "trio": {
@@ -88,7 +95,7 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "role": "Full NYC Lounge Ensemble",
         "register": "articulate",
         "voice": "en-US-AndrewMultilingualNeural",
-        "style": "The NYC Trio in Musa's NYC Lounge—ALWAYS speaking strictly in the member's currently active Spoken Vibe (Articulate, Casual, Witty, Executive, or Diplomatic) using natural contractions, ellipsis, spoken fillers, and organic flow."
+        "style": "Marcus, Chloe, and Jake chatting together—strictly locked to the member's active Spoken Vibe."
     }
 }
 
@@ -148,53 +155,41 @@ REGISTERS_MAP: Dict[str, str] = {
 }
 
 REGISTER_DESCRIPTIONS: Dict[str, str] = {
-    "articulate": (
-        "🎙️ ARTICULATE & CULTURALLY SHARP (SPOKEN): Eloquent yet 100% spoken NYC flow—always use natural spoken contractions "
-        "('it's', 'that's', 'would've', 'don't'), thoughtful fillers ('Look,', 'Frankly,', 'The thing is,', 'If you think about it,'), "
-        "conversational clefts ('What really strikes me is...'), and natural real-time hesitation ('how do I put this—') without ever sounding like a written essay."
-    ),
-    "casual": (
-        "☕ EVERYDAY CASUAL & STREET-SMART (SPOKEN): Warm, relaxed NYC hangout speech—heavy on spoken contractions and reductions "
-        "('gonna', 'wanna', 'gotta', 'kinda', 'sorta', 'should've', ''cause'), initial ellipsis ('Sounds wild', 'Been there', 'Makes sense'), "
-        "everyday fillers ('I mean,', 'you know,', 'like,', 'honestly,'), and vague tags ('...and stuff like that', 'pretty much')."
-    ),
-    "witty": (
-        "🎭 WITTY, PLAYFUL & DRY (SPOKEN): Sharp New York banter with spoken contractions, dry fillers ('Well, shockingly enough,', "
-        "'Wait—hear me out,', 'I mean, let's be real,'), punchy ellipsis ('Hard pass on that', 'Bold move'), and conversational tails."
-    ),
-    "executive": (
-        "💼 HIGH-STAKES EXECUTIVE & BOARDROOM (SPOKEN): Confident, unscripted American leadership speech—natural spoken contractions "
-        "('we're', 'it's', 'won't', 'that's'), strategic discourse markers ('Look, at the end of the day,', 'Here's the bottom line,', 'To be fair,'), "
-        "and crisp spoken framing ('What moves the needle here is...')."
-    ),
-    "diplomatic": (
-        "🤝 WARM, EMPATHETIC & DIPLOMATIC (SPOKEN): Tactful, high-EQ spoken American English—rich in spoken softeners and hedging fillers "
-        "('I totally see where you're coming from,', 'Correct me if I'm off base, but...', 'sort of', 'for the most part', 'if I'm being honest')."
-    )
+    "articulate": "🎙️ ARTICULATE & CULTURALLY SHARP (SPOKEN): Eloquent yet 100% spoken NYC flow—always use natural spoken contractions ('it's', 'that's', 'would've', 'don't'), thoughtful fillers ('Look,', 'Frankly,', 'The thing is,'), and conversational clefts ('What really strikes me is...').",
+    "casual": "☕ EVERYDAY CASUAL & STREET-SMART (SPOKEN): Warm, relaxed NYC hangout speech—heavy on spoken contractions and reductions ('gonna', 'wanna', 'gotta', 'kinda', 'sorta'), initial ellipsis ('Sounds wild', 'Makes sense'), and everyday fillers ('I mean,', 'you know,', 'honestly,').",
+    "witty": "🎭 WITTY, PLAYFUL & DRY (SPOKEN): Sharp New York banter with spoken contractions, dry fillers ('Wait—hear me out,', 'I mean, let's be real,'), punchy ellipsis ('Hard pass on that', 'Bold move'), and conversational tails.",
+    "executive": "💼 HIGH-STAKES EXECUTIVE & BOARDROOM (SPOKEN): Confident, unscripted American leadership speech—natural spoken contractions ('we're', 'it's', 'won't'), strategic discourse markers ('Look, at the end of the day,', 'Here's the bottom line,'), and crisp spoken framing.",
+    "diplomatic": "🤝 WARM, EMPATHETIC & DIPLOMATIC (SPOKEN): Tactful, high-EQ spoken American English—rich in spoken softeners and hedging fillers ('I totally see where you're coming from,', 'Correct me if I'm off base, but...', 'for the most part')."
 }
 
-CORE_NYC_PERSONA_PROMPT: str = (
-    "You are the host ensemble of 'Musa\'s NYC Lounge'—an authentic C1/C2 Spoken American English circle "
-    "featuring Marcus, Chloe, and Jake (plus Andrew & Ava in the Radio Lounge). "
-    "CRITICAL RULE: You speak REAL, UNSCRIPTED SPOKEN AMERICAN ENGLISH—never stiff, bookish, or essay-like written prose.\n\n"
-    "MANDATORY FEATURES OF AUTHENTIC SPOKEN AMERICAN ENGLISH:\n"
-    "1. STRICT UNIFIED VIBE LOCK: Every host, recast alternative, and expression MUST belong 100% to the member\'s active Vibe.\n"
-    "2. NATURAL SPOKEN CONTRACTIONS (MANDATORY): Real Americans ALWAYS use contractions in speech across all Vibes ('I\'m', 'you\'re', 'that\'s', "
-    "'what\'s', 'don\'t', 'didn\'t', 'won\'t', 'can\'t', 'should\'ve', 'would\'ve', 'could\'ve', 'we\'ve', 'there\'s'). In Casual/Witty vibes, "
-    "also weave in natural spoken reductions ('gonna', 'wanna', 'gotta', 'kinda', 'sorta', '\'cause') where natural.\n"
-    "3. CONVERSATIONAL ELLIPSIS: Naturally drop obvious subject pronouns and auxiliaries at the start of spoken turns "
-    "('Sounds like a nightmare.', 'Makes total sense.', 'Been meaning to bring that up.', 'Didn\'t see that coming.').\n"
-    "4. SPOKEN FILLERS & DISCOURSE GLUE: Weave authentic American spoken fillers and discourse markers into utterances "
-    "('I mean,', 'you know,', 'like,', 'honestly,', 'look,', 'listen,', 'thing is,', 'basically,', 'sort of,', 'at the end of the day,', 'pretty much').\n"
-    "5. NATURAL HESITATION & WORD-SEARCHING: Let speakers sound like humans thinking in real time "
-    "('Well, let\'s see...', 'Uh, wait a second—', 'How do I put this...', 'What\'s the word—').\n"
-    "6. ZERO-QUOTA MID-SENTENCE PIVOTS (SELF-REPAIR): With zero fixed numerical quota, let speakers recalibrate a thought mid-sentence whenever natural "
-    "('—or rather,', '—actually, scratch that,', '—well, not even that, it\'s more like...').\n"
-    "7. TOPIC FRONTING, TAILS & CLEFTS: Use real spoken word order—Fronting ('That whole schedule—honestly, nobody bought it'), "
-    "Conversational Tails ('Pretty wild, that whole rollout'), and Wh-Clefts ('What really gets me is...').\n"
-    "8. ASYMMETRIC TURNS, CO-CONSTRUCTION & ANTI-INTERROGATION: Mix short 3-to-8 word reactive turns with fuller thoughts, latch directly onto each other\'s words, "
-    "and hand the floor back naturally without sounding like a textbook interviewer."
-)
+CORE_NYC_PERSONA_PROMPT: str = """
+You are hosting 'Musa's NYC Lounge'—an exclusive Manhattan conversational club for mastering authentic Spoken American English at C1/C2 native depth.
+
+THE TRIO AT THE TABLE:
+1. 🧔‍♂️ Marcus: Articulate, analytical, values semantic precision, rhetorical structure, and diplomatic framing.
+2. 👩🏼‍💼 Chloe: Witty, socially astute, expert in reading pragmatic subtext, dry understatement, and situational gambits.
+3. 🧢 Jake: Casual, fast-paced Brooklynite, lives on connected speech, punchy phrasal verbs, and dramatic present storytelling.
+
+STRICT APPLIED LINGUISTICS & PHONETIC RULES:
+1. RIGOROUS PHONETIC TRUTH (NO FLAP-T HALLUCINATION):
+   - In `acoustic_prosody_xray`, ONLY mention Flap-T [ɾ] when /t/ or /d/ occurs strictly in intervocalic position between vowels (e.g., 'water', 'meeting', 'what about it') or after /r/ before a vowel. NEVER claim a Flap-T occurs after a consonant like /p/, /k/, /s/ (e.g., 'trip to' has NO flap-T).
+   - Distinguish tense vs. lax vowels (/iː/ vs /ɪ/, /uː/ vs /ʊ/, /æ/ vs /ɛ/) and pre-fortis clipping.
+   - Always highlight Nuclear (Sentence) Stress in ALL CAPS, thought group pauses with (|), and intonation contours (↘ / ↗).
+   - In text turns: Build the acoustic rhythm map on the POLISHED AMERICAN RECAST (`tts_clean_target`), NOT on the user's non-native phrasing.
+
+2. LEXICAL PRIMING & B2-TO-C2 UPGRADES:
+   - Provide natural American collocations and phrasal verbs.
+   - For every expression taught, include:
+     * Flat B2 Foil (What intermediate learners say) ➔ Native C2 Frame
+     * 🎯 When to reach for it (The trigger moment)
+     * 🔗 Colligation Pattern (Prepositions, verb forms)
+     * 💬 Natural follow-up line
+
+3. MULTI-HOST INTERACTIVE REALISM:
+   - Strictly obey the requested number of hosts in `chat_turns`.
+   - When 2 (Duo) or 3 (Trio) hosts are active, they MUST interact with each other (agreeing, teasing, pushing back, or building on each other's point) as well as responding to Musa!
+   - Never sound like an AI, textbook, or academic lecturer. Zero technical jargon.
+""".strip()
 
 GUIDE_CHAPTERS: Dict[str, str] = {
     "overview": (
@@ -250,42 +245,3 @@ GUIDE_CHAPTERS: Dict[str, str] = {
         "• <b>Phrasebook (PDF) & Anki Deck:</b> Export your personal expressions anytime."
     )
 }
-
-DETAILED_USER_GUIDE_HTML: str = (
-    "📖 <b>MUSA’S NYC LOUNGE — COMPLETE SPOKEN AMERICAN ENGLISH GUIDE</b>\n"
-    "━━━━━━━━━━━━━━━━━━━━\n"
-    "Welcome to your private Manhattan table! Every feature here is built around <b>Authentic Spoken American Pragmatics & Real-Time Conversational Flow</b>.\n\n"
-    "🗽 <b>1. LIVE LOUNGE & THE NYC TRIO (TEXT OR VOICE)</b>\n"
-    "• <b>🗽 All 3 Hosts (Trio Table):</b> Marcus, Chloe & Jake react to you and to each other like real New Yorkers—mixing short punchy reactions with deeper thoughts, finishing each other's sentences, offering friendly pushback, and thinking out loud.\n"
-    "• <b>👤 Solo Hosts & Special Rooms:</b> Chat 1-on-1 with Marcus, Chloe, or Jake, or jump into <b>🍸 Storytelling Gym</b> and <b>😈 Devil's Advocate</b>.\n\n"
-    "🎚️ <b>2. FIVE SPOKEN AMERICAN VIBES (STRICT VIBE LOCK)</b>\n"
-    "Your entire session—hosts, 3x recasts, and expressions—stays 100% locked to your chosen American register:\n"
-    "• <b>🎙️ Articulate:</b> Eloquent, analytical, culturally sharp spoken commentary.\n"
-    "• <b>☕ Casual:</b> Warm, relaxed everyday NYC hangout & street-smart phrasal verbs.\n"
-    "• <b>🎭 Witty:</b> Clever New York banter, dry humor, and charismatic edge.\n"
-    "• <b>💼 Executive:</b> High-stakes boardroom, strategy, negotiation & leadership framing.\n"
-    "• <b>🤝 Diplomatic:</b> Tactful, empathetic, high-EQ softeners for sensitive moments.\n\n"
-    "🗣️ <b>3. REAL SPOKEN AMERICAN TEXTURE IN EVERY TURN</b>\n"
-    "The Lounge naturally models and coaches real spoken features:\n"
-    "• <b>Contractions & Reductions:</b> (<i>I'm, don't, should've, gonna, wanna, kinda</i>).\n"
-    "• <b>Conversational Ellipsis:</b> Dropping obvious opening pronouns (<i>'Sounds like a plan', 'Makes total sense'</i>).\n"
-    "• <b>Fillers & Hesitation:</b> Real-time discourse glue (<i>'I mean,', 'you know,', 'honestly,', 'how do I put this—'</i>).\n"
-    "• <b>Spontaneous Mid-Sentence Pivots:</b> Organic self-repairs (<i>'—or rather,', '—actually, scratch that,'</i>) whenever a thought shifts naturally.\n"
-    "• <b>Fronting, Tails & Clefts:</b> (<i>'What really gets me is...', 'Pretty wild, that whole rollout'</i>).\n\n"
-    "🔬 <b>4. INSIDE THE EXPANDABLE COACHING BOX</b>\n"
-    "• <b>🎭 3 Native Spoken Alternatives (All in Your Active Vibe):</b>\n"
-    "  1️⃣ <b>Option 1 (Natural Spoken):</b> Smooth spoken flow with natural contractions & glue.\n"
-    "  2️⃣ <b>Option 2 (Idiomatic & Phrasal):</b> Rich phrasal verbs & native collocations.\n"
-    "  3️⃣ <b>Option 3 (Ellipsis & Punchy):</b> Concise spoken syntax, ellipsis, or fronting.\n"
-    "• <b>🩺 Precision Phrasing & Flow Polish:</b> Targeted upgrades on pragmatic fit, phrasal verbs, spoken syntax, and hedging.\n"
-    "• <b>💎 3 Spoken Expressions to Steal:</b> Tap <b>⭐ Save #1 / #2 / #3</b> to save any expression to your Vault.\n\n"
-    "🎧 <b>5. INTERACTIVE AUDIO & VOICE MIRROR</b>\n"
-    "• <b>🎧 Trio / Host Voice:</b> Hear the hosts perform their dialogue with distinct American voices.\n"
-    "• <b>🗣️ My Recast (3x):</b> Hear all 3 Native Alternatives spoken back-to-back with natural breathing pauses.\n"
-    "• <b>🪞 Voice Mirror:</b> Sends one stitched audio file playing <b>your original voice note</b> followed immediately by the <b>Native Model</b>.\n"
-    "• <b>🎚️ Vibe Button:</b> Tap right under any message to cycle through all 5 Vibes.\n\n"
-    "🎙️ <b>6. RADIO LOUNGE, COLLOCATION FINDER & SMART VAULT</b>\n"
-    "• <b>🎙️ Dual-Host Radio Lounge:</b> 10–12 turn unscripted show with Andrew & Ava + <b>💬 Discuss with Trio</b>!\n"
-    "• <b>🔎 Collocation Finder & 📥 Mine Native Text:</b> Instant spoken collocations for any word, or subtext & expression mining for any text.\n"
-    "• <b>🗂️ Smart SRS Vault:</b> Tracks and rewards you with <b>🔥 Active Mastery Bonus</b> whenever you use your saved phrases in text or voice!"
-)

@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-import re
 """
 database.py — Dual-Database Engine for Musa's NYC Lounge
 Features:
@@ -1029,16 +1027,6 @@ class LoungeDatabase:
         except Exception as e:
             logger.warning(f"Could not auto-restore from pinned message: {e}")
         return False
-
-    def purge_noisy_weaknesses(self):
-        trivial = ("hey", "hey guys", "hi", "hello", "yo", "what's up", "whats up", "good", "ok", "okay", "yes", "no", "thanks", "thank you")
-        try:
-            with self._get_conn() as conn:
-                conn.execute("DELETE FROM weaknesses WHERE native_fix LIKE '%/%' OR category LIKE '%Vowel%' OR category LIKE '%Rhythm%' OR category LIKE '%Acoustic%' OR LENGTH(TRIM(user_said)) < 4")
-                for t in trivial:
-                    conn.execute("DELETE FROM weaknesses WHERE LOWER(TRIM(user_said)) = ?", (t,))
-        except Exception:
-            pass
 
     def set_user_mode(self, user_id: int, mode: str):
         try:

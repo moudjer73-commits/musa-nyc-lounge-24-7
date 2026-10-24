@@ -1,7 +1,4 @@
-from config import DETAILED_USER_GUIDE_HTML
 # -*- coding: utf-8 -*-
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-import re
 """
 app.py — Main Club Host Engine for Musa's NYC Lounge
 Features:
@@ -354,12 +351,16 @@ def run_and_send_podcast_episode(
 # 2. Bot Commands & Callback Handlers
 # =====================================================================
 if bot:
-    @bot.message_handler(commands=["help", "guide"])
+    @bot.message_handler(commands=["guide", "help"])
     def cmd_guide(message):
-        if not is_authorized(message.from_user.id):
+        uid = message.from_user.id
+        if not is_authorized(uid, message.from_user.username or "", message.from_user.first_name or ""):
             return
-        kb = LoungeKeyboards.guide_navigation_kb("overview") if hasattr(LoungeKeyboards, "guide_navigation_kb") else None
-        bot.send_message(message.chat.id, DETAILED_USER_GUIDE_HTML, reply_markup=kb)
+        bot.send_message(
+            message.chat.id,
+            GUIDE_CHAPTERS["overview"],
+            reply_markup=LoungeKeyboards.guide_navigation_kb("overview")
+        )
 
     @bot.message_handler(commands=["trio", "podcast"])
     def cmd_quick_podcast(message):
@@ -776,7 +777,7 @@ if bot:
                     )
 
             elif data.startswith("action:cycle_register"):
-                order = ["articulate", "casual", "witty", "executive", "diplomatic"]
+                order = ["articulate", "casual", "witty"]
                 cur = user.get("preferred_register", "articulate")
                 nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "articulate"
                 db.update_user(uid, preferred_register=nxt)
@@ -1489,52 +1490,63 @@ if bot:
 def sync_bot_profile_metadata():
     if not bot:
         return
-    short_desc = (
-        "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club "
-        "(5 Vibes, Live Trio, 3x Recasts & Radio)."
-    )
-    full_desc = (
-        "Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n\n"
-        "• Live NYC Trio: Unscripted human banter with Marcus, Chloe & Jake (contractions, ellipsis, fillers & natural pivots).\n"
-        "• 5 Strict Spoken Vibes: 🎙️ Articulate, ☕ Casual, 🎭 Witty, 💼 Executive & 🤝 Diplomatic.\n"
-        "• 3x Spoken Recasts & Audio: Natural, Phrasal & Ellipsis options + 🪞 Stitched Voice Mirror.\n"
-        "• Radio Lounge & Smart Vault: Unscripted Andrew & Ava podcasts + inflection-aware SRS & collocations."
-    )
-    for lang in (None, "", "en", "ar"):
-        try:
-            if lang is None:
-                bot.set_my_short_description(short_desc)
-            else:
-                bot.set_my_short_description(short_desc, language_code=lang)
-        except Exception as e:
-            logger.warning(f"Short description sync note ({lang}): {e}")
-
-        try:
-            if lang is None:
-                bot.set_my_description(full_desc)
-            else:
-                bot.set_my_description(full_desc, language_code=lang)
-        except Exception as e:
-            logger.warning(f"Full description sync note ({lang}): {e}")
-
     try:
-        from telebot.types import BotCommand
-        cmds = [
-            BotCommand("start", "🗽 Open the NYC Lounge & Main Dashboard"),
-            BotCommand("vibe", "🎚️ Cycle Spoken Vibe (5 American Registers)"),
-            BotCommand("podcast", "🎙️ Launch Dual-Host NYC Radio Lounge"),
-            BotCommand("vault", "🗂️ Open Smart SRS Phrase Vault"),
-            BotCommand("collocations", "🔎 Search C1/C2 Spoken Collocations"),
-            BotCommand("guide", "📖 Complete Spoken American English Guide")
+        short_desc = "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club with Marcus, Chloe & Jake."
+        full_desc = (
+            "Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n\n"
+            "• Live NYC Trio: Unscripted banter, Devil's Advocate & storytelling with Marcus (🎙️ Articulate), Chloe (🎭 Witty) & Jake (☕ Casual).\n"
+            "• Podcast Lounge: 3+ min Trio & Duo episodes with stereo audio & [MM:SS] timestamps.\n"
+            "• Voice Mirror: 1.0x/0.85x accent mirror, stress & linking map.\n"
+            "• Vault & Finder: B2→C2 upgrades, collocations & PDF/Anki exports."
+        )
+        commands = [
+            telebot.types.BotCommand("start", "🗽 Main Club Menu & Dashboard"),
+            telebot.types.BotCommand("hosts", "👥 Choose 1 (Solo), 2 (Duo) or 3 (Trio) Hosts"),
+            telebot.types.BotCommand("podcast", "🎙️ 3+ Min Trio & Duo Podcast Studio"),
+            telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic or Scenario"),
+            telebot.types.BotCommand("devil", "🥊 Devil's Advocate Pushback Sparring"),
+            telebot.types.BotCommand("lookup", "🔎 Spoken Collocation & Phrase Finder"),
+            telebot.types.BotCommand("drills", "🎯 Speaking, Stress & Shadowing Workouts"),
+            telebot.types.BotCommand("review", "🧠 Daily Active Phrase Practice"),
+            telebot.types.BotCommand("vault", "📓 My Saved Phrases, PDF & Anki Export"),
+            telebot.types.BotCommand("audit", "📊 My Spoken Fluency & Style Audit"),
+            telebot.types.BotCommand("guide", "📖 Member's Handbook & How It Works"),
+            telebot.types.BotCommand("fresh", "🔄 Clear Table & Start Fresh Memory")
         ]
-        bot.set_my_commands(cmds)
-        for lang in ("en", "ar"):
+
+        scopes = [
+            telebot.types.BotCommandScopeDefault(),
+            telebot.types.BotCommandScopeAllPrivateChats(),
+            telebot.types.BotCommandScopeAllGroupChats()
+        ]
+        if ADMIN_ID:
+            scopes.append(telebot.types.BotCommandScopeChat(ADMIN_ID))
+
+        for sc in scopes:
+            for lang in [None, "en", "ar"]:
+                try:
+                    bot.delete_my_commands(scope=sc, language_code=lang)
+                except Exception:
+                    pass
+
+        for sc in [
+            telebot.types.BotCommandScopeDefault(),
+            telebot.types.BotCommandScopeAllPrivateChats()
+        ] + ([telebot.types.BotCommandScopeChat(ADMIN_ID)] if ADMIN_ID else []):
+            for lang in [None, "en"]:
+                try:
+                    bot.set_my_commands(commands, scope=sc, language_code=lang)
+                except Exception:
+                    pass
+
+        for lang in [None, "en", "ar"]:
             try:
-                bot.set_my_commands(cmds, language_code=lang)
+                bot.set_my_short_description(short_desc, language_code=lang)
+                bot.set_my_description(full_desc, language_code=lang)
             except Exception:
                 pass
     except Exception as e:
-        logger.warning(f"Commands sync note: {e}")
+        logger.warning(f"Profile sync note: {e}")
 
 
 def _graceful_shutdown(signum, frame):

@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-import re
 """
 ai_engine.py — Conversational, Phonetic & Pragmatic Brain for Musa's NYC Lounge
 """
@@ -99,8 +97,8 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="A clean, grammatically natural version of the user's sentence keeping their original word sequence for 1-to-1 Voice Mirror comparison."
     )
-    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="Up to 2 spoken phrasing upgrades on the member's sentence tailored to the active Vibe. CRITICAL: Leave EMPTY [] if the member sent a short greeting ('Hi guys') OR if the member is describing a scenario/topic prompt ('Apologizing for being late', 'How to disagree').")
-    lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list, description="3 fresh, 100% SPOKEN C1/C2 American expressions FOR THE MEMBER'S OWN ROLE that strictly match BOTH the active Spoken Vibe (Articulate/Casual/Witty/Executive/Diplomatic) AND the active Chat Room Mode (NYC Banter, Devil's Advocate, Storytelling Gym, Vibe & Style Shifter, Subtext & Nuance, or What to Say When). Never repeat Candidate Vault Phrases and never use stiff written corporate-memo phrases.")
+    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="Up to 2 spoken phrasing upgrades on the member's sentence tailored to the active Vibe. CRITICAL: Leave EMPTY [] if the member sent a short greeting ('Hi guys') OR if the member is describing a scenario/topic prompt ('Apologizing for being late', 'Politely disagreeing with a manager').")
+    lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list, description="3 fresh, 100% SPOKEN C1/C2 American expressions FOR THE MEMBER'S OWN ROLE that strictly match BOTH the active Spoken Vibe (Articulate/Casual/Witty/Executive/Diplomatic) AND the active Chat Room Mode. Never repeat Candidate Vault Phrases and never use stiff written corporate-memo phrases.")
 
 
 class PodcastTurnLine(BaseModel):
@@ -318,7 +316,8 @@ class NYCLoungeAI:
                 clean_line = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", (ct.text or "").strip(), flags=re.IGNORECASE)
                 ct.text = clean_line
                 if clean_line:
-                    formatted_bubbles.append(f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {clean_line}")
+                    _safe_ln = html.escape(clean_line).replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+                formatted_bubbles.append(f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {_safe_ln}")
             if formatted_bubbles:
                 res.lounge_reply = "\n\n".join(formatted_bubbles)
                 res.responding_persona = res.chat_turns[0].speaker
@@ -334,31 +333,25 @@ class NYCLoungeAI:
         return res
 
     def _build_mode_specific_directive(self, mode: str, session_meta: Dict[str, Any]) -> str:
-        if mode in ("what_to_say", "situational_playbook", "pragmatic_playbook"):
-            return (
-                "ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... (SITUATIONAL PRAGMATICS PLAYBOOK).\n"
-                "- The member is describing a social or workplace situation/occasion (in English or Arabic), NOT speaking a literal line of dialogue.\n"
-                "- 1. In `chat_turns`, have Marcus, Chloe, and Jake warmly coach the member and roleplay what real Americans instinctively say in that exact moment.\n"
-                "- 2. In `rewrite_articulate`, `rewrite_casual`, and `rewrite_witty`, provide 3 READY-TO-USE spoken lines that the MEMBER themselves can say in that exact situation (all locked to the active Vibe).\n"
-                "- 3. In `lexical_upgrades`, provide 3 high-utility C1/C2 spoken expressions for the PERSON IN THAT SITUATION (e.g., if the situation is apologizing for being late, give phrases for apologizing/explaining a delay like 'running behind', 'held up', 'my bad'—NOT phrases for accepting an apology!).\n"
-                "- 4. Leave `diagnostics` empty `[]` unless the member explicitly asked to fix a specific sentence."
-            )
-        if mode == "storytelling_gym":
-            return (
-                "ACTIVE ROOM: 🍸 STORYTELLING & NARRATIVE GYM. "
-                "Model and coach high-impact American storytelling: vivid setup hooks ('So get this—', 'Picture this:'), "
-                "historical present tense for drama, pacing pauses, and punchy payoffs."
-            )
         if mode == "devils_advocate":
-            return (
-                "ACTIVE ROOM: 😈 DEVIL'S ADVOCATE & SMART PUSHBACK LAB. "
-                "Challenge the member's premise with charisma and intellectual rigor in the active Vibe. "
-                "Model how Americans push back, concede a partial point ('I'll grant you that, but...'), and reframe arguments."
-            )
-        return (
-            "ACTIVE ROOM: 💬 LIVE SPOKEN AMERICAN LOUNGE.\n"
-            "- NOTE ON SCENARIO DESCRIPTIONS: If the member's message is a meta-description of a situation (e.g., 'Apologize for being late', 'Politely disagree with a boss'), treat it as a situational coaching request: give 3 ready-to-speak lines for the MEMBER'S role in `rewrite_articulate`/`rewrite_casual`/`rewrite_witty`, and 3 expressions for the MEMBER'S role in `lexical_upgrades`."
-        )
+            return "ACTIVE ROOM: 🥊 DEVIL'S ADVOCATE. Challenge the member's premise with sharp New York pushback."
+        elif mode == "storytelling_gym":
+            return "ACTIVE ROOM: 🎭 STORYTELLING GYM (Delivered strictly in the member's ACTIVE VIBE). Coach dramatic present-tense storytelling and punchlines."
+        elif mode == "register_lab":
+            return "ACTIVE ROOM: 🎛️ VIBE & STYLE SHIFTER. Contrast Articulate, Casual, and Witty registers."
+        elif mode == "subtext_decoder":
+            return "ACTIVE ROOM: 🕵️‍♂️ SUBTEXT & NUANCE DECODER. Decode unspoken American hints and give 3 responses."
+        elif mode == "situation_gambit":
+            return "ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... Give instinctive phrases Americans reach for in that exact moment."
+        elif mode == "podcast_guest":
+            return "ACTIVE ROOM: 🎙️ LIVE RADIO INTERVIEW ('YOU ARE THE GUEST' with Marcus, Chloe & Jake)."
+        elif mode == "weakness_drill":
+            targets = session_meta.get("forced_targets", [])
+            return f"ACTIVE ROOM: 🔥 3-PHRASE CHALLENGE. Target phrases: {targets}."
+        elif mode == "shadowing_drill":
+            target_sent = session_meta.get("drill_target_sentence", "")
+            return f"ACTIVE ROOM: 🎙️ RHYTHM & SHADOWING WORKOUT. Target sentence: '{target_sent}'."
+        return "ACTIVE ROOM: 🗣️ NYC SPONTANEOUS BANTER. Engage in genuine, unscripted New York conversation strictly locked to the member's ACTIVE VIBE."
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
         pref_reg = user.get("preferred_register", "articulate")
@@ -462,7 +455,7 @@ class NYCLoungeAI:
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
             f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
-            f"- SPONTANEOUS HOST PIVOTS: Use authentic spoken American contractions ('I'm', 'don't', 'should've'), conversational ellipsis ('Sounds like a plan', 'Makes sense'), natural fillers ('I mean,', 'you know,', 'honestly,'), occasional real-time hesitation ('well, let's see...', 'how do I put this—'), and zero-quota mid-sentence pivots ('—or rather,', '—actually, scratch that,') inside `chat_turns` (matching {active_vibe_badge}) whenever a thought naturally shifts mid-stream, as long as it never disrupts the spontaneity of the dialogue.\n"
+            f"- SPONTANEOUS HOST PIVOTS: Do NOT follow any fixed count or quota for mid-sentence pivots; weave them into `chat_turns` (matching {active_vibe_badge}) whenever a thought naturally shifts mid-stream, as long as it never disrupts the spontaneity of the dialogue.\n"
             f"- {lang_rule}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
@@ -506,9 +499,9 @@ class NYCLoungeAI:
                 used_stealth_ids.append(it["id"])
 
         try:
-            _u_txt = (user_text or "").strip().lower()
+            _u_txt = (user_text or "").strip().strip('"').strip("'").strip().lower()
             _u_mode = (user.get("current_mode", "spontaneous_chat") if isinstance(user, dict) else "spontaneous_chat")
-            if len(_u_txt.split()) <= 6 and (
+            if len(_u_txt.split()) <= 7 and (
                 _u_txt.startswith(("apologiz", "how to ", "what to ", "asking ", "declin", "disagree", "politely ", "saying ", "telling "))
                 or _u_mode not in ("spontaneous_chat", "", None)
             ):
