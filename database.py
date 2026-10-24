@@ -390,7 +390,7 @@ class LoungeDatabase:
             conn.execute("""
                 UPDATE users
                 SET preferred_register = 'articulate'
-                WHERE preferred_register NOT IN ('articulate', 'casual', 'witty') OR preferred_register IS NULL
+                WHERE preferred_register NOT IN ("articulate", "casual", "witty", "executive", "diplomatic") OR preferred_register IS NULL
             """)
             conn.commit()
 

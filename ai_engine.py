@@ -86,8 +86,8 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(default="", description="Natural Flow Recast: The member's thought recast using the EXACT communication strategy, syntax, and pragmatics of their ACTIVE Spoken Vibe (Casual, Articulate, Witty, Diplomatic, or Executive). 1-2 natural spoken sentences. NEVER write the hosts' response here!")
-    rewrite_casual: str = Field(default="", description="Punchy Cut Recast: A shorter, high-impact 1-sentence version of the member's thought using the EXACT communication strategy of their ACTIVE Spoken Vibe. NEVER write the hosts' response here!")
+    rewrite_articulate: str = Field(default="", description="Natural Flow Recast: Preserve the member's exact intended meaning and stance, recast into plausible, spontaneous spoken American English strictly in their ACTIVE Spoken Vibe. Use natural spoken clauses and active verbs—NEVER use stiff phrases like 'I am of the mind that' or replace natural words like 'people who work from home' with 'the remote workforce'!")
+    rewrite_casual: str = Field(default="", description="Punchy Cut Recast: A concise, 1-sentence spontaneous spoken version of the member's exact claim in their ACTIVE Spoken Vibe. Must sound like something a real American actually says out loud.")
     rewrite_witty: str = Field(default="", description="Alternative 3 (Punchy Ellipsis & Spoken Syntax \u2014 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting. NEVER flip perspective to the hosts!")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
@@ -420,7 +420,7 @@ class NYCLoungeAI:
         elif getattr(res, "diagnostics", None):
             res.diagnostics = list(res.diagnostics)[:1]
         if getattr(res, "lexical_upgrades", None):
-            res.lexical_upgrades = list(res.lexical_upgrades)[:1]
+            res.lexical_upgrades = list(res.lexical_upgrades)[:4]
             for _u_item in res.lexical_upgrades:
                 _u_item.register_tag = _badge_r
         return res, latency

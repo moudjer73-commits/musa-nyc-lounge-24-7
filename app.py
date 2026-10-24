@@ -192,15 +192,18 @@ def format_lounge_turn_html(
             f"• ⚡ <b>Quick Fix:</b> <s>{_e(d.user_said)}</s> ➔ ✅ <b>{_e(d.native_fix)}</b> "
             f"<i>({_e(d.why_note)})</i>"
         )
+    else:
+        mirror_lines.append("• ✨ <b>Quick Check:</b> <i>Your original phrasing is already natural—nothing essential to fix!</i>")
 
     if res.lexical_upgrades:
-        up = res.lexical_upgrades[0]
-        b2_foil_str = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
-        foil_part = f" (instead of: <i>{_e(b2_foil_str)}</i>)" if b2_foil_str else ""
-        mirror_lines.append(
-            f"\n💎 <b>Steal This:</b> <code>{_e(up.chunk)}</code>{foil_part}\n"
-            f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
-        )
+        mirror_lines.append("\n💎 <b>Steal These Expressions (Tap ⭐ Save 1/2/3):</b>")
+        for idx, up in enumerate(res.lexical_upgrades[:4], start=1):
+            b2_foil_str = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
+            foil_part = f" (instead of: <i>{_e(b2_foil_str)}</i>)" if b2_foil_str else ""
+            mirror_lines.append(
+                f"<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}\n"
+                f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
+            )
 
     mirror_block = "\n".join(mirror_lines)
     return f"{top_section}<blockquote expandable>{mirror_block}</blockquote>"
