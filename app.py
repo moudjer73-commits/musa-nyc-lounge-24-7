@@ -112,44 +112,35 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
     mode_names = {
         "spontaneous_chat": "🗣️ NYC Spontaneous Banter",
         "devils_advocate": "🥊 Devil's Advocate Sparring",
-        "storytelling_gym": "🎭 Storytelling & Wit Gym",
-        "register_lab": "🎛️ Vibe & Style Shifter",
         "subtext_decoder": "🕵️‍♂️ Subtext & Nuance",
         "situation_gambit": "⚡ What to Say When...",
-        "fast_lookup": "🔎 Collocation & Phrase Finder",
-        "chunk_miner": "🔬 Native Text Miner",
         "podcast_guest": "🎤 Live Radio Interview",
         "podcast_custom_trio": "✍️ Custom Trio Podcast",
         "podcast_custom_duo": "✍️ Custom Duo Podcast",
-        "weakness_drill": "🔥 3-Phrase Speaking Challenge",
-        "shadowing_drill": "🎙️ Rhythm & Shadowing",
-        "srs_active_practice": "🧠 Daily Phrase Practice"
     }
-    cur_mode = mode_names.get(user.get("current_mode", "spontaneous_chat"), "🗣️ NYC Spontaneous Banter")
+    raw_mode = user.get("current_mode", "spontaneous_chat")
+    cur_mode = mode_names.get(raw_mode, "🗣️ NYC Spontaneous Banter")
     reg_badge = REGISTERS_MAP.get(user.get("preferred_register", "articulate"), "🎙️ Articulate")
     host_badge = _persona_badge(user.get("active_persona", "trio"))
-
     return (
         f"🗽 <b>Musa's NYC Lounge</b>\n"
+        f"<i>Private C1–C2 Spoken American English Club & Podcast Studio</i>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 <b>Member:</b> {html.escape(user.get('full_name') or 'Friend')} | 🎚️ <b>Vibe:</b> {reg_badge}\n"
         f"👥 <b>Active Hosts:</b> {host_badge}\n"
         f"🛋️ <b>Current Room:</b> {cur_mode}\n"
-        f"📓 <b>Vault:</b> <code>{stats['total_vault']}</code> | 🔥 <b>Produced:</b> <code>{stats.get('productive_mastered', 0)}</code> | 🧠 <b>Due Today:</b> <code>{stats['due_srs']}</code>\n"
+        f"📓 <b>Saved Expressions in Vault:</b> <code>{stats['total_vault']}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>Tap a host at the top, drop a voice note or text anytime, or step into any room below:</i>"
+        f"<i>Drop a voice note, message, or article anytime—or choose your hosts, room, or Podcast Lounge below:</i>"
     )
 
 
-def get_active_recast(res: Any, preferred_register: str = "articulate") -> str:
-    opts = []
-    for o in (getattr(res, "rewrite_articulate", ""), getattr(res, "rewrite_casual", ""), getattr(res, "rewrite_witty", "")):
-        clean_o = (o or "").strip()
-        if clean_o and clean_o not in opts:
-            opts.append(clean_o)
-    if opts:
-        return " ... ".join(opts)
-    return (getattr(res, "tts_clean_target", "") or getattr(res, "lounge_reply", "") or "").strip()
+def get_active_recast(res: LoungeTurnResponse, pref_reg: str) -> str:
+    if pref_reg == "casual":
+        return res.rewrite_casual or res.tts_clean_target or res.rewrite_articulate
+    if pref_reg == "witty":
+        return res.rewrite_witty or res.tts_clean_target or res.rewrite_articulate
+    return res.rewrite_articulate or res.tts_clean_target
 
 
 def format_lounge_turn_html(
@@ -1350,7 +1341,7 @@ if bot:
                 return
 
         # --- C. Collocation & Phrase Finder ---
-        if mode == "__disabled_fast_lookup__" and len(text.split()) <= 15:
+        if mode == "__disabled_fast_lookup__" and len(text.split()) <= 10:
             local_hits = db.lookup_collocations(text, user_id=uid, limit=4)
             wait_msg = bot.reply_to(message, f"🔎 <b>Exploring natural American collocations for <code>{html.escape(text)}</code>...</b>")
             try:
@@ -1360,10 +1351,8 @@ if bot:
                 first_ex = ' ... '.join([f.example for f in explorer.collocation_frames[:4]]) if explorer.collocation_frames else text
                 db.store_atomic_batch(uid, token_key, frames_dicts, audio_clean_text=first_ex)
 
-                _is_concept = bool(re.search(r"[\u0600-\u06FF]", text)) or len(text.split()) >= 3
-                _map_title = "Spoken Collocation & Idiom Map" if _is_concept else "Spoken Collocation Map"
                 lines = [
-                    f"🔎 <b>{_map_title}: <code>{html.escape(explorer.headword)}</code></b>",
+                    f"🔎 <b>Spoken Collocation Map: <code>{html.escape(explorer.headword)}</code></b>",
                     "━━━━━━━━━━━━━━━━━━━━",
                     f"💡 <b>Lexical Priming & Feel:</b> {html.escape(explorer.semantic_note)}\n"
                 ]
@@ -1373,7 +1362,7 @@ if bot:
                         lines.append(f"• <b>{html.escape(h['chunk'])}</b> ({html.escape(h['register_tag'])}) — <i>\"{html.escape(h['example_sentence'])}\"</i>")
                     lines.append("")
 
-                lines.append("💎 <b>2 Precision Collocations + 2 Spoken Idioms (Tap ⭐ Save 1–4):</b>" if (bool(re.search(r"[\u0600-\u06FF]", text)) or len(text.split()) >= 3) else "💎 <b>Top Spoken Collocations (Tap ⭐ Save 1–4 below):</b>")
+                lines.append("💎 <b>Top Spoken Collocations (Tap ⭐ Save 1–4 below):</b>")
                 for idx, cf in enumerate(explorer.collocation_frames[:4], 1):
                     b2_f = getattr(cf, "b2_foil", "")
                     foil_s = f"  • 🔄 <b>Upgrade from:</b> <s>{html.escape(b2_f)}</s>\n" if b2_f else ""
@@ -1493,29 +1482,28 @@ def sync_bot_profile_metadata():
     if not bot:
         return
     try:
-        short_desc = "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club with Marcus, Chloe & Jake."
+        short_desc = (
+            "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Conversation Club "
+            "& Multi-Host Podcast Studio with Marcus, Chloe & Jake."
+        )
         full_desc = (
-            "Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n\n"
-            "• Live NYC Trio: Unscripted banter, Devil's Advocate & storytelling with Marcus (🎙️ Articulate), Chloe (🎭 Witty) & Jake (☕ Casual).\n"
-            "• Podcast Lounge: 3+ min Trio & Duo episodes with stereo audio & [MM:SS] timestamps.\n"
-            "• Voice Mirror: 1.0x/0.85x accent mirror, stress & linking map.\n"
-            "• Personal Phrasebook Vault: Save C1–C2 spoken expressions from chat & podcasts with Anki/PDF export."
+            "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• 🗣️ Live NYC Trio & Duo Chat: Unscripted banter, Devil's Advocate, Subtext & Situational Gambits with Marcus (🎙️ Articulate), Chloe (🎭 Witty) & Jake (☕ Casual).\n"
+            "• 🎭 3x Native Recasts & Spoken Upgrades: Every turn gives you 3 natural ways YOU could phrase your thought in your active Vibe + 3 C1–C2 expressions to steal.\n"
+            "• 🎙️ Podcast Lounge: 3+ min Trio & Duo episodes with multi-voice stereo audio & full [MM:SS] transcripts.\n"
+            "• 🔊 Voice Mirror & Vault: 1.0x/0.85x native delivery, prosody X-ray & personal phrasebook with PDF/Anki export."
         )
         commands = [
-            telebot.types.BotCommand("start", "🗽 Main Club Menu & Dashboard"),
+            telebot.types.BotCommand("start", "🗽 Main Club Menu & Lounge Table"),
             telebot.types.BotCommand("hosts", "👥 Choose 1 (Solo), 2 (Duo) or 3 (Trio) Hosts"),
             telebot.types.BotCommand("podcast", "🎙️ 3+ Min Trio & Duo Podcast Studio"),
             telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic or Scenario"),
             telebot.types.BotCommand("devil", "🥊 Devil's Advocate Pushback Sparring"),
-            telebot.types.BotCommand("lookup", "🔎 Spoken Collocation & Phrase Finder"),
-            telebot.types.BotCommand("drills", "🎯 Speaking, Stress & Shadowing Workouts"),
-            telebot.types.BotCommand("review", "🧠 Daily Active Phrase Practice"),
             telebot.types.BotCommand("vault", "📓 My Saved Phrases, PDF & Anki Export"),
-            telebot.types.BotCommand("audit", "📊 My Spoken Fluency & Style Audit"),
-            telebot.types.BotCommand("guide", "📖 Member's Handbook & How It Works"),
+            telebot.types.BotCommand("guide", "📖 Club Guide & How It Works"),
             telebot.types.BotCommand("fresh", "🔄 Clear Table & Start Fresh Memory")
         ]
-
         scopes = [
             telebot.types.BotCommandScopeDefault(),
             telebot.types.BotCommandScopeAllPrivateChats(),
@@ -1523,24 +1511,21 @@ def sync_bot_profile_metadata():
         ]
         if ADMIN_ID:
             scopes.append(telebot.types.BotCommandScopeChat(ADMIN_ID))
-
         for sc in scopes:
             for lang in [None, "en", "ar"]:
                 try:
                     bot.delete_my_commands(scope=sc, language_code=lang)
                 except Exception:
                     pass
-
         for sc in [
             telebot.types.BotCommandScopeDefault(),
             telebot.types.BotCommandScopeAllPrivateChats()
         ] + ([telebot.types.BotCommandScopeChat(ADMIN_ID)] if ADMIN_ID else []):
-            for lang in [None, "en"]:
+            for lang in [None, "en", "ar"]:
                 try:
                     bot.set_my_commands(commands, scope=sc, language_code=lang)
                 except Exception:
                     pass
-
         for lang in [None, "en", "ar"]:
             try:
                 bot.set_my_short_description(short_desc, language_code=lang)
