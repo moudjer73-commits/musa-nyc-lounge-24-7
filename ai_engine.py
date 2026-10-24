@@ -87,9 +87,9 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow — 100% MEMBER'S FIRST-PERSON POV): How the MEMBER themselves expresses their message or performs the requested social act (e.g., if member says 'Apologize for being late', write what the late person says: 'Hey, so sorry I'm running late—the trains were backed up'). NEVER write the hosts' response ('Don't worry about it') here!")
-    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal — 100% MEMBER'S FIRST-PERSON POV): A second idiomatic way the MEMBER themselves voices their message or performs the requested social act using phrasal verbs (e.g., 'My bad for holding things up, guys—got totally stuck on the L train'). NEVER write the hosts' reply ('No biggie / Don't sweat it') here!")
-    rewrite_witty: str = Field(description="Alternative 3 (Ellipsis & Punchy — 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting (e.g., 'Barely made it out alive—sorry for the wait, guys'). NEVER write from the hosts' perspective!")
+    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow \u2014 100% MEMBER'S FIRST-PERSON POV): How the MEMBER themselves expresses their message or performs the scenario they described in the active Vibe using natural contractions and spoken glue. NEVER write the hosts' response here!")
+    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal \u2014 100% MEMBER'S FIRST-PERSON POV): A second idiomatic way the MEMBER themselves voices their message or performs the scenario in the active Vibe using phrasal verbs and native collocations. NEVER write a host reply here!")
+    rewrite_witty: str = Field(description="Alternative 3 (Punchy Ellipsis & Spoken Syntax \u2014 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting. NEVER flip perspective to the hosts!")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
     tts_clean_target: str = Field(
@@ -99,8 +99,8 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="A clean, grammatically natural version of the user's sentence keeping their original word sequence for 1-to-1 Voice Mirror comparison."
     )
-    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="Up to 2 spoken phrasing upgrades on the member's sentence tailored to the active Vibe. CRITICAL: Leave EMPTY [] if the member sent a short greeting ('Hi guys') OR if the member is describing a scenario/topic title ('Apologizing for being late', 'How to disagree').")
-    lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list, description="3 fresh, 100% SPOKEN C1/C2 American expressions FOR THE MEMBER'S OWN ROLE that strictly match BOTH the active Spoken Vibe (Articulate/Casual/Witty/Executive/Diplomatic) AND the active Chat Mode/Room (Spontaneous Chat, Storytelling Gym, Devil's Advocate, or What to Say When). Never repeat Candidate Vault Phrases and never use stiff written corporate-memo phrases.")
+    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="Up to 2 spoken phrasing upgrades on the member's sentence tailored to the active Vibe. CRITICAL: Leave EMPTY [] if the member sent a short greeting ('Hi guys') OR if the member is describing a scenario/topic prompt ('Apologizing for being late', 'How to disagree').")
+    lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list, description="3 fresh, 100% SPOKEN C1/C2 American expressions FOR THE MEMBER'S OWN ROLE that strictly match BOTH the active Spoken Vibe (Articulate/Casual/Witty/Executive/Diplomatic) AND the active Chat Room Mode (NYC Banter, Devil's Advocate, Storytelling Gym, Vibe & Style Shifter, Subtext & Nuance, or What to Say When). Never repeat Candidate Vault Phrases and never use stiff written corporate-memo phrases.")
 
 
 class PodcastTurnLine(BaseModel):
@@ -513,6 +513,15 @@ class NYCLoungeAI:
                 or _u_mode not in ("spontaneous_chat", "", None)
             ):
                 res.diagnostics = []
+            _vault_lower = {
+                (it.get("chunk", "") if isinstance(it, dict) else str(it)).strip().lower()
+                for it in (stealth_items if "stealth_items" in locals() else [])
+            }
+            if _vault_lower and getattr(res, "lexical_upgrades", None):
+                res.lexical_upgrades = [
+                    u for u in res.lexical_upgrades
+                    if getattr(u, "chunk", "").strip().lower() not in _vault_lower
+                ]
         except Exception:
             pass
         return res, used_stealth_ids
