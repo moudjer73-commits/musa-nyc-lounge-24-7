@@ -131,7 +131,7 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
         f"🛋️ <b>Current Room:</b> {cur_mode}\n"
         f"📓 <b>Saved Expressions in Vault:</b> <code>{stats['total_vault']}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>Drop a voice note, message, or article anytime—or choose your hosts, room, or Podcast Lounge below:</i>"
+        f"<i>Drop a voice note, message, or article anytime—or choose your hosts, room, Vibe (5 styles), or Podcast Lounge below:</i>"
     )
 
 
@@ -167,12 +167,12 @@ def format_lounge_turn_html(
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     xray_lines = [
-        "🔬 <b>Coaching Notes & C1/C2 Expressions (Tap to Expand)</b>",
+        "🪞 <b>5-Second Native Mirror</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"🎭 <b>3 Native Alternatives ({vibe_label} Mode):</b>",
-        f"• <b>Option 1 (Natural):</b> <code>{html.escape(res.rewrite_articulate)}</code>",
+        f"🪞 <b>Your Thought, Native Mouth ({vibe_label} Mode):</b>",
+        f"• <b>Natural Flow:</b> <code>{html.escape(res.rewrite_articulate)}</code>",
         f"• <b>Option 2 (Idiomatic):</b> <code>{html.escape(res.rewrite_casual)}</code>",
-        f"• <b>Option 3 (Punchy):</b> <code>{html.escape(res.rewrite_witty)}</code>",
+        f"• <b>Punchy Cut:</b> <code>{html.escape(res.rewrite_witty)}</code>",
     ]
 
     if res.diagnostics:
@@ -184,11 +184,11 @@ def format_lounge_turn_html(
             )
 
     if res.lexical_upgrades:
-        xray_lines.append("\n💎 <b>Spoken Expressions to Steal (Tap ⭐ Save 1/2/3):</b>")
+        xray_lines.append("\n💎 <b>Steal This Expression (Tap ⭐ Save):</b>")
         for idx, up in enumerate(res.lexical_upgrades[:3], start=1):
             b2_foil_str = getattr(up, "b2_foil", "")
             foil_line = (
-                f"  • 🔄 <b>B2 vs. C2:</b> <s>{html.escape(b2_foil_str)}</s> ➔ <b>{html.escape(up.chunk)}</b>\n"
+                f"    • 🔄 <b>Upgrade:</b> <s>{html.escape(b2_foil_str)}</s> ➔ <b>{html.escape(up.chunk)}</b>\n"
                 if b2_foil_str else ""
             )
             xray_lines.append(
@@ -198,7 +198,7 @@ def format_lounge_turn_html(
                 f"  • 🎯 <b>When to use:</b> {html.escape(up.trigger)}\n"
                 f"  • 🔗 <b>Pattern:</b> <code>{html.escape(up.pattern)}</code>\n"
                 f"  • 💬 <b>Follow-up:</b> <i>\"{html.escape(up.followup)}\"</i>\n"
-                f"  • 🗽 <b>In Context:</b> <i>\"{html.escape(up.example)}\"</i>"
+                f"    • 🗽 <i>\"{html.escape(up.example)}\"</i>"
             )
 
     if stealth_count > 0:
@@ -768,7 +768,7 @@ if bot:
                     )
 
             elif data.startswith("action:cycle_register"):
-                order = ["articulate", "casual", "witty"]
+                order = ["articulate", "casual", "witty", "executive", "diplomatic"]
                 cur = user.get("preferred_register", "articulate")
                 nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "articulate"
                 db.update_user(uid, preferred_register=nxt)
@@ -1009,7 +1009,7 @@ if bot:
                     bot.answer_callback_query(call.id, "Phrase not found.")
                     return
                 b2_foil = card.get("b2_foil", "")
-                foil_line = f"• 🔄 <b>B2 vs. C2:</b> <s>{html.escape(b2_foil)}</s> ➔ <b>{html.escape(card['chunk'])}</b>\n" if b2_foil else ""
+                foil_line = f"  • 🔄 <b>Upgrade:</b> <s>{html.escape(b2_foil)}</s> ➔ <b>{html.escape(card['chunk'])}</b>\n" if b2_foil else ""
                 ans_text = (
                     f"🧠 <b>Phrase Details & Context:</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1484,18 +1484,19 @@ def sync_bot_profile_metadata():
     try:
         short_desc = (
             "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Conversation Club "
-            "& Multi-Host Podcast Studio with Marcus, Chloe & Jake."
+            "& Multi-Host Podcast Studio (5 Spoken Vibes)."
         )
         full_desc = (
             "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• 🗣️ Live NYC Trio & Duo Chat: Unscripted banter, Devil's Advocate, Subtext & Situational Gambits with Marcus (🎙️ Articulate), Chloe (🎭 Witty) & Jake (☕ Casual).\n"
-            "• 🎭 3x Native Recasts & Spoken Upgrades: Every turn gives you 3 natural ways YOU could phrase your thought in your active Vibe + 3 C1–C2 expressions to steal.\n"
-            "• 🎙️ Podcast Lounge: 3+ min Trio & Duo episodes with multi-voice stereo audio & full [MM:SS] transcripts.\n"
-            "• 🔊 Voice Mirror & Vault: 1.0x/0.85x native delivery, prosody X-ray & personal phrasebook with PDF/Anki export."
+            "• 🗣️ Live NYC Banter: Fast-paced, authentic spoken English with Marcus, Chloe & Jake.\n"
+            "• 🪞 5-Second Native Mirror: Instant recasts of your exact thought (Natural Flow & Punchy Cut) + 1 stealable C1–C2 expression per turn.\n"
+            "• 🎚️ 5 Spoken Vibes: Switch seamlessly between 🎙️ Articulate, ☕ Casual, 🎭 Witty, 💼 Executive & 🤝 Diplomatic.\n"
+            "• 🎙️ Podcast Lounge: 3+ min Trio & Duo episodes with stereo audio & full [MM:SS] transcripts."
         )
         commands = [
             telebot.types.BotCommand("start", "🗽 Main Club Menu & Lounge Table"),
+            telebot.types.BotCommand("vibe", "🎚️ Cycle Spoken Vibe (5 Registers)"),
             telebot.types.BotCommand("hosts", "👥 Choose 1 (Solo), 2 (Duo) or 3 (Trio) Hosts"),
             telebot.types.BotCommand("podcast", "🎙️ 3+ Min Trio & Duo Podcast Studio"),
             telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic or Scenario"),

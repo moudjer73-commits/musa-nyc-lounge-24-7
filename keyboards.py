@@ -26,7 +26,7 @@ class LoungeKeyboards:
         def _m(target: str, label: str) -> str:
             return f"✅ {label}" if mode == target else label
 
-        # 1. اختيار المضيفين (1 أو 2 أو 3 مضيفين) + أزرار التبديل السريع
+        # 1. اختيار المضيفين (Trio / Duo / Solo)
         kb.row(
             InlineKeyboardButton(f"👥 Chat Hosts: {cast_short} (Tap to Change)", callback_data="menu:cast_selector")
         )
@@ -36,7 +36,7 @@ class LoungeKeyboards:
             InlineKeyboardButton("👩🏼‍💼🧢 C&J (2)" if active_cast != "duo_cj" else "✅ C&J (2)", callback_data="persona:duo_cj")
         )
 
-        # 2. غرف المحادثة الحية الأربع المركزة
+        # 2. غرف المحادثة الحية الأربع
         kb.add(
             InlineKeyboardButton(_m("spontaneous_chat", "🗣️ NYC Banter"), callback_data="mode:spontaneous_chat"),
             InlineKeyboardButton(_m("devils_advocate", "🥊 Devil's Advocate"), callback_data="mode:devils_advocate")
@@ -46,7 +46,7 @@ class LoungeKeyboards:
             InlineKeyboardButton(_m("situation_gambit", "⚡ What to Say When..."), callback_data="mode:situation_gambit")
         )
 
-        # 3. شرارة موضوع جديد + استوديو البودكاست بعرض كامل
+        # 3. شرارة موضوع جديد + استوديو البودكاست
         kb.row(
             InlineKeyboardButton("🎲 Spark a Fresh Topic or Scenario", callback_data="action:spark_topic")
         )
@@ -54,7 +54,7 @@ class LoungeKeyboards:
             InlineKeyboardButton("🎙️ Podcast Lounge (Trio & Duo Studio)", callback_data="menu:podcast")
         )
 
-        # 4. النبرة الشفهية + الخزنة الشخصية + الدليل وتجديد الطاولة
+        # 4. النبرة الشفهية (5 Vibes) + الخزنة + الدليل وتجديد الطاولة
         kb.add(
             InlineKeyboardButton(f"🎚️ Vibe: {reg_label}", callback_data="action:cycle_register"),
             InlineKeyboardButton("📓 My Phrase Vault", callback_data="menu:vault")

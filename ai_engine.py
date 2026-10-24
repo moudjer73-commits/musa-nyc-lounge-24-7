@@ -1,3 +1,4 @@
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """
 ai_engine.py — Conversational, Phonetic & Pragmatic Brain for Musa's NYC Lounge
@@ -408,7 +409,23 @@ class NYCLoungeAI:
             logger.warning(f"Spark fallback: {e}")
             return "🗽 <b>The Table Is Yours!</b>\nDrop a voice note or text on whatever is on your mind today!"
 
-    def process_lounge_turn(
+    def process_lounge_turn(self, *args, **kwargs) -> Tuple[LoungeTurnResponse, float]:
+        res, latency = self._raw_process_lounge_turn(*args, **kwargs)
+        user = args[0] if len(args) > 0 else kwargs.get("user", {})
+        user_text = args[1] if len(args) > 1 else (kwargs.get("user_text") or kwargs.get("text") or "")
+        _pref_r = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
+        _badge_r = REGISTERS_MAP.get(_pref_r, "🎙️ Articulate")
+        if isinstance(user_text, str) and len(user_text.split()) >= 40:
+            res.diagnostics = []
+        elif getattr(res, "diagnostics", None):
+            res.diagnostics = list(res.diagnostics)[:1]
+        if getattr(res, "lexical_upgrades", None):
+            res.lexical_upgrades = list(res.lexical_upgrades)[:1]
+            for _u_item in res.lexical_upgrades:
+                _u_item.register_tag = _badge_r
+        return res, latency
+
+    def _raw_process_lounge_turn(
         self,
         user: Dict[str, Any],
         user_text: str = "",
