@@ -193,15 +193,19 @@ def format_lounge_turn_html(
             f"<i>({_e(d.why_note)})</i>"
         )
     else:
-        mirror_lines.append("• ✨ <b>Quick Check:</b> <i>Your original phrasing is already natural—nothing essential to fix!</i>")
+        mirror_lines.append(
+            "• ✨ <b>Quick Fix:</b> No correction needed — your original phrasing is already natural American English."
+        )
 
     if res.lexical_upgrades:
         mirror_lines.append("\n💎 <b>Steal These Expressions (Tap ⭐ Save 1/2/3):</b>")
         for idx, up in enumerate(res.lexical_upgrades[:4], start=1):
             b2_foil_str = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
             foil_part = f" (instead of: <i>{_e(b2_foil_str)}</i>)" if b2_foil_str else ""
+            expl_str = getattr(up, "explanation", "")
+            expl_part = f" — <i>{_e(expl_str)}</i>" if expl_str else ""
             mirror_lines.append(
-                f"<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}\n"
+                f"<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
                 f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
             )
 

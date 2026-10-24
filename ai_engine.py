@@ -86,8 +86,8 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(default="", description="Natural Flow Recast: Preserve the member's exact intended meaning and stance, recast into plausible, spontaneous spoken American English strictly in their ACTIVE Spoken Vibe. Use natural spoken clauses and active verbs—NEVER use stiff phrases like 'I am of the mind that' or replace natural words like 'people who work from home' with 'the remote workforce'!")
-    rewrite_casual: str = Field(default="", description="Punchy Cut Recast: A concise, 1-sentence spontaneous spoken version of the member's exact claim in their ACTIVE Spoken Vibe. Must sound like something a real American actually says out loud.")
+    rewrite_articulate: str = Field(default="", description="Natural Flow: Recast the user's thought in a natural spoken version of the active register WITHOUT changing its factual content, scope, degree of certainty (keep 'I think' as an opinion, NEVER turn it into 'I am convinced'), or causal claims. Standard spelling only (never 'workin'' or 'gettin'').")
+    rewrite_casual: str = Field(default="", description="Punchy Cut: Compress the user's exact thought concisely in the active register WITHOUT exaggerating or distorting its meaning. Never turn 'less productive' into 'a total productivity killer' or 'nobody checking' into 'zero accountability'.")
     rewrite_witty: str = Field(default="", description="Alternative 3 (Punchy Ellipsis & Spoken Syntax \u2014 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting. NEVER flip perspective to the hosts!")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
@@ -415,10 +415,43 @@ class NYCLoungeAI:
         user_text = args[1] if len(args) > 1 else (kwargs.get("user_text") or kwargs.get("text") or "")
         _pref_r = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
         _badge_r = REGISTERS_MAP.get(_pref_r, "🎙️ Articulate")
-        if isinstance(user_text, str) and len(user_text.split()) >= 40:
+
+        def _clean_spoken_text(txt: str) -> str:
+            if not txt:
+                return txt
+            for stem in ("work", "get", "stay", "look", "breath", "talk", "walk", "think", "go", "do", "mak", "tak", "com", "runn", "hitt", "try", "say", "play", "grind", "slac", "spin"):
+                txt = re.sub(rf"\b{stem}in'(?!\w)", f"{stem}ing", txt, flags=re.IGNORECASE)
+            txt = (
+                txt.replace("gettin'", "getting")
+                .replace("runnin'", "running")
+                .replace("hittin'", "hitting")
+                .replace("stayin'", "staying")
+                .replace("workin'", "working")
+                .replace("lookin'", "looking")
+                .replace("breathin'", "breathing")
+                .replace("comin'", "coming")
+                .replace("grindin'", "grinding")
+            )
+            txt = re.sub(r"^(?:Frankly|Honestly),?\s+I'm of the mind that\s+", "Honestly, I think ", txt, flags=re.IGNORECASE)
+            txt = re.sub(r"\bI'm of the mind that\b", "I think", txt, flags=re.IGNORECASE)
+            return txt
+
+        res.lounge_reply = _clean_spoken_text(getattr(res, "lounge_reply", ""))
+        res.rewrite_articulate = _clean_spoken_text(getattr(res, "rewrite_articulate", ""))
+        res.rewrite_casual = _clean_spoken_text(getattr(res, "rewrite_casual", ""))
+        res.rewrite_witty = _clean_spoken_text(getattr(res, "rewrite_witty", ""))
+
+        if isinstance(user_text, str) and len(user_text.split()) >= 45:
             res.diagnostics = []
         elif getattr(res, "diagnostics", None):
-            res.diagnostics = list(res.diagnostics)[:1]
+            valid_diags = []
+            for d in res.diagnostics:
+                u_said = (getattr(d, "user_said", "") or "").strip().lower()
+                if u_said in ("people who work from home", "don't have anyone checking on them", "get distracted all day"):
+                    continue
+                valid_diags.append(d)
+            res.diagnostics = valid_diags[:1]
+
         if getattr(res, "lexical_upgrades", None):
             res.lexical_upgrades = list(res.lexical_upgrades)[:4]
             for _u_item in res.lexical_upgrades:
