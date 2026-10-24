@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import re
 """
 ai_engine.py — Conversational, Phonetic & Pragmatic Brain for Musa's NYC Lounge
 """

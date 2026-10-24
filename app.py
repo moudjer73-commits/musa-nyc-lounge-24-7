@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import re
 """
 app.py — Main Club Host Engine for Musa's NYC Lounge
 Features:
@@ -141,7 +143,7 @@ def build_welcome_banner(user: Dict[str, Any]) -> str:
     )
 
 
-def get_active_recast(res: LoungeTurnResponse, preferred_register: str = "articulate") -> str:
+def get_active_recast(res: Any, preferred_register: str = "articulate") -> str:
     opts = []
     for o in (res.rewrite_articulate, res.rewrite_casual, res.rewrite_witty):
         clean_o = (o or "").strip()
@@ -153,7 +155,7 @@ def get_active_recast(res: LoungeTurnResponse, preferred_register: str = "articu
 
 
 def format_lounge_turn_html(
-    res: LoungeTurnResponse,
+    res: Any,
     is_voice: bool = False,
     stealth_count: int = 0,
     active_uptakes: Optional[List[str]] = None,

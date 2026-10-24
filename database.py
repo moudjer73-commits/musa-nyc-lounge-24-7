@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import re
 """
 database.py — Dual-Database Engine for Musa's NYC Lounge
 Features:
