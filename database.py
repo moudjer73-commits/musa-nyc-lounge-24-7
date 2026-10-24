@@ -1039,3 +1039,20 @@ class LoungeDatabase:
                     conn.execute("DELETE FROM weaknesses WHERE LOWER(TRIM(user_said)) = ?", (t,))
         except Exception:
             pass
+
+    def set_user_mode(self, user_id: int, mode: str):
+        try:
+            with self._get_conn() as conn:
+                conn.execute("UPDATE users SET current_mode = ? WHERE user_id = ?", (mode, user_id))
+        except Exception:
+            pass
+
+    def set_user_field(self, user_id: int, field: str, value: Any):
+        allowed = {"current_mode", "preferred_register", "active_persona", "voice_enabled", "daily_goal"}
+        if field not in allowed:
+            return
+        try:
+            with self._get_conn() as conn:
+                conn.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
+        except Exception:
+            pass
