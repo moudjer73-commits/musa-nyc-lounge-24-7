@@ -29,26 +29,26 @@ logger = logging.getLogger("MusaNYCLounge.AI")
 
 
 class DiagnosticItem(BaseModel):
-    category: str = Field(
+    category: str = Field(default="", 
         description="Pick ONE phrasing category: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'. NEVER use pronunciation/vowel categories."
     )
-    user_said: str = Field(description="Exact segment from the member's message that can be phrased more naturally.")
-    native_fix: str = Field(description="Crisp, natural spoken American phrasing upgrade (NEVER put IPA phonetic symbols like /.../ here).")
-    why_note: str = Field(description="1-sentence pragmatic or stylistic explanation of why native speakers prefer this phrasing.")
+    user_said: str = Field(default="", description="Exact segment from the member's message that can be phrased more naturally.")
+    native_fix: str = Field(default="", description="Crisp, natural spoken American phrasing upgrade (NEVER put IPA phonetic symbols like /.../ here).")
+    why_note: str = Field(default="", description="1-sentence pragmatic or stylistic explanation of why native speakers prefer this phrasing.")
 
 
 class LexicalFrameUpgrade(BaseModel):
-    chunk: str = Field(description="High-value C1/C2 American phrasal verb, collocation, idiom, or conversational gambit.")
-    register_tag: str = Field(description="Strictly one of: '🎙️ Articulate', '☕ Casual', or '🎭 Witty'.")
+    chunk: str = Field(default="", description="High-value C1/C2 American phrasal verb, collocation, idiom, or conversational gambit.")
+    register_tag: str = Field(default="", description="Strictly one of: '🎙️ Articulate', '☕ Casual', or '🎭 Witty'.")
     b2_foil: str = Field(
         default="",
         description="The flat, textbook B2 phrase learners usually overuse instead of this native expression."
     )
-    explanation: str = Field(description="Clear meaning, tone nuance, and semantic distinction from near-synonyms.")
-    trigger: str = Field(description="When to reach for it: the exact real-life social or mental moment.")
-    pattern: str = Field(description="Colligation & pattern: typical verb/preposition collocations and grammatical frame.")
-    followup: str = Field(description="Natural follow-up: the next sentence an American says right after this.")
-    example: str = Field(description="Vivid, authentic everyday New York example sentence.")
+    explanation: str = Field(default="", description="Clear meaning, tone nuance, and semantic distinction from near-synonyms.")
+    trigger: str = Field(default="", description="When to reach for it: the exact real-life social or mental moment.")
+    pattern: str = Field(default="", description="Colligation & pattern: typical verb/preposition collocations and grammatical frame.")
+    followup: str = Field(default="", description="Natural follow-up: the next sentence an American says right after this.")
+    example: str = Field(default="", description="Vivid, authentic everyday New York example sentence.")
     cloze_sentence: str = Field(
         default="",
         description="The exact `example` sentence above, but with the target expression replaced by '______'."
@@ -56,14 +56,14 @@ class LexicalFrameUpgrade(BaseModel):
 
 
 class ChatBubbleLine(BaseModel):
-    speaker: str = Field(
+    speaker: str = Field(default="", 
         description="Strictly one of the active hosts at the table: 'marcus', 'chloe', or 'jake'."
     )
     pacing: str = Field(
         default="normal",
         description="Strictly 'fast_interjection', 'normal', or 'thoughtful_slow'."
     )
-    text: str = Field(
+    text: str = Field(default="", 
         description="This host's spoken conversational turn (without speaker name prefix). Wrap any naturally woven Vault phrases in <i>italics</i>."
     )
 
@@ -85,12 +85,12 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow \u2014 100% MEMBER'S FIRST-PERSON POV): How the MEMBER themselves expresses their message or performs the scenario they described in the active Vibe using natural contractions and spoken glue. NEVER write the hosts' response here!")
-    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal \u2014 100% MEMBER'S FIRST-PERSON POV): A second idiomatic way the MEMBER themselves voices their message or performs the scenario in the active Vibe using phrasal verbs and native collocations. NEVER write a host reply here!")
-    rewrite_witty: str = Field(description="Alternative 3 (Punchy Ellipsis & Spoken Syntax \u2014 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting. NEVER flip perspective to the hosts!")
+    rewrite_articulate: str = Field(default="", description="Alternative 1 (Natural Spoken Flow \u2014 100% MEMBER'S FIRST-PERSON POV): How the MEMBER themselves expresses their message or performs the scenario they described in the active Vibe using natural contractions and spoken glue. NEVER write the hosts' response here!")
+    rewrite_casual: str = Field(default="", description="Alternative 2 (Idiomatic & Phrasal \u2014 100% MEMBER'S FIRST-PERSON POV): A second idiomatic way the MEMBER themselves voices their message or performs the scenario in the active Vibe using phrasal verbs and native collocations. NEVER write a host reply here!")
+    rewrite_witty: str = Field(default="", description="Alternative 3 (Punchy Ellipsis & Spoken Syntax \u2014 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting. NEVER flip perspective to the hosts!")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
-    tts_clean_target: str = Field(
+    tts_clean_target: str = Field(default="", 
         description="Clean plain-text version of the recast that matches the member's ACTIVE VIBE (no brackets or phonetic symbols) ready for voice synthesis."
     )
     mirror_clean_target: str = Field(
@@ -102,13 +102,13 @@ class LoungeTurnResponse(BaseModel):
 
 
 class PodcastTurnLine(BaseModel):
-    speaker: str = Field(description="Strictly 'marcus', 'chloe', or 'jake'.")
+    speaker: str = Field(default="", description="Strictly 'marcus', 'chloe', or 'jake'.")
     pacing: str = Field(default="normal", description="Strictly 'fast_interjection', 'normal', or 'thoughtful_slow'.")
-    text: str = Field(description="Natural spoken line.")
+    text: str = Field(default="", description="Natural spoken line.")
 
 
 class PodcastEpisodeSchema(BaseModel):
-    title: str = Field(description="Catchy NYC Radio Lounge episode title.")
+    title: str = Field(default="", description="Catchy NYC Radio Lounge episode title.")
     format_mode: str = Field(default="trio", description="'trio' or 'duo'.")
     target_chunks_covered: List[str] = Field(description="List of 5 to 6 target expressions woven into the episode.")
     script: List[PodcastTurnLine] = Field(description="28 to 36 dynamic back-and-forth conversational turns (~500–650 words total) building a 3+ minute episode.")
@@ -116,16 +116,16 @@ class PodcastEpisodeSchema(BaseModel):
 
 
 class DynamicStudioSparkSchema(BaseModel):
-    headline: str = Field(description="Engaging conversation starter headline.")
+    headline: str = Field(default="", description="Engaging conversation starter headline.")
     lead_persona: str = Field(default="marcus", description="'marcus', 'chloe', or 'jake'.")
-    scenario_or_question: str = Field(description="A fresh, vivid scenario, real-life dilemma, or debate stance.")
+    scenario_or_question: str = Field(default="", description="A fresh, vivid scenario, real-life dilemma, or debate stance.")
     suggested_chunks_to_try: List[str] = Field(description="3 natural C1/C2 American expressions to try.")
-    pro_tip: str = Field(description="A 1-sentence coaching tip.")
+    pro_tip: str = Field(default="", description="A 1-sentence coaching tip.")
 
 
 class DynamicDrillSchema(BaseModel):
-    drill_title: str = Field(description="Engaging title of the workout.")
-    scenario_prompt: str = Field(description="Interactive scenario or challenge instructions.")
+    drill_title: str = Field(default="", description="Engaging title of the workout.")
+    scenario_prompt: str = Field(default="", description="Interactive scenario or challenge instructions.")
     target_chunks: List[str] = Field(default_factory=list, description="3 target expressions.")
     target_audio_sentence: str = Field(default="", description="Natural American spoken sentence.")
     phonetic_prosody_map: str = Field(default="", description="Phonetic respelling + Nuclear stress CAPS + pause bars (|).")
@@ -133,23 +133,23 @@ class DynamicDrillSchema(BaseModel):
 
 
 class CollocationExplorerSchema(BaseModel):
-    headword: str = Field(description="The word or phrase being explored.")
-    semantic_note: str = Field(description="Crisp explanation of how Americans naturally prime and use this word.")
+    headword: str = Field(default="", description="The word or phrase being explored.")
+    semantic_note: str = Field(default="", description="Crisp explanation of how Americans naturally prime and use this word.")
     collocation_frames: List[LexicalFrameUpgrade] = Field(description="4 high-frequency spoken American collocations.")
 
 
 class ActiveReviewEvalSchema(BaseModel):
     used_naturally: bool = Field(description="True if the user used the target expression naturally.")
     recommended_grade: int = Field(description="5 if effortless, 3 if minor slip, 1 if misused.")
-    coach_feedback: str = Field(description="Warm, sharp coaching feedback.")
-    polished_version: str = Field(description="How a New Yorker would say the user's exact sentence.")
+    coach_feedback: str = Field(default="", description="Warm, sharp coaching feedback.")
+    polished_version: str = Field(default="", description="How a New Yorker would say the user's exact sentence.")
 
 
 class SpokenFluencyAuditSchema(BaseModel):
-    overall_vibe_assessment: str = Field(description="Insightful assessment of the member's spoken style.")
+    overall_vibe_assessment: str = Field(default="", description="Insightful assessment of the member's spoken style.")
     naturalness_highlights: List[str] = Field(description="2 to 3 specific strengths.")
     focus_areas_under_pressure: List[str] = Field(description="2 to 3 specific habits to polish next.")
-    recommended_next_steps: str = Field(description="Concrete 3-step coaching plan from Marcus, Chloe, and Jake.")
+    recommended_next_steps: str = Field(default="", description="Concrete 3-step coaching plan from Marcus, Chloe, and Jake.")
 
 
 class NYCLoungeAI:
@@ -531,43 +531,47 @@ class NYCLoungeAI:
             f"ACTIVE SPOKEN VIBE: {vibe_badge}\n"
             f"ACTIVE VIBE VOICE RULES: {vibe_rules}\n\n"
             "CRITICAL LINGUISTIC & REGISTER RULES:\n"
-            "1. HANDLE ALL INPUT TYPES SEAMLESSLY (NEVER REFUSE OR FAIL):\n"
-            "   - Single everyday adjective/verb/noun (e.g., 'Happy', 'Tired', 'Problem', 'Make'): provide 4 high-value spoken American idiomatic chunks/collocations built around that word OR upgrading that exact feeling/concept (e.g., for 'Happy': 'not a happy camper', 'strike a happy medium', 'couldn\'t be happier', 'thrilled for you / hyped').\n"
-            "   - Phrasal verb, discourse marker, or short phrase (e.g., 'By far', 'Push back', 'Pull off'): provide the 4 sharpest spoken structural frames & collocation patterns for using it naturally.\n"
-            "   - Multi-word concept or Arabic meaning description: provide the 4 most instinctive spoken American collocations for that exact meaning.\n"
+            "1. HANDLE EVERY INPUT TYPE WITHOUT EXCEPTION:\n"
+            "   - Single noun/verb/adjective (e.g., 'Pushback', 'Bandwidth', 'Happy', 'Awkward'): provide the 4 most natural spoken American collocations & frames built around it (e.g., for 'Pushback': 'get pushback from', 'give pushback on', 'expect some pushback', 'zero pushback').\n"
+            "   - Phrasal verb or discourse marker (e.g., 'Bail on', 'By far', 'Pull off'): provide 4 spoken structural patterns & collocation frames.\n"
+            "   - Multi-word concept/intent or Arabic description (e.g., 'Change my mind suddenly', 'Cancel last minute'): convert the concept into the 4 sharpest idiomatic spoken American expressions for that exact meaning (e.g., for 'Change my mind suddenly': 'do a 180', 'have second thoughts', 'pull an audible', 'flip the script').\n"
             f"2. STRICT ACTIVE VIBE MATCH ({vibe_badge}):\n"
-            f"   - Every single `example` and `followup` sentence MUST genuinely sound like {vibe_badge} ({vibe_rules}). If the Vibe is ☕ Casual, use relaxed everyday NYC speech with natural contractions ('gonna', 'wanna', 'kinda', 'honestly')—NEVER stiff corporate examples! If 💼 Executive, use crisp boardroom framing; if 🎭 Witty, use dry playful NYC banter.\n"
-            "3. Return 4 complete `collocation_frames`—each frame MUST include `chunk`, `register_tag`, `b2_foil` (or `b2_equivalent`), `explanation`, `trigger`, `pattern`, `followup`, and a spoken `example`."
+            f"   - Every single `example` and `followup` sentence MUST genuinely sound like {vibe_badge} ({vibe_rules}).\n"
+            "3. Return 4 complete `collocation_frames` with `chunk`, `register_tag`, `b2_foil`, `explanation`, `trigger`, `pattern`, `followup`, and `example`."
         )
 
         user_prompt = (
-            f"Build a Spoken American Collocation Map (4 frames) for: '{clean_hw}'\n"
-            f"Target Spoken Vibe: {vibe_badge} — ensure all 4 example and followup sentences strictly match {vibe_badge} tone and spoken contractions."
+            f"Input to map: '{clean_hw}'\n"
+            f"If this is a single word or phrase (like 'Pushback'), map its top 4 spoken American collocations. "
+            f"If this describes an action or meaning (like 'Change my mind suddenly'), map the top 4 spoken American idioms/collocations that express that exact meaning in {vibe_badge}."
         )
 
-        try:
-            explorer: CollocationExplorerSchema = self._call_structured(
-                contents=[user_prompt],
-                schema_cls=CollocationExplorerSchema,
-                system_instruction=system_prompt,
-                temperature=0.60
-            )
-        except Exception as e:
-            logger.warning(f"Primary explore_collocations_live failed for '{clean_hw}', retrying: {e}")
-            explorer = self._call_structured(
-                contents=[f"Generate 4 complete spoken American English collocations or idiomatic expressions for '{clean_hw}' in {vibe_badge} style (including chunk, register_tag, b2_foil, explanation, trigger, pattern, followup, and example)."],
-                schema_cls=CollocationExplorerSchema,
-                system_instruction=f"{CORE_NYC_PERSONA_PROMPT}\nAlways return valid CollocationExplorerSchema JSON with all required fields.",
-                temperature=0.45
-            )
+        last_err = None
+        for attempt in range(3):
+            try:
+                if attempt > 0:
+                    time.sleep(1.5 * attempt)
+                explorer: CollocationExplorerSchema = self._call_structured(
+                    contents=[user_prompt if attempt == 0 else f"Give 4 spoken American collocations or idioms for '{clean_hw}' in {vibe_badge} style."],
+                    schema_cls=CollocationExplorerSchema,
+                    system_instruction=system_prompt if attempt < 2 else f"{CORE_NYC_PERSONA_PROMPT}\nReturn valid CollocationExplorerSchema JSON.",
+                    temperature=0.55 if attempt == 0 else 0.40
+                )
+                if explorer and getattr(explorer, "collocation_frames", None):
+                    for c in explorer.collocation_frames:
+                        c.register_tag = vibe_badge
+                        if not getattr(c, "b2_foil", "") and getattr(c, "b2_equivalent", ""):
+                            c.b2_foil = c.b2_equivalent
+                    try:
+                        self.db.ingest_chunks_to_corpus([c.model_dump() for c in explorer.collocation_frames])
+                    except Exception:
+                        pass
+                    return explorer
+            except Exception as e:
+                last_err = e
+                logger.warning(f"explore_collocations_live attempt {attempt+1} failed for '{clean_hw}': {e}")
 
-        for c in explorer.collocation_frames:
-            c.register_tag = vibe_badge
-        try:
-            self.db.ingest_chunks_to_corpus([c.model_dump() for c in explorer.collocation_frames])
-        except Exception:
-            pass
-        return explorer
+        raise RuntimeError(f"explore_collocations_live exhausted retries for '{clean_hw}': {last_err}")
 
     def evaluate_active_srs_usage(
         self,

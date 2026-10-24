@@ -1350,7 +1350,7 @@ if bot:
                 return
 
         # --- C. Collocation & Phrase Finder ---
-        if mode == "fast_lookup" and len(text.split()) <= 10:
+        if mode == "fast_lookup" and len(text.split()) <= 15:
             local_hits = db.lookup_collocations(text, user_id=uid, limit=4)
             wait_msg = bot.reply_to(message, f"🔎 <b>Exploring natural American collocations for <code>{html.escape(text)}</code>...</b>")
             try:
