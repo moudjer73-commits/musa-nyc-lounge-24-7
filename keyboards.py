@@ -137,6 +137,7 @@ class LoungeKeyboards:
         has_recast_voice: bool = True,
         recast_label: str = "🗣️ My Recast (3x)",
         active_reg: str = "articulate",
+        *args,
         **kwargs
     ) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
@@ -306,7 +307,7 @@ class LoungeKeyboards:
         return kb
 
     @staticmethod
-    def podcast_action_bar(token_key: str, num_takeaways: int = 3) -> InlineKeyboardMarkup:
+    def podcast_action_bar(token_key: str, num_takeaways: int = 3, *args, **kwargs) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
         if num_takeaways > 0:
             btns = [
@@ -325,18 +326,18 @@ class LoungeKeyboards:
         return kb
 
     @staticmethod
-    def srs_review_card_kb(card_id: int) -> InlineKeyboardMarkup:
+    def srs_review_card_kb(card_id: int, *args, **kwargs) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=2)
         kb.row(
             InlineKeyboardButton("🔊 Hear Phrase", callback_data=f"srs_tts:{card_id}"),
-            InlineKeyboardButton("💡 Show Context Hint", callback_data=f"srs_hint:{card_id}")
+            InlineKeyboardButton("💡 Context Hint", callback_data=f"srs_hint:{card_id}")
         )
         kb.row(
             InlineKeyboardButton("✅ Easy (Mastered)", callback_data=f"srs_grade:{card_id}:5"),
             InlineKeyboardButton("🔁 Review Tomorrow", callback_data=f"srs_grade:{card_id}:3")
         )
         kb.row(
-            InlineKeyboardButton("⏭️ Skip Card", callback_data="menu:srs"),
-            InlineKeyboardButton("💬 Back to Chat", callback_data="mode:spontaneous_chat")
+            InlineKeyboardButton("⏭️ Next Due Card", callback_data="menu:srs"),
+            InlineKeyboardButton("💬 Back to Lounge", callback_data="mode:spontaneous_chat")
         )
         return kb

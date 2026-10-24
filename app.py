@@ -25,6 +25,7 @@ import telebot
 
 import json
 from config import (
+    DETAILED_USER_GUIDE_HTML,
     BOT_TOKEN,
     GEMINI_API_KEY,
     ADMIN_ID,
@@ -352,16 +353,68 @@ def run_and_send_podcast_episode(
 # 2. Bot Commands & Callback Handlers
 # =====================================================================
 if bot:
-    @bot.message_handler(commands=["guide", "help"])
-    def cmd_guide(message):
-        uid = message.from_user.id
-        if not is_authorized(uid, message.from_user.username or "", message.from_user.first_name or ""):
+    def cmd_guide(message: str = "overview") -> str:
+        return DETAILED_USER_GUIDE_HTML
+
+    @bot.message_handler(commands=["guide", "vibe", "podcast", "vault", "collocations"])
+    def handle_quick_lounge_commands(message: Message):
+        if not is_authorized(message.from_user.id):
             return
-        bot.send_message(
-            message.chat.id,
-            GUIDE_CHAPTERS["overview"],
-            reply_markup=LoungeKeyboards.guide_navigation_kb("overview")
-        )
+        uid = message.from_user.id
+        chat_id = message.chat.id
+        user = db.get_user(uid, message.from_user.first_name or "Musa")
+        cmd = (message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+
+        if cmd == "guide":
+            kb = LoungeKeyboards.guide_navigation_kb("overview") if hasattr(LoungeKeyboards, "guide_navigation_kb") else None
+            bot.send_message(chat_id, DETAILED_USER_GUIDE_HTML, reply_markup=kb)
+            return
+
+        if cmd == "vibe":
+            order = ["articulate", "casual", "witty", "executive", "diplomatic"]
+            cur = user.get("preferred_register", "articulate")
+            nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "casual"
+            db.update_user_field(uid, "preferred_register", nxt)
+            badge = REGISTERS_MAP.get(nxt, nxt)
+            desc = REGISTER_DESCRIPTIONS.get(nxt, "")
+            bot.send_message(
+                chat_id,
+                f"🎚️ <b>Active Spoken Vibe Switched to: {badge}</b>\n\n<i>{html.escape(desc)}</i>\n\n"
+                "All hosts, 3x spoken recasts, and expressions are now locked to this Vibe!"
+            )
+            return
+
+        if cmd == "collocations":
+            db.set_user_mode(uid, "collocation_explorer")
+            bot.send_message(
+                chat_id,
+                "🔎 <b>Spoken Collocation Finder Active!</b>\n"
+                "Send any word or verb now, and I'll pull 6 high-utility C1/C2 spoken American collocations locked to your active Vibe."
+            )
+            return
+
+        if cmd == "podcast":
+            deliver_radio_episode(chat_id, user, custom_topic="")
+            return
+
+        if cmd == "vault":
+            due_cards = db.get_due_srs_cards(uid, limit=1)
+            if not due_cards:
+                due_cards = db.get_user_vault(uid, limit=1)
+            if not due_cards:
+                bot.send_message(chat_id, "🗂️ Your SRS Vault is currently empty! Tap <b>⭐ Save #1/#2/#3</b> under any turn to save expressions.")
+                return
+            card = due_cards[0]
+            db.set_user_mode(uid, "srs_active_practice", {"card_id": card["id"], "chunk": card["chunk"]})
+            bot.send_message(
+                chat_id,
+                f"🗂️ <b>Active Recall Practice:</b>\n\n"
+                f"🎯 Target Expression: <code>{html.escape(card['chunk'])}</code>\n"
+                f"💡 Meaning: <i>{html.escape(card.get('meaning', ''))}</i>\n\n"
+                f"🎙️ <b>Send a Voice Note or Text sentence</b> using this expression naturally in your active Vibe!",
+                reply_markup=LoungeKeyboards.srs_review_card_kb(card["id"])
+            )
+            return
 
     @bot.message_handler(commands=["trio", "podcast"])
     def cmd_quick_podcast(message):
@@ -1492,60 +1545,30 @@ def sync_bot_profile_metadata():
     if not bot:
         return
     try:
-        short_desc = "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club with Marcus, Chloe & Jake."
-        full_desc = (
-            "Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n\n"
-            "• Live NYC Trio: Unscripted banter, Devil's Advocate & storytelling with Marcus (🎙️ Articulate), Chloe (🎭 Witty) & Jake (☕ Casual).\n"
-            "• Podcast Lounge: 3+ min Trio & Duo episodes with stereo audio & [MM:SS] timestamps.\n"
-            "• Voice Mirror: 1.0x/0.85x accent mirror, stress & linking map.\n"
-            "• Vault & Finder: B2→C2 upgrades, collocations & PDF/Anki exports."
+        short_desc = (
+            "🗽 Musa’s NYC Lounge — C1–C2 Spoken American English Club "
+            "(5 Spoken Vibes, Live NYC Trio, 3x Recasts, Voice Mirror & Radio Podcasts)."
         )
-        commands = [
-            telebot.types.BotCommand("start", "🗽 Main Club Menu & Dashboard"),
-            telebot.types.BotCommand("hosts", "👥 Choose 1 (Solo), 2 (Duo) or 3 (Trio) Hosts"),
-            telebot.types.BotCommand("podcast", "🎙️ 3+ Min Trio & Duo Podcast Studio"),
-            telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic or Scenario"),
-            telebot.types.BotCommand("devil", "🥊 Devil's Advocate Pushback Sparring"),
-            telebot.types.BotCommand("lookup", "🔎 Spoken Collocation & Phrase Finder"),
-            telebot.types.BotCommand("drills", "🎯 Speaking, Stress & Shadowing Workouts"),
-            telebot.types.BotCommand("review", "🧠 Daily Active Phrase Practice"),
-            telebot.types.BotCommand("vault", "📓 My Saved Phrases, PDF & Anki Export"),
-            telebot.types.BotCommand("audit", "📊 My Spoken Fluency & Style Audit"),
-            telebot.types.BotCommand("guide", "📖 Member's Handbook & How It Works"),
-            telebot.types.BotCommand("fresh", "🔄 Clear Table & Start Fresh Memory")
-        ]
-
-        scopes = [
-            telebot.types.BotCommandScopeDefault(),
-            telebot.types.BotCommandScopeAllPrivateChats(),
-            telebot.types.BotCommandScopeAllGroupChats()
-        ]
-        if ADMIN_ID:
-            scopes.append(telebot.types.BotCommandScopeChat(ADMIN_ID))
-
-        for sc in scopes:
-            for lang in [None, "en", "ar"]:
-                try:
-                    bot.delete_my_commands(scope=sc, language_code=lang)
-                except Exception:
-                    pass
-
-        for sc in [
-            telebot.types.BotCommandScopeDefault(),
-            telebot.types.BotCommandScopeAllPrivateChats()
-        ] + ([telebot.types.BotCommandScopeChat(ADMIN_ID)] if ADMIN_ID else []):
-            for lang in [None, "en"]:
-                try:
-                    bot.set_my_commands(commands, scope=sc, language_code=lang)
-                except Exception:
-                    pass
-
-        for lang in [None, "en", "ar"]:
-            try:
-                bot.set_my_short_description(short_desc, language_code=lang)
-                bot.set_my_description(full_desc, language_code=lang)
-            except Exception:
-                pass
+        full_desc = (
+            "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Mastery Club\n\n"
+            "• 🗽 Live NYC Trio (Marcus, Chloe & Jake) with real spoken contractions, ellipsis, fillers & spontaneous pivots\n"
+            "• 🎚️ 5 Strict Spoken Vibes: 🎙️ Articulate | ☕ Casual | 🎭 Witty | 💼 Executive | 🤝 Diplomatic\n"
+            "• 🎭 3x Same-Vibe Spoken Alternatives (Natural, Phrasal/Idiomatic, Punchy Ellipsis)\n"
+            "• 🎧 Trio Voice, 🗣️ 3x Recast Audio & 🪞 Stitched Voice Mirror\n"
+            "• 🎙️ Dual-Host NYC Radio Podcasts + 💬 Live Trio Episode Debate\n"
+            "• 🔎 Collocation Finder, 📥 Subtext Miner & 🗂️ Inflection-Aware SRS Vault"
+        )
+        bot.set_my_short_description(short_desc)
+        bot.set_my_description(full_desc)
+        from telebot.types import BotCommand
+        bot.set_my_commands([
+            BotCommand("start", "🗽 Open the NYC Lounge & Main Dashboard"),
+            BotCommand("vibe", "🎚️ Cycle Spoken Vibe (Articulate / Casual / Witty / Executive / Diplomatic)"),
+            BotCommand("podcast", "🎙️ Launch Dual-Host NYC Radio Lounge"),
+            BotCommand("vault", "🗂️ Open Smart SRS Phrase Vault"),
+            BotCommand("collocations", "🔎 Search C1/C2 Spoken Collocations"),
+            BotCommand("guide", "📖 Complete Spoken American English Guide")
+        ])
     except Exception as e:
         logger.warning(f"Profile sync note: {e}")
 
