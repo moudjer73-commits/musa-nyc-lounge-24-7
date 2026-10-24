@@ -86,8 +86,8 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(default="", description="Alternative 1 (Natural Spoken Flow \u2014 100% MEMBER'S FIRST-PERSON POV): How the MEMBER themselves expresses their message or performs the scenario they described in the active Vibe using natural contractions and spoken glue. NEVER write the hosts' response here!")
-    rewrite_casual: str = Field(default="", description="Alternative 2 (Idiomatic & Phrasal \u2014 100% MEMBER'S FIRST-PERSON POV): A second idiomatic way the MEMBER themselves voices their message or performs the scenario in the active Vibe using phrasal verbs and native collocations. NEVER write a host reply here!")
+    rewrite_articulate: str = Field(default="", description="Natural Flow Recast: The member's thought recast using the EXACT communication strategy, syntax, and pragmatics of their ACTIVE Spoken Vibe (Casual, Articulate, Witty, Diplomatic, or Executive). 1-2 natural spoken sentences. NEVER write the hosts' response here!")
+    rewrite_casual: str = Field(default="", description="Punchy Cut Recast: A shorter, high-impact 1-sentence version of the member's thought using the EXACT communication strategy of their ACTIVE Spoken Vibe. NEVER write the hosts' response here!")
     rewrite_witty: str = Field(default="", description="Alternative 3 (Punchy Ellipsis & Spoken Syntax \u2014 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting. NEVER flip perspective to the hosts!")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
