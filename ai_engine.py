@@ -87,9 +87,9 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Fallback summary; main display is built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow): Smooth spoken American recast in the active Vibe using natural contractions (I'm, don't, should've) and conversational discourse glue (honestly, look, I mean).")
-    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal): Distinct spoken recast in the active Vibe rich in phrasal verbs, native collocations, and natural spoken fillers (you know, kind of, pretty much).")
-    rewrite_witty: str = Field(description="Alternative 3 (Punchy Ellipsis & Spoken Syntax): Concise, high-impact spoken recast in the active Vibe demonstrating conversational ellipsis (dropping initial pronoun/auxiliary), topic fronting, or a conversational tail.")
+    rewrite_articulate: str = Field(description="Alternative 1 (Natural Spoken Flow — STRICTLY FROM THE MEMBER'S OWN POV): How the MEMBER themselves could express their exact message/intent in the active Vibe using natural contractions and spoken glue. NEVER write this from the hosts' perspective!")
+    rewrite_casual: str = Field(description="Alternative 2 (Idiomatic & Phrasal — STRICTLY FROM THE MEMBER'S OWN POV): A second way the MEMBER themselves could voice their exact message/intent in the active Vibe using phrasal verbs and native collocations. NEVER write a host reply here!")
+    rewrite_witty: str = Field(description="Alternative 3 (Punchy Ellipsis & Spoken Syntax — STRICTLY FROM THE MEMBER'S OWN POV): A concise, high-impact way the MEMBER themselves could say their message using spoken ellipsis or fronting. NEVER flip perspective to the hosts!")
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
     tts_clean_target: str = Field(
