@@ -1543,33 +1543,52 @@ if bot:
 def sync_bot_profile_metadata():
     if not bot:
         return
+    short_desc = (
+        "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club "
+        "(5 Vibes, Live Trio, 3x Recasts & Radio)."
+    )
+    full_desc = (
+        "Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n\n"
+        "• Live NYC Trio: Unscripted human banter with Marcus, Chloe & Jake (contractions, ellipsis, fillers & natural pivots).\n"
+        "• 5 Strict Spoken Vibes: 🎙️ Articulate, ☕ Casual, 🎭 Witty, 💼 Executive & 🤝 Diplomatic.\n"
+        "• 3x Spoken Recasts & Audio: Natural, Phrasal & Ellipsis options + 🪞 Stitched Voice Mirror.\n"
+        "• Radio Lounge & Smart Vault: Unscripted Andrew & Ava podcasts + inflection-aware SRS & collocations."
+    )
+    for lang in (None, "", "en", "ar"):
+        try:
+            if lang is None:
+                bot.set_my_short_description(short_desc)
+            else:
+                bot.set_my_short_description(short_desc, language_code=lang)
+        except Exception as e:
+            logger.warning(f"Short description sync note ({lang}): {e}")
+
+        try:
+            if lang is None:
+                bot.set_my_description(full_desc)
+            else:
+                bot.set_my_description(full_desc, language_code=lang)
+        except Exception as e:
+            logger.warning(f"Full description sync note ({lang}): {e}")
+
     try:
-        short_desc = (
-            "🗽 Musa’s NYC Lounge — C1–C2 Spoken American English Club "
-            "(5 Spoken Vibes, Live NYC Trio, 3x Recasts, Voice Mirror & Radio Podcasts)."
-        )
-        full_desc = (
-            "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Mastery Club\n\n"
-            "• 🗽 Live NYC Trio (Marcus, Chloe & Jake) with real spoken contractions, ellipsis, fillers & spontaneous pivots\n"
-            "• 🎚️ 5 Strict Spoken Vibes: 🎙️ Articulate | ☕ Casual | 🎭 Witty | 💼 Executive | 🤝 Diplomatic\n"
-            "• 🎭 3x Same-Vibe Spoken Alternatives (Natural, Phrasal/Idiomatic, Punchy Ellipsis)\n"
-            "• 🎧 Trio Voice, 🗣️ 3x Recast Audio & 🪞 Stitched Voice Mirror\n"
-            "• 🎙️ Dual-Host NYC Radio Podcasts + 💬 Live Trio Episode Debate\n"
-            "• 🔎 Collocation Finder, 📥 Subtext Miner & 🗂️ Inflection-Aware SRS Vault"
-        )
-        bot.set_my_short_description(short_desc)
-        bot.set_my_description(full_desc)
         from telebot.types import BotCommand
-        bot.set_my_commands([
+        cmds = [
             BotCommand("start", "🗽 Open the NYC Lounge & Main Dashboard"),
-            BotCommand("vibe", "🎚️ Cycle Spoken Vibe (Articulate / Casual / Witty / Executive / Diplomatic)"),
+            BotCommand("vibe", "🎚️ Cycle Spoken Vibe (5 American Registers)"),
             BotCommand("podcast", "🎙️ Launch Dual-Host NYC Radio Lounge"),
             BotCommand("vault", "🗂️ Open Smart SRS Phrase Vault"),
             BotCommand("collocations", "🔎 Search C1/C2 Spoken Collocations"),
             BotCommand("guide", "📖 Complete Spoken American English Guide")
-        ])
+        ]
+        bot.set_my_commands(cmds)
+        for lang in ("en", "ar"):
+            try:
+                bot.set_my_commands(cmds, language_code=lang)
+            except Exception:
+                pass
     except Exception as e:
-        logger.warning(f"Profile sync note: {e}")
+        logger.warning(f"Commands sync note: {e}")
 
 
 def _graceful_shutdown(signum, frame):
