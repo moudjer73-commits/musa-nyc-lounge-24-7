@@ -353,22 +353,21 @@ def run_and_send_podcast_episode(
 # 2. Bot Commands & Callback Handlers
 # =====================================================================
 if bot:
-    def cmd_guide(message: str = "overview") -> str:
-        return DETAILED_USER_GUIDE_HTML
+    @bot.message_handler(commands=["help", "guide"])
+    def cmd_guide(message):
+        if not is_authorized(message.from_user.id):
+            return
+        kb = LoungeKeyboards.guide_navigation_kb("overview") if hasattr(LoungeKeyboards, "guide_navigation_kb") else None
+        bot.send_message(message.chat.id, DETAILED_USER_GUIDE_HTML, reply_markup=kb)
 
-    @bot.message_handler(commands=["guide", "vibe", "podcast", "vault", "collocations"])
-    def handle_quick_lounge_commands(message: Message):
+    @bot.message_handler(commands=["vibe", "podcast", "vault", "collocations"])
+    def handle_quick_lounge_commands(message):
         if not is_authorized(message.from_user.id):
             return
         uid = message.from_user.id
         chat_id = message.chat.id
         user = db.get_user(uid, message.from_user.first_name or "Musa")
         cmd = (message.text or "").split()[0].lstrip("/").split("@")[0].lower()
-
-        if cmd == "guide":
-            kb = LoungeKeyboards.guide_navigation_kb("overview") if hasattr(LoungeKeyboards, "guide_navigation_kb") else None
-            bot.send_message(chat_id, DETAILED_USER_GUIDE_HTML, reply_markup=kb)
-            return
 
         if cmd == "vibe":
             order = ["articulate", "casual", "witty", "executive", "diplomatic"]
