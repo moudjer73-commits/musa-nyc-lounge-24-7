@@ -1063,17 +1063,16 @@ class LoungeDatabase:
 
     def set_user_mode(self, user_id: int, mode: str):
         try:
-            with self._get_conn() as conn:
+            with self._conn() as conn:
                 conn.execute("UPDATE users SET current_mode = ? WHERE user_id = ?", (mode, user_id))
         except Exception:
             pass
 
     def set_user_field(self, user_id: int, field: str, value: Any):
-        allowed = {"current_mode", "preferred_register", "active_persona", "voice_enabled", "daily_goal"}
+        allowed = {"current_mode", "preferred_register", "active_persona", "voice_enabled", "daily_goal", "level", "english_only"}
         if field not in allowed:
             return
-        try:
-            with self._get_conn() as conn:
-                conn.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
-        except Exception:
-            pass
+        self.get_user(user_id)
+        with self._lock, self._conn() as conn:
+            conn.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
+            conn.commit()

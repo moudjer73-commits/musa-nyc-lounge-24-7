@@ -113,16 +113,15 @@ class LoungeKeyboards:
     @staticmethod
     def turn_action_bar(
         token_key: str,
-        num_upgrades: int = 3,
+        num_upgrades: int = 1,
         has_user_voice: bool = False,
         has_host_voice: bool = True,
         persona_key: str = "trio",
         has_recast_voice: bool = True,
-        recast_label: str = "🗣️ My Recast",
+        recast_label: str = "🗣️ Hear My Recast",
         **kwargs
     ) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
-
         audio_btns = []
         if has_host_voice:
             host_lbl = "🎧 Trio Voice" if persona_key == "trio" else "🎧 Host Voice"
@@ -134,12 +133,8 @@ class LoungeKeyboards:
         if audio_btns:
             kb.row(*audio_btns)
 
-        save_btns = [
-            InlineKeyboardButton(f"⭐ Save ({i})", callback_data=f"save:{token_key}:{i}")
-            for i in range(1, min(num_upgrades, 4) + 1)
-        ]
-        if save_btns:
-            kb.row(*save_btns)
+        if num_upgrades and num_upgrades >= 1:
+            kb.row(InlineKeyboardButton("⭐ Save Expression to Vault", callback_data=f"save:{token_key}:1"))
 
         kb.row(
             InlineKeyboardButton("🎙️ Take 2", callback_data=f"take2:{token_key}"),

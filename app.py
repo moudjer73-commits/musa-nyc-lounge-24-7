@@ -14,6 +14,9 @@ import sys
 import time
 import uuid
 import html
+_orig_html_escape = getattr(html, '_orig_html_escape', html.escape)
+html._orig_html_escape = _orig_html_escape
+html.escape = lambda s, quote=False: _orig_html_escape(str(s if s is not None else ''), quote=quote)
 import signal
 import logging
 import threading
@@ -140,22 +143,26 @@ def get_active_recast(res: LoungeTurnResponse, pref_reg: str) -> str:
         return res.rewrite_casual or res.tts_clean_target or res.rewrite_articulate
     if pref_reg == "witty":
         return res.rewrite_witty or res.tts_clean_target or res.rewrite_articulate
-    return res.rewrite_articulate or res.tts_clean_target
+    return res.rewrite_articulate or res.tts_clean_target or res.rewrite_casual
 
 
 def format_lounge_turn_html(
     res: LoungeTurnResponse,
     is_voice: bool = False,
     stealth_count: int = 0,
-    active_uptakes: List[str] = None
-, active_reg: str = 'articulate') -> str:
+    active_uptakes: List[str] = None,
+    active_reg: str = "articulate"
+) -> str:
+    def _e(val: Any) -> str:
+        return html.escape(str(val or ""), quote=False)
+
     top_section = ""
     if active_uptakes:
-        up_badges = ", ".join([f"<code>{html.escape(u)}</code>" for u in active_uptakes])
-        top_section += f"🔥 <b>Active Mastery! You naturally produced from your Vault:</b> {up_badges}\n\n"
+        up_badges = ", ".join([f"<code>{_e(u)}</code>" for u in active_uptakes])
+        top_section += f"🔥 <b>Active Mastery! You naturally used from your Vault:</b> {up_badges}\n\n"
 
     if is_voice and res.transcription:
-        top_section += f"🎙️ <i>\"{html.escape(res.transcription)}\"</i>\n\n"
+        top_section += f"🎙️ <i>\"{_e(res.transcription)}\"</i>\n\n"
 
     resp_p = (getattr(res, "responding_persona", "marcus") or "marcus").lower()
     p_icon = {"marcus": "🧔‍♂️", "chloe": "👩🏼‍💼", "jake": "🧢"}.get(resp_p, "🗽")
@@ -166,48 +173,37 @@ def format_lounge_turn_html(
         top_section += f"{p_icon} {reply_clean}\n\n"
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
-    xray_lines = [
-        "🪞 <b>5-Second Native Mirror</b>",
-        "━━━━━━━━━━━━━━━━━━━━",
-        f"🪞 <b>Your Thought, Native Mouth ({vibe_label} Mode):</b>",
-        f"• <b>Natural Flow:</b> <code>{html.escape(res.rewrite_articulate)}</code>",
-        f"• <b>Option 2 (Idiomatic):</b> <code>{html.escape(res.rewrite_casual)}</code>",
-        f"• <b>Punchy Cut:</b> <code>{html.escape(res.rewrite_witty)}</code>",
+    natural_flow = res.rewrite_articulate or res.tts_clean_target or ""
+    punchy_cut = res.rewrite_casual or res.rewrite_witty or ""
+
+    mirror_lines = [
+        f"🪞 <b>5-Second Native Mirror ({vibe_label}):</b>",
+        f"• <b>Natural Flow:</b> <code>{_e(natural_flow)}</code>",
     ]
+    if punchy_cut and punchy_cut.strip() != natural_flow.strip():
+        mirror_lines.append(f"• <b>Punchy Cut:</b> <code>{_e(punchy_cut)}</code>")
+
+    if is_voice and getattr(res, "acoustic_prosody_xray", ""):
+        mirror_lines.append(f"• 🎧 <b>Voice & Rhythm Check:</b> {_e(res.acoustic_prosody_xray)}")
 
     if res.diagnostics:
-        xray_lines.append("\n🩺 <b>Precision Phrasing & Flow Polish:</b>")
-        for d in res.diagnostics[:3]:
-            xray_lines.append(
-                f"• <i>{html.escape(d.user_said)}</i> ➔ ✅ <b>{html.escape(d.native_fix)}</b>\n"
-                f"  └ <code>{html.escape(d.category)}</code> {html.escape(d.why_note)}"
-            )
-
-    if res.lexical_upgrades:
-        xray_lines.append("\n💎 <b>Steal This Expression (Tap ⭐ Save):</b>")
-        for idx, up in enumerate(res.lexical_upgrades[:3], start=1):
-            b2_foil_str = getattr(up, "b2_foil", "")
-            foil_line = (
-                f"    • 🔄 <b>Upgrade:</b> <s>{html.escape(b2_foil_str)}</s> ➔ <b>{html.escape(up.chunk)}</b>\n"
-                if b2_foil_str else ""
-            )
-            xray_lines.append(
-                f"\n<b>({idx}) {html.escape(up.chunk)}</b> ({html.escape(up.register_tag)})\n"
-                f"{foil_line}"
-                f"  • 💡 <b>Nuance:</b> {html.escape(up.explanation)}\n"
-                f"  • 🎯 <b>When to use:</b> {html.escape(up.trigger)}\n"
-                f"  • 🔗 <b>Pattern:</b> <code>{html.escape(up.pattern)}</code>\n"
-                f"  • 💬 <b>Follow-up:</b> <i>\"{html.escape(up.followup)}\"</i>\n"
-                f"    • 🗽 <i>\"{html.escape(up.example)}\"</i>"
-            )
-
-    if stealth_count > 0:
-        xray_lines.append(
-            f"\n✨ <i>Notice the italics above? {stealth_count} expression(s) from your Vault fit this topic naturally!</i>"
+        d = res.diagnostics[0]
+        mirror_lines.append(
+            f"• ⚡ <b>Quick Fix:</b> <s>{_e(d.user_said)}</s> ➔ ✅ <b>{_e(d.native_fix)}</b> "
+            f"<i>({_e(d.why_note)})</i>"
         )
 
-    expandable_body = "\n".join([line for line in xray_lines if line is not None])
-    return f"{top_section}<blockquote expandable>{expandable_body}</blockquote>"
+    if res.lexical_upgrades:
+        up = res.lexical_upgrades[0]
+        b2_foil_str = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
+        foil_part = f" (instead of: <i>{_e(b2_foil_str)}</i>)" if b2_foil_str else ""
+        mirror_lines.append(
+            f"\n💎 <b>Steal This:</b> <code>{_e(up.chunk)}</code>{foil_part}\n"
+            f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
+        )
+
+    mirror_block = "\n".join(mirror_lines)
+    return f"{top_section}<blockquote expandable>{mirror_block}</blockquote>"
 
 
 def send_srs_card_prompt(chat_id: int, user_id: int, card: Dict[str, Any], edit_msg_id: int = 0):
