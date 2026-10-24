@@ -692,43 +692,29 @@ class LoungeDatabase:
     def record_diagnostics(self, user_id: int, diagnostics: List[Dict[str, Any]]):
         if not diagnostics:
             return
-        trivial = {
-            "hey", "hey guys", "hi", "hello", "yo", "what's up", "whats up",
-            "good", "ok", "okay", "yes", "no", "thanks", "thank you"
-        }
-        now = int(time.time())
-        try:
-            with self._get_conn() as conn:
-                cols = [r[1] for r in conn.execute("PRAGMA table_info(weaknesses)").fetchall()]
-                count_col = "hit_count" if "hit_count" in cols else ("occurrence_count" if "occurrence_count" in cols else "count")
-                time_col = "updated_at" if "updated_at" in cols else ("last_seen" if "last_seen" in cols else "created_at")
-                for d in diagnostics:
-                    cat = (d.get("category") or "🎭 Natural Flow").strip()
-                    said = (d.get("user_said") or "").strip()
-                    fix = (d.get("native_fix") or "").strip()
-                    why = (d.get("why_note") or "").strip()
-                    if not said or not fix:
-                        continue
-                    if "/" in fix or "Vowel" in cat or "Rhythm" in cat or "Acoustic" in cat:
-                        continue
-                    if len(said) < 4 or said.lower() in trivial or len(said.split()) < 2:
-                        continue
-                    row = conn.execute(
-                        f"SELECT id, {count_col} FROM weaknesses WHERE user_id = ? AND LOWER(user_said) = LOWER(?)",
-                        (user_id, said)
-                    ).fetchone()
-                    if row:
-                        conn.execute(
-                            f"UPDATE weaknesses SET {count_col} = ?, native_fix = ?, why_note = ?, category = ?, {time_col} = ? WHERE id = ?",
-                            ((row[count_col] or 1) + 1, fix, why, cat, now, row["id"])
-                        )
-                    else:
-                        conn.execute(
-                            f"INSERT INTO weaknesses (user_id, category, user_said, native_fix, why_note, {count_col}, {time_col}) VALUES (?, ?, ?, ?, ?, 1, ?)",
-                            (user_id, cat, said, fix, why, now)
-                        )
-        except Exception:
-            pass
+        with self._lock, self._conn() as conn:
+            for d in diagnostics:
+                native_fix = (d.get("native_fix") or "").strip()
+                user_said = (d.get("user_said") or "").strip()
+                if not native_fix or not user_said:
+                    continue
+                conn.execute("""
+                    INSERT INTO error_profile (user_id, category, user_said, native_fix, why_note, frequency, mastered)
+                    VALUES (?, ?, ?, ?, ?, 1, 0)
+                    ON CONFLICT(user_id, native_fix) DO UPDATE SET
+                        frequency = frequency + 1,
+                        user_said = excluded.user_said,
+                        why_note = excluded.why_note,
+                        mastered = 0,
+                        last_seen = CURRENT_TIMESTAMP
+                """, (
+                    user_id,
+                    d.get("category", "Spoken Flow"),
+                    user_said,
+                    native_fix,
+                    d.get("why_note", "")
+                ))
+            conn.commit()
 
     def get_weaknesses(self, user_id: int, limit: int = 6) -> List[Dict[str, Any]]:
         with self._lock, self._conn() as conn:
@@ -748,26 +734,50 @@ class LoungeDatabase:
     # =================================================================
     # Active Productive Uptake Detector (Swain's Output Hypothesis)
     # =================================================================
-    def detect_and_record_active_uptake(self, user_id: int, user_text: str) -> List[str]:
-        if not user_text or len(user_text.strip()) < 2:
+    def detect_and_record_active_uptake(self, user_id: int, user_utterance: str) -> List[str]:
+        """
+        Scans the member's spoken or written utterance for active, unprompted production
+        of expressions stored in their personal lexical_vault. Increments `productive_count`
+        when matched.
+        """
+        if not user_utterance or len(user_utterance.strip()) < 4:
             return []
+
         matched_chunks: List[str] = []
-        try:
-            with self._get_conn() as conn:
-                cols = [r[1] for r in conn.execute("PRAGMA table_info(srs_vault)").fetchall()]
-                rows = conn.execute("SELECT * FROM srs_vault WHERE user_id = ?", (user_id,)).fetchall()
-                for r in rows:
-                    r_dict = dict(r)
-                    chunk = (r_dict.get("chunk") or "").strip()
-                    if chunk and self.smart_chunk_match(chunk, user_text):
+        matched_ids: List[int] = []
+
+        with self._lock, self._conn() as conn:
+            vault_rows = conn.execute(
+                "SELECT id, chunk FROM lexical_vault WHERE user_id = ?", (user_id,)
+            ).fetchall()
+
+            for r in vault_rows:
+                chunk = (r["chunk"] or "").strip()
+                if not chunk:
+                    continue
+                tokens = [re.sub(r"[^a-zA-Z']", "", t) for t in chunk.split() if t]
+                pattern_parts = [_word_regex_token(t) for t in tokens if t]
+                if not pattern_parts:
+                    continue
+                flex_pat = r"\s+(?:\w+(?:'\w+)?\s+){0,2}?".join(pattern_parts)
+                try:
+                    if re.search(flex_pat, user_utterance, re.IGNORECASE):
                         matched_chunks.append(chunk)
-                        if "active_used_count" in cols:
-                            conn.execute("UPDATE srs_vault SET active_used_count = COALESCE(active_used_count, 0) + 1 WHERE id = ?", (r_dict["id"],))
-                        elif "times_used" in cols:
-                            conn.execute("UPDATE srs_vault SET times_used = COALESCE(times_used, 0) + 1 WHERE id = ?", (r_dict["id"],))
-        except Exception:
-            pass
-        return matched_chunks
+                        matched_ids.append(r["id"])
+                except Exception:
+                    if chunk.lower() in user_utterance.lower():
+                        matched_chunks.append(chunk)
+                        matched_ids.append(r["id"])
+
+            if matched_ids:
+                placeholders = ",".join(["?"] * len(matched_ids))
+                conn.execute(
+                    f"UPDATE lexical_vault SET productive_count = productive_count + 1 WHERE id IN ({placeholders})",
+                    matched_ids
+                )
+                conn.commit()
+
+        return matched_chunks[:3]
 
     def store_atomic_batch(
         self,
@@ -1020,91 +1030,11 @@ class LoungeDatabase:
             logger.warning(f"Could not auto-restore from pinned message: {e}")
         return False
 
-    @staticmethod
-    def smart_chunk_match(chunk: str, text: str) -> bool:
-        if not chunk or not text:
-            return False
-        c_clean = re.sub(r"<[^>]+>", "", chunk).strip().lower()
-        t_clean = re.sub(r"<[^>]+>", "", text).strip().lower()
-        if not c_clean or not t_clean:
-            return False
-        if c_clean in t_clean:
-            return True
-
-        irregulars = {
-            "swing": r"(?:swing|swung|swinging|swings)",
-            "take": r"(?:take|took|taken|taking|takes)",
-            "make": r"(?:make|made|making|makes)",
-            "keep": r"(?:keep|kept|keeping|keeps)",
-            "get": r"(?:get|got|gotten|getting|gets)",
-            "go": r"(?:go|went|gone|going|goes)",
-            "come": r"(?:come|came|coming|comes)",
-            "run": r"(?:run|ran|running|runs)",
-            "give": r"(?:give|gave|given|giving|gives)",
-            "find": r"(?:find|found|finding|finds)",
-            "think": r"(?:think|thought|thinking|thinks)",
-            "bring": r"(?:bring|brought|bringing|brings)",
-            "catch": r"(?:catch|caught|catching|catches)",
-            "hold": r"(?:hold|held|holding|holds)",
-            "leave": r"(?:leave|left|leaving|leaves)",
-            "lose": r"(?:lose|lost|losing|loses)",
-            "put": r"(?:put|putting|puts)",
-            "set": r"(?:set|setting|sets)",
-            "cut": r"(?:cut|cutting|cuts)",
-            "hit": r"(?:hit|hitting|hits)",
-            "bite": r"(?:bite|bit|bitten|biting|bites)",
-            "break": r"(?:break|broke|broken|breaking|breaks)",
-            "fall": r"(?:fall|fell|fallen|falling|falls)",
-            "throw": r"(?:throw|threw|thrown|throwing|throws)",
-            "draw": r"(?:draw|drew|drawn|drawing|draws)",
-            "drive": r"(?:drive|drove|driven|driving|drives)",
-            "blow": r"(?:blow|blew|blown|blowing|blows)",
-            "speak": r"(?:speak|spoke|spoken|speaking|speaks)",
-            "stand": r"(?:stand|stood|standing|stands)",
-            "sit": r"(?:sit|sat|sitting|sits)",
-            "tell": r"(?:tell|told|telling|tells)",
-            "pay": r"(?:pay|paid|paying|pays)",
-            "meet": r"(?:meet|met|meeting|meets)",
-            "buy": r"(?:buy|bought|buying|buys)",
-            "feel": r"(?:feel|felt|feeling|feels)",
-            "say": r"(?:say|said|saying|says)",
-            "see": r"(?:see|saw|seen|seeing|sees)",
-            "know": r"(?:know|knew|known|knowing|knows)"
-        }
-        placeholders = {"someone", "someone's", "one's", "something", "sb", "sth", "somebody", "somebody's"}
-        tokens = re.findall(r"[a-z']+|\+", c_clean)
-        tokens = [tok for tok in tokens if tok != "+"]
-        if not tokens:
-            return False
-
-        pattern_parts = []
-        for idx, tok in enumerate(tokens):
-            if tok in placeholders:
-                pattern_parts.append(r"(?:\w+\s*){1,3}")
-            elif tok in irregulars:
-                pattern_parts.append(irregulars[tok])
-            elif idx == 0 and len(tok) > 3:
-                stem = tok[:-1] if tok.endswith("e") else tok
-                pattern_parts.append(rf"{re.escape(stem)}(?:e|es|s|ed|ing|d)?")
-            else:
-                pattern_parts.append(re.escape(tok))
-
-        regex_str = r"\b" + r"\s+(?:\w+\s+)?".join(pattern_parts) + r"\b"
-        try:
-            return bool(re.search(regex_str, t_clean))
-        except Exception:
-            return False
-
     def purge_noisy_weaknesses(self):
-        trivial = (
-            "hey", "hey guys", "hi", "hello", "yo", "what's up", "whats up",
-            "good", "ok", "okay", "yes", "no", "thanks", "thank you"
-        )
+        trivial = ("hey", "hey guys", "hi", "hello", "yo", "what's up", "whats up", "good", "ok", "okay", "yes", "no", "thanks", "thank you")
         try:
             with self._get_conn() as conn:
-                conn.execute(
-                    "DELETE FROM weaknesses WHERE native_fix LIKE '%/%' OR category LIKE '%Vowel%' OR category LIKE '%Rhythm%' OR category LIKE '%Acoustic%' OR LENGTH(TRIM(user_said)) < 4"
-                )
+                conn.execute("DELETE FROM weaknesses WHERE native_fix LIKE '%/%' OR category LIKE '%Vowel%' OR category LIKE '%Rhythm%' OR category LIKE '%Acoustic%' OR LENGTH(TRIM(user_said)) < 4")
                 for t in trivial:
                     conn.execute("DELETE FROM weaknesses WHERE LOWER(TRIM(user_said)) = ?", (t,))
         except Exception:

@@ -136,8 +136,6 @@ class LoungeKeyboards:
         persona_key: str = "trio",
         has_recast_voice: bool = True,
         recast_label: str = "🗣️ My Recast (3x)",
-        active_reg: str = "articulate",
-        *args,
         **kwargs
     ) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup(row_width=3)
@@ -153,18 +151,18 @@ class LoungeKeyboards:
         if audio_btns:
             kb.row(*audio_btns)
 
-        if num_upgrades > 0:
-            save_btns = [
-                InlineKeyboardButton(f"⭐ Save #{i+1}", callback_data=f"save:{token_key}:{i}")
-                for i in range(min(num_upgrades, 3))
-            ]
+        save_btns = [
+            InlineKeyboardButton(f"⭐ Save ({i})", callback_data=f"save:{token_key}:{i}")
+            for i in range(1, min(num_upgrades, 4) + 1)
+        ]
+        if save_btns:
             kb.row(*save_btns)
 
-        vibe_short = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
         kb.row(
-            InlineKeyboardButton("🎲 New Topic", callback_data="spark:new"),
-            InlineKeyboardButton(f"🎚️ Vibe: {vibe_short}", callback_data=f"vibe_cycle:{token_key}"),
-            InlineKeyboardButton("🗂️ SRS Due", callback_data="menu:srs")
+            InlineKeyboardButton("🎙️ Take 2", callback_data=f"take2:{token_key}"),
+            InlineKeyboardButton("👥 Hosts", callback_data="menu:cast_selector"),
+            InlineKeyboardButton("🎲 Topic", callback_data="action:spark_topic"),
+            InlineKeyboardButton("🏠 Menu", callback_data="menu:home")
         )
         return kb
 
@@ -303,41 +301,5 @@ class LoungeKeyboards:
         kb.add(
             InlineKeyboardButton("➖ Remove Member by ID", callback_data="mode:admin_del_user"),
             InlineKeyboardButton("🔙 Back to Club Menu", callback_data="menu:home")
-        )
-        return kb
-
-    @staticmethod
-    def podcast_action_bar(token_key: str, num_takeaways: int = 3, *args, **kwargs) -> InlineKeyboardMarkup:
-        kb = InlineKeyboardMarkup(row_width=3)
-        if num_takeaways > 0:
-            btns = [
-                InlineKeyboardButton(f"⭐ Save #{i+1}", callback_data=f"save:{token_key}:{i}")
-                for i in range(min(num_takeaways, 3))
-            ]
-            kb.row(*btns)
-        kb.row(
-            InlineKeyboardButton("💬 Discuss with Trio", callback_data=f"pod_discuss:{token_key}"),
-            InlineKeyboardButton("🎙️ Another Show", callback_data="podcast:surprise")
-        )
-        kb.row(
-            InlineKeyboardButton("✍️ Custom Topic", callback_data="podcast:custom"),
-            InlineKeyboardButton("🏠 Club Menu", callback_data="menu:home")
-        )
-        return kb
-
-    @staticmethod
-    def srs_review_card_kb(card_id: int, *args, **kwargs) -> InlineKeyboardMarkup:
-        kb = InlineKeyboardMarkup(row_width=2)
-        kb.row(
-            InlineKeyboardButton("🔊 Hear Phrase", callback_data=f"srs_tts:{card_id}"),
-            InlineKeyboardButton("💡 Context Hint", callback_data=f"srs_hint:{card_id}")
-        )
-        kb.row(
-            InlineKeyboardButton("✅ Easy (Mastered)", callback_data=f"srs_grade:{card_id}:5"),
-            InlineKeyboardButton("🔁 Review Tomorrow", callback_data=f"srs_grade:{card_id}:3")
-        )
-        kb.row(
-            InlineKeyboardButton("⏭️ Next Due Card", callback_data="menu:srs"),
-            InlineKeyboardButton("💬 Back to Lounge", callback_data="mode:spontaneous_chat")
         )
         return kb
