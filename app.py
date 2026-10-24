@@ -1477,60 +1477,52 @@ if bot:
 def sync_bot_profile_metadata():
     if not bot:
         return
-    try:
-        short_desc = (
-            "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Conversation Club "
-            "& Multi-Host Podcast Studio (5 Spoken Vibes)."
-        )
-        full_desc = (
-            "🗽 Musa’s NYC Lounge — Private C1–C2 Spoken American English Club\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• 🗣️ Live NYC Banter: Fast-paced, authentic spoken English with Marcus, Chloe & Jake.\n"
-            "• 🪞 5-Second Native Mirror: Instant recasts of your exact thought (Natural Flow & Punchy Cut) + 1 stealable C1–C2 expression per turn.\n"
-            "• 🎚️ 5 Spoken Vibes: Switch seamlessly between 🎙️ Articulate, ☕ Casual, 🎭 Witty, 💼 Executive & 🤝 Diplomatic.\n"
-            "• 🎙️ Podcast Lounge: 3+ min Trio & Duo episodes with stereo audio & full [MM:SS] transcripts."
-        )
-        commands = [
-            telebot.types.BotCommand("start", "🗽 Main Club Menu & Lounge Table"),
-            telebot.types.BotCommand("vibe", "🎚️ Cycle Spoken Vibe (5 Registers)"),
-            telebot.types.BotCommand("hosts", "👥 Choose 1 (Solo), 2 (Duo) or 3 (Trio) Hosts"),
-            telebot.types.BotCommand("podcast", "🎙️ 3+ Min Trio & Duo Podcast Studio"),
-            telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic or Scenario"),
-            telebot.types.BotCommand("devil", "🥊 Devil's Advocate Pushback Sparring"),
-            telebot.types.BotCommand("vault", "📓 My Saved Phrases, PDF & Anki Export"),
-            telebot.types.BotCommand("guide", "📖 Club Guide & How It Works"),
-            telebot.types.BotCommand("fresh", "🔄 Clear Table & Start Fresh Memory")
-        ]
-        scopes = [
-            telebot.types.BotCommandScopeDefault(),
-            telebot.types.BotCommandScopeAllPrivateChats(),
-            telebot.types.BotCommandScopeAllGroupChats()
-        ]
-        if ADMIN_ID:
-            scopes.append(telebot.types.BotCommandScopeChat(ADMIN_ID))
-        for sc in scopes:
-            for lang in [None, "en", "ar"]:
-                try:
-                    bot.delete_my_commands(scope=sc, language_code=lang)
-                except Exception:
-                    pass
-        for sc in [
-            telebot.types.BotCommandScopeDefault(),
-            telebot.types.BotCommandScopeAllPrivateChats()
-        ] + ([telebot.types.BotCommandScopeChat(ADMIN_ID)] if ADMIN_ID else []):
-            for lang in [None, "en", "ar"]:
-                try:
-                    bot.set_my_commands(commands, scope=sc, language_code=lang)
-                except Exception:
-                    pass
-        for lang in [None, "en", "ar"]:
-            try:
-                bot.set_my_short_description(short_desc, language_code=lang)
-                bot.set_my_description(full_desc, language_code=lang)
-            except Exception:
-                pass
-    except Exception as e:
-        logger.warning(f"Profile sync note: {e}")
+    short_desc = (
+        "🗽 Private C1-C2 Spoken American English Club & NYC Podcast Studio. "
+        "Live banter, 5-second native recasts & 5 vibes."
+    )
+    full_desc = (
+        "🗽 Welcome to Musa's NYC Lounge\n"
+        "Private C1-C2 Spoken American English Club & Podcast Studio\n\n"
+        "• 🗣️ Live NYC Banter: Fast-paced chat & pushback with Marcus, Chloe & Jake (Solo, Duo, or Trio).\n"
+        "• 🪞 5-Second Native Mirror: Instant recasts of your exact thought + 1 stealable C1-C2 expression per turn.\n"
+        "• 🎚️ 5 Spoken Vibes: Articulate, Casual, Witty, Executive & Diplomatic.\n"
+        "• 🎙️ Podcast Lounge: 3+ min Trio & Duo episodes with full transcripts."
+    )
+    commands = [
+        telebot.types.BotCommand("start", "🗽 Main Club Menu & Lounge Table"),
+        telebot.types.BotCommand("vibe", "🎚️ Cycle Spoken Vibe (5 Registers)"),
+        telebot.types.BotCommand("hosts", "👥 Choose 1 (Solo), 2 (Duo) or 3 (Trio) Hosts"),
+        telebot.types.BotCommand("podcast", "🎙️ 3+ Min Trio & Duo Podcast Studio"),
+        telebot.types.BotCommand("spark", "🎲 Spark a Fresh Topic or Scenario"),
+        telebot.types.BotCommand("devil", "🥊 Devil's Advocate Pushback Sparring"),
+        telebot.types.BotCommand("vault", "📓 My Saved Phrases, PDF & Anki Export"),
+        telebot.types.BotCommand("guide", "📖 Club Guide & How It Works"),
+        telebot.types.BotCommand("fresh", "🔄 Clear Table & Start Fresh Memory")
+    ]
+    # 1. تحديث الأوامر
+    for lang in [None, "en", "ar"]:
+        try:
+            bot.delete_my_commands(language_code=lang)
+            bot.set_my_commands(commands, language_code=lang)
+        except Exception as e:
+            logger.warning(f"Commands sync warning ({lang}): {e}")
+
+    # 2. مسح أوصاف اللغات الفرعية القديمة أولاً لفك القفل، ثم تعيين الوصف الجديد الموحد
+    for lang in ["en", "ar", "fr", "es", "ru", "de"]:
+        try:
+            bot.set_my_short_description("", language_code=lang)
+            bot.set_my_description("", language_code=lang)
+        except Exception:
+            pass
+
+    for lang in [None, "en", "ar"]:
+        try:
+            bot.set_my_short_description(short_desc, language_code=lang)
+            bot.set_my_description(full_desc, language_code=lang)
+            logger.info(f"✅ Bot description & bio successfully updated for lang={lang} (len={len(full_desc)})")
+        except Exception as e:
+            logger.error(f"❌ Failed to set bot description for lang={lang}: {e}")
 
 
 def _graceful_shutdown(signum, frame):
