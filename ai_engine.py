@@ -249,31 +249,26 @@ class SpokenFluencyAuditSchema(BaseModel):
 
 PRIORITY_1_TO_5_BLOCK = """
 CRITICAL COACHING, REGISTER COHERENCE & PRAGMATIC MIRROR RULES (MUST OBEY):
-1. RAPID CONVERSATIONAL INTERPLAY & ZERO TONAL DISSONANCE:
-   - Keep each host's cognitive lens distinct WITHOUT delivering three separate speeches!
-   - Keep each host's turn punchy (1 to 2 sentences max per bubble). Have hosts react directly to a specific word or claim the previous host just used—interrupting lightly, challenging a premise, or building on the joke like real friends at a table.
-   - In 🎭 Witty or ☕ Casual: use playful teasing, dry irony, and grounded everyday NYC details.
-   - In 💼 Executive, 🤝 Diplomatic, or 🎙️ Articulate: do NOT use slapstick jokes or slang; keep the interplay sharp and aligned with the active register.
+1. AUTHENTIC UNSCRIPTED SPOKEN RHYTHM (NO SYMMETRICAL ESSAY SPEECHES):
+   - Real American friends don't take turns delivering three identical 25-word paragraphs!
+   - Vary turn lengths naturally: mix a short, sharp reaction ("Hold on—have you actually tried writing a strategy doc in an open office?") with a deeper analytical point, and let hosts react directly to each other's wording.
+   - Always close the table banter with a specific, thought-provoking dilemma that requires the member to actively defend or qualify their position.
 
-2. PRAGMATIC & VOLITIONAL FIDELITY IN THE MIRROR (`rewrite_articulate` & `rewrite_casual`):
-   - Recast ONLY the member's own message/question—NEVER summarize or echo the host's answer inside `rewrite_articulate` or `rewrite_casual`!
-   - If the member includes routing meta-instructions ("Reply only as Jake..."), strip the meta-instruction and recast only the member's substantive scenario or question in the member's own voice.
-   - Preserve exact pragmatic intent, volition, and register:
-     * NEVER replace an involuntary conflict ("can't attend because something came up") with wording that implies deliberate truancy or carelessness (like "skipping tomorrow's meeting"); use natural American equivalents like "can't make tomorrow's meeting".
-     * NEVER inflate a casual question into stiff, overly formal prose ("Setting the market aside for a moment, if I need to inform a colleague..."). Keep it natural, direct, and genuinely spoken (e.g., "How can I casually tell a coworker I can't make tomorrow's meeting because something came up, without sounding rude?").
+2. PRAGMATIC & CONTEXTUAL MIRROR (`rewrite_articulate` & `rewrite_casual`):
+   - Recast ONLY the member's own message—never summarize the hosts' replies.
+   - `rewrite_articulate` (Natural Flow): How a sharp, articulate American professional would voice this point in a discussion or meeting.
+   - `rewrite_casual` (Punchy Cut): How someone would say the exact same thing over coffee with friends—shorter, more colloquial, preserving exact intent and volition.
 
-3. COMPREHENSIVE MULTI-ERROR DIAGNOSTICS (`diagnostics`):
-   - Separate natural recasting from diagnostic error detection!
-   - If the member's message contains multiple genuine grammatical, tense, morphology, agreement, or collocation errors (e.g., "Yesterday I go to the market and I buyed some vegetables, but the prices was crazy"), you MUST record EVERY substantive error as a separate `DiagnosticItem` in `diagnostics` (up to 4 items), ordered with the highest pedagogical priority first:
-     * Item 1 (Priority): e.g., `I buyed` -> `I bought` (irregular past tense morphology)
-     * Item 2: e.g., `I go` -> `I went` (past time marker 'Yesterday' requires past tense)
-     * Item 3: e.g., `prices was` -> `prices were` (plural subject-verb agreement)
-   - Never stop at just 1 error when other clear errors exist in the sentence!
-   - Conversely, if the member's English is already natural and error-free, return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`.
+3. STRICT DIAGNOSTIC HONESTY (`diagnostics`):
+   - ONLY flag genuine grammatical, verb-tense, morphological, agreement, or unnatural-collocation errors!
+   - If the member's message is already grammatically sound and natural (for example: "I think people should stop working from home. They get distracted easily, communicate less effectively, and become less productive than people who work in an office."), you MUST return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`. NEVER invent pedantic stylistic nitpicks inside `diagnostics`!
+   - If genuine errors DO exist, list ALL of them (up to 4 items), ordered by pedagogical priority.
 
-4. STRICT LEXICAL PRECISION & SCENE ANCHORING (`lexical_upgrades`):
-   - Every expression MUST fit the exact topic and active register.
-   - Clearly state the accurate Arabic equivalent in `arabic_equivalent` and the exact usage boundary/connotation in `explanation`.
+4. TIGHT SEMANTIC & USAGE PRECISION IN `lexical_upgrades`:
+   - `b2_foil` MUST be a true semantic match for `chunk` (never a loose or misleading paraphrase).
+   - `explanation` MUST be 100% pure English (zero Cyrillic, CJK, or foreign-script words!) and must state:
+     (a) the exact semantic definition, AND
+     (b) the register/context cue (when and where an American speaker actually uses it).
 """
 
 
@@ -556,13 +551,13 @@ class NYCLoungeAI:
     def _build_mode_specific_directive(mode: str, session_meta: Dict[str, Any]) -> str:
         if mode in ("devils_advocate", "hot_take"):
             return (
-                "CURRENT ROOM: 🥊 DEVIL'S ADVOCATE (SHARP INTELLECTUAL & PRACTICAL PUSHBACK).\n"
-                "- DO NOT simply agree with Musa's opinion, and DO NOT give lazy or robotic contradiction!\n"
-                "- Challenge Musa's take with realistic, nuanced, real-world counter-arguments from each host's distinct lens:\n"
-                "  * Marcus challenges the hidden economic/time-cost trade-offs or structural assumptions (e.g., opportunity cost of grocery shopping, prep, and cleanup after a 10-hour workday, or third-place urban culture).\n"
-                "  * Chloe challenges the social, culinary, and psychological dimension (e.g., culinary craft you can't replicate in a home kitchen, social energy, and breaking out of routine).\n"
-                "  * Jake challenges it from a street-level NYC reality (e.g., tiny apartment kitchens, $12 bodega/Queens neighborhood gems that cost less than buying 9 raw ingredients that spoil in the fridge).\n"
-                "- Have the hosts bounce off each other's points naturally and end by putting a sharp, specific follow-up question back to Musa!"
+                "CURRENT ROOM: 🥊 DEVIL'S ADVOCATE (UNSCRIPTED SPOKEN PUSHBACK & ACTIVE SPEAKING CHALLENGE).\n"
+                "- BREAK THE FORMULA: Do NOT write three symmetrical, overly polished mini-essays! Vary the rhythm and turn lengths:\n"
+                "  * Use authentic spoken American discourse markers, quick pushbacks, or concessions ('Hold on, though—', 'Wait, are we really saying...', 'Fair point on X, but...', 'Come on,').\n"
+                "  * Have one host challenge the core premise (e.g., pointing out that open-plan offices have constant walk-up interruptions, performative busywork, and exhausting commutes that drain deep focus).\n"
+                "  * Have another host draw a sharp distinction (e.g., separating bad management/unclear metrics from remote work itself, or asynchronous deep work vs. synchronous collaboration).\n"
+                "  * Have the third host react directly to one of the other hosts or give a concrete real-world example.\n"
+                "- FORCE ACTIVE SPEAKING AT THE END: End the final turn by putting Musa on the spot with a specific dilemma or trade-off he has to defend in his next reply (not a generic 'what do you think?')."
             )
         if mode == "cultural_decode":
             return (
@@ -571,7 +566,7 @@ class NYCLoungeAI:
             )
         return (
             "CURRENT ROOM: 🗣️ NYC SPONTANEOUS BANTER.\n"
-            "- Engage naturally like close NYC friends. IMPORTANT: If Musa shares an opinion or take (e.g., 'I think people spend way too much money eating out...'), do NOT just blindly agree! Push back playfully with realistic counter-perspectives, debate each other across turns, and ask Musa a follow-up question."
+            "- Engage naturally like close NYC friends with varied turn lengths, quick reactions, and a concrete follow-up question that invites Musa to speak."
         )
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
@@ -817,66 +812,51 @@ class NYCLoungeAI:
         raw_upgrades: List[LexicalFrameUpgrade],
         uid: int,
         badge_r: str,
-        normalize_fn: Any = None
+        normalize_fn: Any
     ) -> List[LexicalFrameUpgrade]:
-        if normalize_fn is None:
-            normalize_fn = lambda s: (s or "").strip()
+        """
+        Validates lexical upgrades, removes any stray foreign-script glitches (e.g. Cyrillic/CJK)
+        from English fields, enforces non-empty semantic explanations and examples, and tracks taught chunks.
+        """
+        def _clean_en(txt: str) -> str:
+            if not txt:
+                return ""
+            # Strip any stray Cyrillic, Greek, or CJK characters/words that could leak into English definitions
+            cleaned = re.sub(r"[\u0400-\u04FF\u0370-\u03FF\u4E00-\u9FFF]+/?", "", str(txt))
+            cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+            return normalize_fn(cleaned)
 
-        exclusion_set = {
-            re.sub(r"\s+", " ", c.strip().lower())
-            for c in self._get_active_exclusion_chunks(uid)
-        }
+        valid_list: List[LexicalFrameUpgrade] = []
+        seen_chunks = set()
+        recent_list = self._recent_taught_by_user.setdefault(uid, [])
 
-        seen_in_turn = set()
-        fresh_valid: List[LexicalFrameUpgrade] = []
-        fallback_valid: List[LexicalFrameUpgrade] = []
-
-        for item in (raw_upgrades or []):
-            item.register_tag = badge_r
-            item.chunk = normalize_fn(getattr(item, "chunk", ""))
-            item.b2_foil = normalize_fn(getattr(item, "b2_foil", ""))
-            item.explanation = normalize_fn(getattr(item, "explanation", ""))
-            item.example = normalize_fn(getattr(item, "example", ""))
-            item.followup = normalize_fn(getattr(item, "followup", ""))
-            item.arabic_equivalent = (getattr(item, "arabic_equivalent", "") or "").strip()
-
-            if not item.arabic_equivalent and "—" in item.explanation:
-                parts = item.explanation.split("—", 1)
-                item.arabic_equivalent = parts[0].strip()
-                item.explanation = parts[1].strip()
-
-            c_key = re.sub(r"\s+", " ", item.chunk.lower()).strip()
-            if not c_key or not item.example or not (item.arabic_equivalent or item.explanation):
+        for up in (raw_upgrades or []):
+            ch_clean = _clean_en(getattr(up, "chunk", ""))
+            if not ch_clean or ch_clean.lower() in seen_chunks:
                 continue
-            if c_key in seen_in_turn:
+            ex_clean = _clean_en(getattr(up, "example", ""))
+            expl_clean = _clean_en(getattr(up, "explanation", ""))
+            foil_clean = _clean_en(getattr(up, "b2_foil", ""))
+            if not ex_clean or not expl_clean:
                 continue
 
-            item.cloze_sentence = self._build_validated_cloze(
-                item.chunk, item.example, getattr(item, "cloze_sentence", "")
-            )
-            seen_in_turn.add(c_key)
-            fallback_valid.append(item)
-            if c_key not in exclusion_set:
-                fresh_valid.append(item)
+            up.chunk = ch_clean
+            up.example = ex_clean
+            up.explanation = expl_clean
+            up.b2_foil = foil_clean
+            up.register_tag = badge_r
+            up.cloze_sentence = self._build_validated_cloze(ch_clean, ex_clean, _clean_en(getattr(up, "cloze_sentence", "")))
+            seen_chunks.add(ch_clean.lower())
+            valid_list.append(up)
 
-        # إذا توفرت عبارات جديدة نأخذها فوراً؛ أما لو كانت الدردشة طويلة جداً في موضوع واحد وتطابقت الـ 3 كلها مع السابق،
-        # نحتفظ بعبارة واحدة صالحة كبديل آمن بدلاً من إظهار بطاقة فارغة للمستخدم!
-        if fresh_valid:
-            selected = fresh_valid[:3]
-        elif len(fallback_valid) >= 3:
-            selected = fallback_valid[:1]
-        else:
-            selected = []
+        for up in valid_list[:3]:
+            low_c = up.chunk.lower()
+            if low_c not in recent_list:
+                recent_list.append(low_c)
+        if len(recent_list) > 30:
+            del recent_list[:-30]
 
-        if uid and hasattr(self, "_recent_taught_by_user"):
-            hist_list = self._recent_taught_by_user.setdefault(uid, [])
-            for s_it in selected:
-                norm_c = re.sub(r"\s+", " ", s_it.chunk.lower()).strip()
-                if norm_c and norm_c not in hist_list:
-                    hist_list.append(norm_c)
-            self._recent_taught_by_user[uid] = hist_list[-9:]
-
-        return selected
+        return valid_list[:3]
 
 
     def process_situation_gambit(
