@@ -148,10 +148,11 @@ def format_lounge_turn_html(
     def _e(val: Any) -> str:
         return html.escape(str(val or ""), quote=False)
 
+    LRM = "\u200e"
     top_section = ""
     if active_uptakes:
         up_badges = ", ".join([f"<code>{_e(u)}</code>" for u in active_uptakes])
-        top_section += f"🔥 <b>Active Mastery! You naturally used from your Vault:</b> {up_badges}\n\n"
+        top_section += f"🔥 <b>Active Mastery! You naturally used from your Coaching Targets:</b> {up_badges}\n\n"
 
     if is_voice and res.transcription:
         top_section += f"🎙️ <i>\"{_e(res.transcription)}\"</i>\n\n"
@@ -213,13 +214,13 @@ def format_lounge_turn_html(
             ar_eq = getattr(up, "arabic_equivalent", "").strip()
             expl_str = getattr(up, "explanation", "").strip()
             if ar_eq and expl_str and ar_eq not in expl_str:
-                note_txt = f"{ar_eq} — {expl_str}"
+                note_txt = f"{ar_eq}{LRM} — {LRM}{expl_str}"
             else:
                 note_txt = ar_eq or expl_str
-            expl_part = f"\n  └ 💡 {_e(note_txt)}" if note_txt else ""
+            expl_part = f"\n{LRM}  └ 💡 {_e(note_txt)}" if note_txt else ""
             mirror_lines.append(
-                f"<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
-                f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
+                f"{LRM}<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
+                f"{LRM}  └ 🗽 <i>\"{_e(up.example)}\"</i>"
             )
 
     mirror_block = "\n".join(mirror_lines)
@@ -1710,3 +1711,103 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def build_contextual_take2_prompt(uid: int, tok: str, msg_text: str = "") -> Tuple[str, Optional[str]]:
+    """
+    Builds a context-aware Take 2 Active Speaking Task that:
+    1. Preserves the exact debate topic and quotes the hosts' follow-up question/challenge.
+    2. Extracts the Native Mirror recasts and the 3 target expressions from either `atomic_batches` or `msg_text`.
+    3. Gives the learner a concrete, two-track speaking task (defend/answer the host's challenge OR deliver the refined recast)
+       and activates Take 2 tracking in `session_meta` so the next message is evaluated as a live speaking attempt.
+    """
+    batch = db.get_atomic_batch(uid, tok) if tok else None
+    host_question = ""
+    natural_flow = ""
+    punchy_cut = ""
+    chunks: List[str] = []
+
+    if batch:
+        natural_flow = (batch.get("audio_clean_text") or "").strip()
+        for it in (batch.get("items") or []):
+            ch = (it.get("chunk") or "").strip()
+            if ch:
+                chunks.append(ch)
+        raw_hosts = batch.get("host_reply_text") or ""
+        try:
+            turns_data = json.loads(raw_hosts)
+            if isinstance(turns_data, list) and turns_data:
+                last_t = turns_data[-1]
+                sp = (last_t.get("speaker") or "jake").capitalize()
+                tx = (last_t.get("text") or "").strip()
+                if tx:
+                    host_question = f"{sp}: \"{tx}\""
+        except Exception:
+            pass
+
+    # Fallback / enrichment directly from the visible Telegram message text (`call.message.text`)
+    if msg_text:
+        lines = [ln.strip() for ln in msg_text.splitlines() if ln.strip()]
+        if not host_question:
+            host_lines = [ln for ln in lines if any(ln.startswith(p) for p in ("🧔‍♂️", "👩🏼‍💼", "🧢", "Marcus:", "Chloe:", "Jake:"))]
+            if host_lines:
+                host_question = host_lines[-1]
+        if not natural_flow:
+            for ln in lines:
+                if "Natural Flow:" in ln:
+                    natural_flow = ln.split("Natural Flow:", 1)[1].strip()
+                elif "Punchy Cut:" in ln:
+                    punchy_cut = ln.split("Punchy Cut:", 1)[1].strip()
+        if not chunks:
+            for ln in lines:
+                m_ch = re.match(r"^\([123]\)\s+(.+?)(?:\s+\(instead of:|$)", ln)
+                if m_ch:
+                    chunks.append(m_ch.group(1).strip())
+
+    # Persist Take 2 active state & expressions in session_meta so the next user turn is coached & scored in context
+    meta = db.get_session_meta(uid)
+    meta["retry_expected"] = True
+    meta["take2_active"] = True
+    meta["take2_token"] = tok
+    meta["take2_host_question"] = host_question
+    meta["take2_targets"] = chunks[:3]
+    meta["take2_natural_flow"] = natural_flow
+    db.update_session_meta(uid, meta)
+
+    # Also ensure the 3 expressions are in the user's vault/history context if not already saved
+    if not batch and msg_text and host_question:
+        try:
+            hist = db.get_history(uid, limit=4)
+            if not any(host_question[:30] in (h.get("content") or "") for h in hist):
+                db.add_history(uid, "assistant", host_question)
+        except Exception:
+            pass
+
+    esc_q = html.escape(host_question or "Give a concrete example to defend or qualify your position.", quote=False)
+    esc_nf = html.escape(natural_flow, quote=False)
+    esc_pc = html.escape(punchy_cut, quote=False)
+
+    chunks_bullets = ""
+    if chunks:
+        formatted_chunks = "  •  ".join([f"<code>{html.escape(c, quote=False)}</code>" for c in chunks[:3]])
+        chunks_bullets = f"\n🎯 <b>Target Expressions to Weave In (Pick 1 or 2):</b>\n{formatted_chunks}\n"
+
+    recast_block = ""
+    if esc_nf:
+        recast_block += f"\n🪞 <b>Your Polished Opening Anchor:</b>\n• <i>Natural Flow:</i> <code>{esc_nf}</code>"
+    if esc_pc:
+        recast_block += f"\n• <i>Punchy Cut:</i> <code>{esc_pc}</code>"
+
+    prompt_html = (
+        "🎙️ <b>Take 2 — Active Speaking Challenge (Your Turn!)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Don't just read—step in and defend your take in your own words.\n\n"
+        f"🥊 <b>The Question on the Table:</b>\n<i>{esc_q}</i>\n"
+        f"{chunks_bullets}"
+        f"{recast_block}\n\n"
+        "🗣️ <b>Your Speaking Task (Send a Voice Note 🎤 or Text 💬 now):</b>\n"
+        "1️⃣ <b>Answer the challenge above</b> with a concrete real-life example (or sharpen your original argument).\n"
+        "2️⃣ <b>Actively use at least ONE target expression</b> above in your response.\n"
+        "3️⃣ Marcus, Chloe, and Jake will respond directly to your example and diagnose your new phrasing!"
+    )
+    return prompt_html, (natural_flow or None)

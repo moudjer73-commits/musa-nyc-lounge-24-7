@@ -300,11 +300,11 @@ CRITICAL COACHING, REGISTER COHERENCE & PRAGMATIC MIRROR RULES (MUST OBEY):
    - ONLY flag genuine grammatical, verb-tense, morphological, agreement, or unnatural-collocation errors.
    - If the member's message is already grammatically sound and natural American English (such as: "I think people are too sensitive these days. You can't say anything without someone getting offended, and it's making honest conversations almost impossible."), you MUST return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`.
 
-4. C1/C2 COMPARATIVE NUANCE IN `lexical_upgrades`:
-   - Every `chunk` must be a high-utility spoken American expression used naturally in the turn or mirror (e.g., `walk on eggshells`, `take something the wrong way`, `pushback`, `thin-skinned`, `read the room`).
-   - `explanation` MUST be 100% pure English and MUST explicitly state:
-     (1) what the expression means, AND
-     (2) WHY a C1/C2 speaker chooses it over the simpler `b2_foil` (what extra nuance, tone, or social precision it carries, and in what register/context it fits best).
+4. STRICT CONTEXTUAL INTEGRATION & C1/C2 NUANCE IN `lexical_upgrades`:
+   - NEVER extract an unanchored expression that did not appear in the turn! Every single `chunk` (all 3 items) MUST physically appear verbatim inside `chat_turns` (spoken by Marcus, Chloe, or Jake) OR inside `rewrite_articulate` / `rewrite_casual`.
+   - `explanation` MUST be 100% pure English and MUST state:
+     (1) its exact meaning and how it was used in this turn (e.g., by Marcus/Chloe/Jake or in the Mirror), AND
+     (2) WHY a C1/C2 speaker chooses it over the simpler `b2_foil` (its exact register, social tone, and usage boundary).
 """
 
 
