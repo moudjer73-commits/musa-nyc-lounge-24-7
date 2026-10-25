@@ -692,19 +692,18 @@ class NYCLoungeAI:
             )
         if mode in ("subtext_decoder", "subtext", "cultural_decode"):
             return (
-                "CURRENT ROOM: 🕵️‍♂️ SUBTEXT DECODER (READING BETWEEN THE LINES IN AMERICAN ENGLISH).\n"
-                "- GOAL: Decode the hidden pragmatic meaning, tone, politeness strategy, or power dynamic behind what Musa quotes or asks about (or behind how his own statement lands on an American ear).\n"
+                "CURRENT ROOM: 🕵️‍♂️ SUBTEXT DECODER (READING BETWEEN THE LINES & TACTICAL COMEBACKS).\n"
+                "- GOAL: Decode the hidden pragmatic meaning, tone, and power dynamic behind what Musa quotes, AND give him exact, high-level C1/C2 spoken lines he can say back.\n"
                 "- HOW THE 3 HOSTS RESPOND IN `chat_turns`:\n"
-                "  * Marcus unpacks the social/workplace subtext: what the speaker is *actually* signaling beneath the polite or indirect surface wording.\n"
-                "  * Chloe explains the pragmatic risk or how different tones (passive-aggressive, diplomatic brush-off, soft 'no', or genuine warmth) change the meaning.\n"
-                "  * Jake gives the street-smart translation ('In plain English, that means...') and asks Musa how he wants to play his response (push back politely, call it out, or play along).\n"
-                "- NATIVE MIRROR & EXPRESSIONS: Provide natural C1/C2 ways to respond to or express that exact subtext, and extract 3 expressions directly used in the hosts' turns."
+                "  * Marcus unpacks the workplace/social subtext: what the speaker is *actually* signaling beneath the polite surface wording.\n"
+                "  * Chloe gives a polished, diplomatic C1/C2 comeback line in quotes (e.g., \"Before we put a pin in it, is your main hesitation the timeline or the scope?\") that pins them down without sounding defensive.\n"
+                "  * Jake gives a direct, street-smart comeback option and asks Musa how he wants to play it right now (roleplay the reply to his manager/colleague or test another angle).\n"
+                "- ALL 3 `lexical_upgrades` MUST be expressions physically used in the hosts' dialogue."
             )
         if mode in ("situation_gambit", "say_it_right"):
             return (
                 "CURRENT ROOM: 🎯 SAY IT RIGHT (HIGH-STAKES PRAGMATICS & REAL-WORLD SITUATIONS).\n"
-                "- Focus on how Americans navigate this exact social or workplace situation with natural phrasing, tact, and tone.\n"
-                "- Have the hosts roleplay or contrast the right vs. wrong way to handle the moment, then challenge Musa to try delivering his line."
+                "- Focus on how Americans navigate this exact social or workplace situation with natural phrasing, tact, and tone."
             )
         return (
             "CURRENT ROOM: 🗣️ NYC SPONTANEOUS BANTER.\n"

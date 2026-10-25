@@ -1183,49 +1183,43 @@ class LoungeDatabase:
 
     def get_atomic_batch(self, arg1: Any, arg2: Any = None) -> Optional[Dict[str, Any]]:
         """
-        Retrieves an atomic turn batch by `(user_id, token_key)` or `(token_key,)`.
-        Populates normalized keys (`items`, `audio_clean_text`, `mirror_clean_text`, `host_reply_text`)
-        so all inline buttons (`take2:`, `save:`, `tts:`, `host_tts:`, `mirror:`) work reliably.
+        Retrieves an atomic batch by `(user_id, token_key)` or `(token_key,)` safely across any schema version.
         """
-        if arg2 is not None:
-            uid: Optional[int] = int(arg1)
-            token_key = str(arg2).strip()
-        else:
-            uid = None
-            token_key = str(arg1).strip()
-
+        token_key = str(arg2 if arg2 is not None else arg1).strip()
         if not token_key:
             return None
-
-        with self._lock:
-            conn = self._get_conn()
-            row = None
-            if uid is not None:
-                row = conn.execute(
-                    "SELECT * FROM atomic_batches WHERE token_key = ? AND user_id = ?",
-                    (token_key, uid)
-                ).fetchone()
-            if row is None:
+        try:
+            with self._lock:
+                conn = self._get_conn()
                 row = conn.execute(
                     "SELECT * FROM atomic_batches WHERE token_key = ?",
                     (token_key,)
                 ).fetchone()
-            if not row:
-                return None
-
-            data = dict(row)
-            raw_items = data.get("items_json") or data.get("items") or "[]"
-            if isinstance(raw_items, str):
-                try:
-                    data["items"] = json.loads(raw_items)
-                except Exception:
+                if not row:
+                    return None
+                data = dict(row)
+                for k_json in ("payload_json", "batch_json", "data_json"):
+                    if k_json in data and isinstance(data[k_json], str) and data[k_json].strip():
+                        try:
+                            nested = json.loads(data[k_json])
+                            if isinstance(nested, dict):
+                                for nk, nv in nested.items():
+                                    data.setdefault(nk, nv)
+                        except Exception:
+                            pass
+                raw_items = data.get("items_json") or data.get("items") or "[]"
+                if isinstance(raw_items, str):
+                    try:
+                        data["items"] = json.loads(raw_items)
+                    except Exception:
+                        data["items"] = []
+                elif isinstance(raw_items, list):
+                    data["items"] = raw_items
+                else:
                     data["items"] = []
-            elif isinstance(raw_items, list):
-                data["items"] = raw_items
-            else:
-                data["items"] = []
-
-            data.setdefault("audio_clean_text", data.get("tts_clean_target") or "")
-            data.setdefault("mirror_clean_text", data.get("mirror_clean_target") or data.get("audio_clean_text") or "")
-            data.setdefault("host_reply_text", data.get("chat_turns_json") or "")
-            return data
+                data.setdefault("audio_clean_text", data.get("tts_clean_target") or "")
+                data.setdefault("mirror_clean_text", data.get("mirror_clean_target") or data.get("audio_clean_text") or "")
+                data.setdefault("host_reply_text", data.get("chat_turns_json") or "")
+                return data
+        except Exception:
+            return None

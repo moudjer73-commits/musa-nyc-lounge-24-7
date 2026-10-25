@@ -1733,7 +1733,7 @@ def build_contextual_take2_prompt(uid: int, tok: str, msg_text: str = "") -> Tup
                 ch = (it.get("chunk") or "").strip() if isinstance(it, dict) else ""
                 if ch and ch not in chunks:
                     chunks.append(ch)
-            raw_hosts = batch.get("host_reply_text") or ""
+            raw_hosts = str(batch.get("host_reply_text") or "")
             turns_data = json.loads(raw_hosts) if raw_hosts.startswith("[") else []
             if isinstance(turns_data, list) and turns_data:
                 last_t = turns_data[-1]
@@ -1776,7 +1776,7 @@ def build_contextual_take2_prompt(uid: int, tok: str, msg_text: str = "") -> Tup
     except Exception:
         pass
 
-    esc_q = html.escape(host_question or "Give a concrete real-life example to defend or qualify your position.", quote=False)
+    esc_q = html.escape(host_question or "Respond to the hosts' last point in your own words.", quote=False)
     esc_nf = html.escape(natural_flow, quote=False)
     esc_pc = html.escape(punchy_cut, quote=False)
 
@@ -1787,20 +1787,20 @@ def build_contextual_take2_prompt(uid: int, tok: str, msg_text: str = "") -> Tup
 
     recast_block = ""
     if esc_nf:
-        recast_block += f"\n🪞 <b>Your Polished Opening Anchor:</b>\n• <i>Natural Flow:</i> <code>{esc_nf}</code>"
+        recast_block += f"\n🪞 <b>Your Polished Anchor:</b>\n• <i>Natural Flow:</i> <code>{esc_nf}</code>"
     if esc_pc:
         recast_block += f"\n• <i>Punchy Cut:</i> <code>{esc_pc}</code>"
 
     prompt_html = (
         "🎙️ <b>Take 2 — Active Speaking Challenge (Your Turn!)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Don't just read—step in and defend your take in your own words.\n\n"
-        f"🥊 <b>The Question on the Table:</b>\n<i>{esc_q}</i>\n"
+        "Don't just read—step in and deliver your response in your own words.\n\n"
+        f"🥊 <b>Current Moment on the Table:</b>\n<i>{esc_q}</i>\n"
         f"{chunks_bullets}"
         f"{recast_block}\n\n"
         "🗣️ <b>Your Speaking Task (Send a Voice Note 🎤 or Text 💬 now):</b>\n"
-        "1️⃣ <b>Answer the challenge above</b> with a concrete real-life example (or sharpen your original argument).\n"
+        "1️⃣ <b>Respond directly to the moment above</b> (give a concrete example, defend your take, or deliver your comeback line).\n"
         "2️⃣ <b>Actively use at least ONE target expression</b> above in your response.\n"
-        "3️⃣ Marcus, Chloe, and Jake will respond directly to your example and diagnose your new phrasing!"
+        "3️⃣ Marcus, Chloe, and Jake will react to your move and diagnose your phrasing!"
     )
     return prompt_html, (natural_flow or None)
