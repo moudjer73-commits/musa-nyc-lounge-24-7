@@ -40,7 +40,7 @@ RegisterTagLiteral = Literal["🎙️ Articulate", "☕ Casual", "🎭 Witty", "
 
 
 class DiagnosticItem(BaseModel):
-    category: DiagnosticCategoryLiteral = Field(
+    category: str = Field(
         default="🎭 Natural Flow",
         description="One of: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'."
     )
@@ -67,7 +67,7 @@ class DiagnosticItem(BaseModel):
 
 class LexicalFrameUpgrade(BaseModel):
     chunk: str = Field(default="")
-    register_tag: RegisterTagLiteral = Field(default="🎙️ Articulate")
+    register_tag: str = Field(default="🎙️ Articulate")
     b2_foil: str = Field(default="")
     arabic_equivalent: str = Field(default="")
     explanation: str = Field(default="")
@@ -97,8 +97,8 @@ class LexicalFrameUpgrade(BaseModel):
 
 
 class ChatBubbleLine(BaseModel):
-    speaker: HostLiteral = Field(default="marcus")
-    pacing: PacingLiteral = Field(default="normal")
+    speaker: str = Field(default="marcus", description="Must be 'marcus', 'chloe', or 'jake'.")
+    pacing: str = Field(default="normal", description="One of: 'fast_interjection', 'normal', or 'thoughtful_slow'.")
     text: str = Field(default="")
 
     @field_validator("speaker", mode="before")
@@ -125,27 +125,24 @@ class ChatBubbleLine(BaseModel):
 
 class LoungeTurnResponse(BaseModel):
     transcription: str = Field(default="")
-    responding_persona: HostLiteral = Field(default="marcus")
+    responding_persona: str = Field(default="marcus", description="Must be 'marcus', 'chloe', or 'jake'.")
     chat_turns: List[ChatBubbleLine] = Field(default_factory=list)
     lounge_reply: str = Field(default="")
     rewrite_articulate: str = Field(
         default="",
-        description="Natural Flow: Smooth, idiomatic spoken American recast of the member's own message/question preserving exact pragmatic intent, volition, and register."
+        description="Natural Flow: Smooth, idiomatic spoken American recast of the member's own message preserving every claim and exact epistemic strength."
     )
     rewrite_casual: str = Field(
         default="",
-        description="Punchy Cut: Concise, natural spoken compression of the member's own message/question without altering connotation or volition."
+        description="Punchy Cut: Concise, natural spoken version of the member's own message retaining all claims and exact degree of certainty."
     )
     rewrite_witty: str = Field(default="")
     self_repair_pivot: str = Field(default="")
     acoustic_prosody_xray: str = Field(default="")
     tts_clean_target: str = Field(default="")
     mirror_clean_target: str = Field(default="")
-    diagnostics_status: DiagnosticsStatusLiteral = Field(default="checked_no_corrections")
-    diagnostics: List[DiagnosticItem] = Field(
-        default_factory=list,
-        description="List ALL genuine grammatical, tense, verb-form, agreement, or collocational errors found in the member's message (up to 4 items), ordered with the #1 pedagogical priority first. Empty `[]` if error-free."
-    )
+    diagnostics_status: str = Field(default="checked_no_corrections")
+    diagnostics: List[DiagnosticItem] = Field(default_factory=list)
     lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list)
     is_fallback: bool = Field(default=False)
 
@@ -294,8 +291,9 @@ class NYCLoungeAI:
         now = time.time()
         guaranteed_chain = [
             "gemini-2.5-flash",
-            "gemini-3-flash-preview",
             "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+            "gemini-3-flash-preview",
         ]
         for m in getattr(self, "_discovered_models", []):
             if m not in guaranteed_chain:
@@ -315,10 +313,10 @@ class NYCLoungeAI:
         max_output_tokens: int = 8192
     ) -> Any:
         """
-        Multi-model, multi-key resilient structured caller:
-        - Tries `gemini-2.5-flash` -> `gemini-3-flash-preview` -> `gemini-2.5-flash-lite` on each key.
-        - Note: 429 RESOURCE_EXHAUSTED in Gemini is per-model! So a 429 or 503 on one model immediately
-          switches to the next model in `models_to_try` within the SAME turn before rotating keys.
+        Bulletproof multi-model, multi-key structured caller:
+        - Explicitly disables false-positive safety blocks on debate topics (`BLOCK_NONE`).
+        - Prioritizes high-quota stable models (`gemini-2.5-flash` -> `gemini-2.5-flash-lite` -> `gemini-2.0-flash` -> `gemini-3-flash-preview`).
+        - Adds smart backoff on 429/503 so rapid transitions never trip burst rate limits.
         """
         if not self.keys_pool:
             raise RuntimeError("API key is not configured.")
@@ -338,6 +336,13 @@ class NYCLoungeAI:
 
         eff_tokens = max(8192, int(max_output_tokens or 8192))
 
+        safety_cfg = [
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+        ]
+
         for k_idx in ordered_key_indices:
             key = self.keys_pool[k_idx]
             client = genai.Client(api_key=key, http_options={"timeout": 45000})
@@ -354,7 +359,8 @@ class NYCLoungeAI:
                             "temperature": temperature,
                             "max_output_tokens": eff_tokens,
                             "response_mime_type": "application/json",
-                            "response_schema": schema_cls
+                            "response_schema": schema_cls,
+                            "safety_settings": safety_cfg,
                         }
                         resp = client.models.generate_content(
                             model=model_name,
@@ -380,7 +386,7 @@ class NYCLoungeAI:
                                 f"stage=complete latency_ms={latency_ms} status=ok_json"
                             )
                             return parsed_obj
-                        raise ValueError("Empty response payload from Gemini API")
+                        raise ValueError(f"Empty response payload (finish_reason={getattr(resp, 'candidates', None)})")
                     except Exception as e:
                         latency_ms = int((time.perf_counter() - t0) * 1000)
                         last_err = e
@@ -402,8 +408,8 @@ class NYCLoungeAI:
                         if "404" in upper_err or "NOT_FOUND" in upper_err or "NO LONGER AVAILABLE" in upper_err:
                             self._dead_models_until[model_name] = time.time() + 86400
                             break
-                        # On 429 or 503, immediately move to the next model in `models_to_try` (e.g., gemini-2.5-flash -> gemini-2.5-flash-lite)
                         if any(q_err in upper_err for q_err in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE")):
+                            time.sleep(1.0 + random.uniform(0.2, 0.5))
                             break
                         if attempt == 1:
                             time.sleep(0.8)
