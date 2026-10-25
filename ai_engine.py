@@ -1,3 +1,6 @@
+import uuid
+import random
+import traceback
 from pathlib import Path
 # -*- coding: utf-8 -*-
 """
@@ -39,7 +42,7 @@ RegisterTagLiteral = Literal["🎙️ Articulate", "☕ Casual", "🎭 Witty", "
 class DiagnosticItem(BaseModel):
     category: DiagnosticCategoryLiteral = Field(
         default="🎭 Natural Flow",
-        description="Strictly one of: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'."
+        description="One of: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'."
     )
     user_said: str = Field(default="")
     native_fix: str = Field(default="")
@@ -49,25 +52,17 @@ class DiagnosticItem(BaseModel):
     @classmethod
     def _norm_category(cls, value: Any) -> str:
         s = str(value or "").strip()
-        aliases = {
-            "🎭 Natural Flow": "🎭 Natural Flow",
-            "natural flow": "🎭 Natural Flow",
-            "💎 Lexical Upgrade": "💎 Lexical Upgrade",
-            "lexical upgrade": "💎 Lexical Upgrade",
-            "lexical": "💎 Lexical Upgrade",
-            "📐 Spoken Structure": "📐 Spoken Structure",
-            "spoken structure": "📐 Spoken Structure",
-            "grammar": "📐 Spoken Structure",
-            "🗽 Pragmatic Nuance": "🗽 Pragmatic Nuance",
-            "pragmatic nuance": "🗽 Pragmatic Nuance",
-            "pragmatic": "🗽 Pragmatic Nuance",
-            "register mismatch": "🗽 Pragmatic Nuance",
-        }
-        if s in aliases:
-            return aliases[s]
-        if s.lower() in aliases:
-            return aliases[s.lower()]
-        raise ValueError(f"Invalid diagnostic category: {value!r}")
+        allowed = {"🎭 Natural Flow", "💎 Lexical Upgrade", "📐 Spoken Structure", "🗽 Pragmatic Nuance"}
+        if s in allowed:
+            return s
+        low = s.lower()
+        if any(w in low for w in ("lex", "vocab", "word", "colloc", "idiom", "choice")):
+            return "💎 Lexical Upgrade"
+        if any(w in low for w in ("struct", "gram", "syntax", "tense", "verb", "morph", "agree", "form")):
+            return "📐 Spoken Structure"
+        if any(w in low for w in ("prag", "tone", "reg", "nuance", "politen", "social")):
+            return "🗽 Pragmatic Nuance"
+        return "🎭 Natural Flow"
 
 
 class LexicalFrameUpgrade(BaseModel):
@@ -86,23 +81,19 @@ class LexicalFrameUpgrade(BaseModel):
     @classmethod
     def _norm_reg_tag(cls, value: Any) -> str:
         s = str(value or "").strip()
-        aliases = {
-            "🎙️ Articulate": "🎙️ Articulate",
-            "articulate": "🎙️ Articulate",
-            "☕ Casual": "☕ Casual",
-            "casual": "☕ Casual",
-            "🎭 Witty": "🎭 Witty",
-            "witty": "🎭 Witty",
-            "💼 Executive": "💼 Executive",
-            "executive": "💼 Executive",
-            "🤝 Diplomatic": "🤝 Diplomatic",
-            "diplomatic": "🤝 Diplomatic",
-        }
-        if s in aliases:
-            return aliases[s]
-        if s.lower() in aliases:
-            return aliases[s.lower()]
-        raise ValueError(f"Invalid register_tag: {value!r}")
+        allowed = {"🎙️ Articulate", "☕ Casual", "🎭 Witty", "💼 Executive", "🤝 Diplomatic"}
+        if s in allowed:
+            return s
+        low = s.lower()
+        if "casual" in low or "☕" in low or "informal" in low or "street" in low:
+            return "☕ Casual"
+        if "witty" in low or "🎭" in low or "humor" in low or "iron" in low or "playful" in low:
+            return "🎭 Witty"
+        if "exec" in low or "💼" in low or "business" in low or "pro" in low or "formal" in low:
+            return "💼 Executive"
+        if "diplo" in low or "🤝" in low or "tact" in low or "polite" in low:
+            return "🤝 Diplomatic"
+        return "🎙️ Articulate"
 
 
 class ChatBubbleLine(BaseModel):
@@ -114,35 +105,22 @@ class ChatBubbleLine(BaseModel):
     @classmethod
     def _norm_speaker(cls, value: Any) -> str:
         s = str(value or "").strip().lower()
-        aliases = {
-            "marcus": "marcus",
-            "marcus:": "marcus",
-            "🧔‍♂️ marcus": "marcus",
-            "chloe": "chloe",
-            "chloe:": "chloe",
-            "👩🏼‍💼 chloe": "chloe",
-            "jake": "jake",
-            "jake:": "jake",
-            "🧢 jake": "jake",
-        }
-        if s not in aliases:
-            raise ValueError(f"Invalid host speaker: {value!r}")
-        return aliases[s]
+        for h in ("marcus", "chloe", "jake"):
+            if h in s:
+                return h
+        return "marcus"
 
     @field_validator("pacing", mode="before")
     @classmethod
     def _norm_pacing(cls, value: Any) -> str:
         s = str(value or "").strip().lower()
-        aliases = {
-            "fast_interjection": "fast_interjection",
-            "fast": "fast_interjection",
-            "normal": "normal",
-            "thoughtful_slow": "thoughtful_slow",
-            "slow": "thoughtful_slow",
-        }
-        if s not in aliases:
-            raise ValueError(f"Invalid pacing: {value!r}")
-        return aliases[s]
+        if s in ("fast_interjection", "normal", "thoughtful_slow"):
+            return s
+        if any(w in s for w in ("fast", "quick", "rapid", "interject", "punchy", "brisk")):
+            return "fast_interjection"
+        if any(w in s for w in ("slow", "thought", "deliberate", "measured", "calm")):
+            return "thoughtful_slow"
+        return "normal"
 
 
 class LoungeTurnResponse(BaseModel):
@@ -175,36 +153,22 @@ class LoungeTurnResponse(BaseModel):
     @classmethod
     def _norm_resp_persona(cls, value: Any) -> str:
         s = str(value or "").strip().lower()
-        aliases = {
-            "marcus": "marcus",
-            "marcus:": "marcus",
-            "🧔‍♂️ marcus": "marcus",
-            "chloe": "chloe",
-            "chloe:": "chloe",
-            "👩🏼‍💼 chloe": "chloe",
-            "jake": "jake",
-            "jake:": "jake",
-            "🧢 jake": "jake",
-        }
-        if s not in aliases:
-            raise ValueError(f"Invalid responding_persona: {value!r}")
-        return aliases[s]
+        for h in ("marcus", "chloe", "jake"):
+            if h in s:
+                return h
+        return "marcus"
 
     @field_validator("diagnostics_status", mode="before")
     @classmethod
     def _norm_diag_status(cls, value: Any) -> str:
         s = str(value or "").strip().lower()
-        aliases = {
-            "corrections_found": "corrections_found",
-            "errors_found": "corrections_found",
-            "checked_no_corrections": "checked_no_corrections",
-            "no_corrections": "checked_no_corrections",
-            "none": "checked_no_corrections",
-            "not_assessed": "not_assessed",
-        }
-        if s not in aliases:
-            raise ValueError(f"Invalid diagnostics_status: {value!r}")
-        return aliases[s]
+        if s in ("corrections_found", "checked_no_corrections", "not_assessed"):
+            return s
+        if any(w in s for w in ("found", "error", "fix", "correct")) and "no_" not in s and "no " not in s:
+            return "corrections_found"
+        if any(w in s for w in ("not_", "not ", "skip", "n/a", "scenario")):
+            return "not_assessed"
+        return "checked_no_corrections"
 
 
 class SituationGambitResponse(BaseModel):
@@ -223,17 +187,10 @@ class SituationGambitResponse(BaseModel):
     @classmethod
     def _norm_gambit_persona(cls, value: Any) -> str:
         s = str(value or "").strip().lower()
-        aliases = {
-            "marcus": "marcus",
-            "marcus:": "marcus",
-            "chloe": "chloe",
-            "chloe:": "chloe",
-            "jake": "jake",
-            "jake:": "jake",
-        }
-        if s not in aliases:
-            raise ValueError(f"Invalid responding_persona: {value!r}")
-        return aliases[s]
+        for h in ("chloe", "marcus", "jake"):
+            if h in s:
+                return h
+        return "chloe"
 
 
 
@@ -795,19 +752,42 @@ class NYCLoungeAI:
 
 
     @staticmethod
-    def _build_validated_cloze(chunk: str, example: str, existing_cloze: str = "") -> str:
-        chunk_c = (chunk or "").strip()
-        example_c = (example or "").strip()
-        existing_c = (existing_cloze or "").strip()
-        if not chunk_c or not example_c:
+    def _build_validated_cloze(chunk: str, example: str, model_cloze: str = "") -> str:
+        """
+        Builds a reliable cloze sentence (`______`) for the Quiz button even when the chunk
+        starts with 'to ' (e.g., 'to get up to speed') or has bracket placeholders ('drop [amount] on').
+        """
+        ex = (example or "").strip()
+        ch = (chunk or "").strip()
+        if not ex or not ch:
             return ""
-        if "______" in existing_c and existing_c.lower() != example_c.lower():
-            return existing_c
-        pattern = re.compile(re.escape(chunk_c), flags=re.IGNORECASE)
-        if pattern.search(example_c):
-            cloze_cand = pattern.sub("______", example_c, count=1)
-            if "______" in cloze_cand and cloze_cand != example_c:
-                return cloze_cand
+        if model_cloze and "______" in model_cloze and model_cloze.strip() != ex:
+            return model_cloze.strip()
+
+        # 1. Exact case-insensitive match
+        pat_exact = re.compile(re.escape(ch), flags=re.IGNORECASE)
+        if pat_exact.search(ex):
+            return pat_exact.sub("______", ex, count=1)
+
+        # 2. Strip leading 'to ' or 'a ' / 'the ' and bracketed placeholders like '[amount]' or '[someone]'
+        core_ch = re.sub(r"^(?:to|a|an|the)\s+", "", ch, flags=re.IGNORECASE).strip()
+        core_ch_no_brackets = re.sub(r"\[[^\]]+\]", r"\\w+(?:\\s+\\w+)?", core_ch).strip()
+        try:
+            pat_flex = re.compile(core_ch_no_brackets, flags=re.IGNORECASE)
+            if pat_flex.search(ex):
+                return pat_flex.sub("______", ex, count=1)
+        except re.error:
+            pass
+
+        # 3. Match anchor words of the chunk (allowing verb inflection on the first word, e.g., drop -> dropped)
+        words = [w for w in re.findall(r"[A-Za-z']+", core_ch) if w.lower() not in ("someone", "something", "amount", "one", "ones")]
+        if len(words) >= 2:
+            w0_stem = words[0][:max(3, len(words[0]) - 1)]
+            w_last = words[-1]
+            pat_span = re.compile(rf"\b{re.escape(w0_stem)}\w*(?:\s+\S+){{1,4}}\s+{re.escape(w_last)}\b", flags=re.IGNORECASE)
+            if pat_span.search(ex):
+                return pat_span.sub("______", ex, count=1)
+
         return ""
 
 
