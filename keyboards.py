@@ -4,7 +4,6 @@ keyboards.py — Interactive Club Keyboards for Musa's NYC Lounge
 Includes:
 - Full Cast Selector (Choose 1 Solo, 2 Duo, or 3 Trio Hosts anytime)
 - Long-Form Duo & Trio Podcast Studio Menu (NotebookLM Style)
-- Pushed-Output 'Take 2 (Retry)' Button & Multi-Voice Chat Playback
 """
 from typing import Dict, Any
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -142,7 +141,6 @@ class LoungeKeyboards:
             kb.row(*save_btns)
 
         kb.row(
-            InlineKeyboardButton("🎙️ Take 2", callback_data=f"take2:{token_key}"),
             InlineKeyboardButton("👥 Hosts", callback_data="menu:cast_selector"),
             InlineKeyboardButton("🎲 Topic", callback_data="action:spark_topic"),
             InlineKeyboardButton("🏠 Menu", callback_data="menu:home")
