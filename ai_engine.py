@@ -132,15 +132,15 @@ class LoungeTurnResponse(BaseModel):
     )
     rewrite_articulate: str = Field(
         default="",
-        description="Strategy 1 — Natural Flow (strictly in the member's ACTIVE register): Preserve the full thought, scope, causality, and degree of certainty while optimizing spoken rhythm. In Witty mode, use dry understatement or comic contrast in imagery without distorting the claim."
+        description="Strategy 1 — Natural Flow (strictly in the member's ACTIVE register): Preserve the full thought, scope, causality, and degree of certainty while optimizing spoken rhythm. Never use literary melodrama."
     )
     rewrite_casual: str = Field(
         default="",
-        description="Strategy 2 — Punchy Cut (strictly in the member's ACTIVE register): Compress the member's exact thought concisely without exaggerating certainty or scope. In Witty mode, keep the compression sharp and ironical without turning a moderate claim into an absolute."
+        description="Strategy 2 — Punchy Cut (strictly in the member's ACTIVE register): Compress the member's exact thought concisely without exaggerating certainty or scope."
     )
     rewrite_witty: str = Field(
         default="",
-        description="Strategy 3 — Conversational Fronting / Ellipsis (strictly in the member's ACTIVE register, 1st-person POV): Recast the member's thought using spoken fronting or conversational ellipsis. In Witty mode, land a dry observational twist while keeping the exact meaning."
+        description="Optional backup spoken alternative in 1st-person POV."
     )
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
     acoustic_prosody_xray: str = Field(default="", description="1-sentence rhythm/stress note for voice input; empty string for text input.")
@@ -264,31 +264,27 @@ class SpokenFluencyAuditSchema(BaseModel):
 
 
 PRIORITY_1_TO_5_BLOCK = """
-CRITICAL COACHING & DIALOGUE OVERRIDE (PRIORITIES 1–5 — MUST OBEY):
-1. PRIORITY 1 — CORRECTION INTEGRITY (`diagnostics`):
-   - NEVER invent errors just to fill `diagnostics`! If the user's input is already natural, grammatical American English (e.g., "Honestly, I think people who work from home are less productive. They get distracted all day and don't have anyone checking on them. What do you think?"), you MUST return `diagnostics = []` (EMPTY LIST)!
-   - NEVER replace "checking on them" (routine/supportive check) with "looking over their shoulder" (intrusive micromanagement—different meaning!).
-   - NEVER replace "people who work from home" with "the remote workforce" or "Honestly, I think" with "I'm of the mind that".
-   - ONLY populate `diagnostics` when the user makes a real grammatical, lexical, or non-native collocational mistake.
-2. PRIORITY 2 — SEMANTIC FIDELITY IN MIRRORS (`rewrite_articulate` = Natural Flow, `rewrite_casual` = Punchy Cut):
-   - Preserve the user's original claim, degree of certainty ("I think" / "can be" / "tend to"), and scope.
-   - NEVER escalate "are less productive" into "kills productivity" or "is a productivity killer".
-   - NEVER escalate "don't have anyone checking on them" into "zero accountability".
-   - `Natural Flow` optimizes for natural spoken rhythm & the active mode's communicative strategy.
-   - `Punchy Cut` optimizes for brevity/compression without exaggerating the claim (e.g., "Honestly, I think working from home can hurt productivity. People get distracted, and there's less oversight.").
-3. PRIORITY 3 — DISTINCT COMMUNICATIVE STRATEGY PER MODE (IN BOTH BANTER & MIRROR):
-   - 🎙️ Articulate: Qualify the claim and develop clear reasoning in plain, natural spoken English (e.g., "I think remote work can undermine productivity when people struggle to separate work from their personal lives."). Ban report-speak ("I'm of the opinion that", "primarily due to", "erosion of boundaries", "physical architecture", "lapse in focus").
-   - ☕ Casual: Relaxed, spontaneous flow ("I think working from home can make it harder to stay focused. There's just more stuff competing for your attention."). Use standard `-ing` spelling ALWAYS—never write `paintin'`, `cleanin'`, `crankin'`, `buggin'`, or `workin'`.
-   - 🎭 Witty: Both the hosts AND the Mirror (`Natural Flow` & `Punchy Cut`) MUST use a recognizable comic mechanism—hyperbole, irony, comic contrast, or dry understatement (e.g., "Working from home is great until a five-minute break somehow turns into a full kitchen renovation.").
-   - 💼 Executive: Frame around management reasoning, measurable targets, and variables (e.g., "I'd focus less on where people work and more on whether their output meets clearly defined targets."). Never misuse "executive presence" for working near a kitchen or make sweeping absolute claims.
-   - 🤝 Diplomatic: Demonstrate acknowledgment ("I can see why that would be a concern..."), qualified disagreement ("...although I think the impact probably depends on the person and the kind of work they're doing"), and constructive reframing. Never confuse diplomacy with stiff formality.
-4. PRIORITY 4 — NATURAL DIALOGUE REALISM (NO ENGINEERED 3-ESSAY SCRIPTS):
-   - Do NOT write three polished mini-essays in a fixed formula (Marcus abstract -> Jake counter -> Chloe synthesis + question).
-   - Write a realistic, spontaneous back-and-forth where hosts react directly to one another with varied turn lengths (including short 1-sentence reactions or quick challenges). Do NOT force every turn to end with a tutoring question directed at the user!
-5. PRIORITY 5 — FRESH EXPRESSIONS & ACCURATE ARABIC EQUIVALENTS (`lexical_upgrades`):
-   - Provide 3 high-value spoken expressions relevant to this specific mode and topic.
-   - DO NOT recycle overused defaults like "looking over someone's shoulder" or "phoning it in" across modes.
-   - In each item's `explanation`, ALWAYS begin with the accurate Arabic equivalent (المكافئ العربي الدقيق) followed by a 1-sentence note on its exact connotation and when to use it.
+CRITICAL COACHING, REGISTER COHERENCE & VOICE PRESERVATION RULES (MUST OBEY):
+1. ZERO TONAL DISSONANCE — ADAPT HOST PERSPECTIVES STRICTLY TO THE ACTIVE VIBE:
+   - Keep each host's cognitive lens distinct WITHOUT breaking the active register!
+   - Marcus = conceptual distinctions & assumptions; Chloe = interpersonal & social dynamics; Jake = practical, on-the-ground reality.
+   - In 🎭 Witty or ☕ Casual: use playful teasing, dry irony, and specific everyday NYC details.
+   - In 💼 Executive, 🤝 Diplomatic, or 🎙️ Articulate: do NOT use slapstick jokes, roasting, or casual slang! Instead, have Jake focus on practical execution/bottlenecks, Chloe on stakeholder/team dynamics, and Marcus on strategic/conceptual trade-offs—all in the exact active register.
+
+2. PRESERVE THE USER'S NATURAL SPOKEN VOICE IN THE MIRROR (NO PURPLE PROSE):
+   - Keep `rewrite_articulate` (Natural Flow) and `rewrite_casual` (Punchy Cut) faithful to the user's degree of certainty, scope, and natural spoken voice.
+   - NEVER use ornate, novelistic melodrama ("noblest intentions", "evaporate into a void", "absolute stasis") or stiff report-speak ("I am of the opinion that", "primarily due to").
+
+3. ADVANCE THE CONVERSATION — NO REPETITIVE THERAPIST REASSURANCE:
+   - Never have all three hosts validate the same point or repeat generic comforting clichés ("Everyone has off days", "Don't beat yourself up").
+   - Each turn must advance the discussion with a distinct angle, a concrete observation, or a sharp, natural reaction.
+
+4. STRICT LEXICAL PRECISION & SCENE ANCHORING (`lexical_upgrades`):
+   - Every expression MUST fit the exact topic and active register—never tack on disconnected corporate clichés.
+   - Clearly state the accurate Arabic equivalent in `arabic_equivalent` and the exact usage boundary/connotation in `explanation` (e.g., distinguishing 'a total wash' = produced no useful result vs. 'call it a wash' = gains and losses cancel out).
+
+5. CORRECTION INTEGRITY (`diagnostics`):
+   - Only populate `diagnostics` for genuine grammatical errors, non-native collocations, or clear register mismatches. If the user's English is already natural, return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`.
 """
 
 
@@ -299,6 +295,7 @@ class NYCLoungeAI:
         self._key_idx = 0
         self._dead_models_until: Dict[str, float] = {}
         self._discovered_models: List[str] = list(GEMINI_MODELS_CHAIN)
+        self._recent_taught_by_user: Dict[int, List[str]] = {}
 
     def _get_client(self) -> genai.Client:
         if not self.keys_pool:
@@ -682,16 +679,15 @@ class NYCLoungeAI:
         if normalize_fn is None:
             normalize_fn = lambda s: (s or "").strip()
 
-        recent_chunks = set()
-        try:
-            if self.db and uid:
-                vault_items = self.db.get_user_vault(uid, limit=30)
-                recent_chunks = {re.sub(r"\s+", " ", (item.get("chunk") or "").strip().lower()) for item in vault_items if item.get("chunk")}
-        except Exception:
-            pass
+        exclusion_set = {
+            re.sub(r"\s+", " ", c.strip().lower())
+            for c in self._get_active_exclusion_chunks(uid)
+        }
 
         seen_in_turn = set()
         fresh_valid: List[LexicalFrameUpgrade] = []
+        fallback_valid: List[LexicalFrameUpgrade] = []
+
         for item in (raw_upgrades or []):
             item.register_tag = badge_r
             item.chunk = normalize_fn(getattr(item, "chunk", ""))
@@ -709,16 +705,35 @@ class NYCLoungeAI:
             c_key = re.sub(r"\s+", " ", item.chunk.lower()).strip()
             if not c_key or not item.example or not (item.arabic_equivalent or item.explanation):
                 continue
-            if c_key in seen_in_turn or c_key in recent_chunks:
+            if c_key in seen_in_turn:
                 continue
 
             item.cloze_sentence = self._build_validated_cloze(
                 item.chunk, item.example, getattr(item, "cloze_sentence", "")
             )
             seen_in_turn.add(c_key)
-            fresh_valid.append(item)
+            fallback_valid.append(item)
+            if c_key not in exclusion_set:
+                fresh_valid.append(item)
 
-        return fresh_valid[:3]
+        # إذا توفرت عبارات جديدة نأخذها فوراً؛ أما لو كانت الدردشة طويلة جداً في موضوع واحد وتطابقت الـ 3 كلها مع السابق،
+        # نحتفظ بعبارة واحدة صالحة كبديل آمن بدلاً من إظهار بطاقة فارغة للمستخدم!
+        if fresh_valid:
+            selected = fresh_valid[:3]
+        elif len(fallback_valid) >= 3:
+            selected = fallback_valid[:1]
+        else:
+            selected = []
+
+        if uid and hasattr(self, "_recent_taught_by_user"):
+            hist_list = self._recent_taught_by_user.setdefault(uid, [])
+            for s_it in selected:
+                norm_c = re.sub(r"\s+", " ", s_it.chunk.lower()).strip()
+                if norm_c and norm_c not in hist_list:
+                    hist_list.append(norm_c)
+            self._recent_taught_by_user[uid] = hist_list[-9:]
+
+        return selected
 
 
     def process_situation_gambit(
@@ -831,27 +846,45 @@ class NYCLoungeAI:
         weakness_str = "; ".join([f"Watch for '{w['user_said']}' -> Prefer '{w['native_fix']}'" for w in weaknesses]) if weaknesses else "None"
         rag_hits = self.db.get_rag_collocations_for_context(user_text, limit=3) if user_text else []
         rag_str = "\n".join([f" - {r}" for r in rag_hits]) if rag_hits else " - Prioritize high-utility C1/C2 Spoken American collocations."
-        history = self.db.get_history(uid, limit=6)
-        hist_str = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in history]) if history else "Start of conversation."
+
+        do_not_repeat_list = self._get_active_exclusion_chunks(uid)
+        do_not_repeat_str = ", ".join([f"'{c}'" for c in do_not_repeat_list]) if do_not_repeat_list else "None"
+
+        raw_history = self.db.get_history(uid, limit=6)
+        u_norm_now = re.sub(r"\s+", " ", (user_text or "").strip().lower())
+        prev_user_msgs = [re.sub(r"\s+", " ", h["content"].strip().lower()) for h in raw_history if h.get("role") == "user"]
+        if u_norm_now and u_norm_now in prev_user_msgs:
+            hist_str = "Fresh angle on this topic (do NOT repeat earlier reassurance or recycle previous points)."
+        else:
+            hist_str = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in raw_history]) if raw_history else "Start of conversation."
+
+        vibe_harmony_guides = {
+            "articulate": "HARMONY RULE (🎙️ Articulate): All hosts use crisp, natural spoken syntax to draw conceptual, interpersonal, and practical distinctions—no slang or forced jokes.",
+            "casual": "HARMONY RULE (☕ Casual): All hosts sound like sharp New York friends hanging out—relaxed contractions, phrasal verbs, and grounded everyday banter.",
+            "witty": "HARMONY RULE (🎭 Witty): All hosts use dry irony, playful exaggeration in imagery, and sharp observational humor rooted in the specific scene.",
+            "executive": "HARMONY RULE (💼 Executive): ZERO jokes or roasting! Marcus frames strategic trade-offs, Chloe assesses team/stakeholder alignment, and Jake focuses on operational execution and bottlenecks.",
+            "diplomatic": "HARMONY RULE (🤝 Diplomatic): ZERO sarcasm or bluntness! All hosts model tactful acknowledgment, face-saving qualification, and constructive reframing."
+        }
+        harmony_rule = vibe_harmony_guides.get(pref_reg, vibe_harmony_guides["articulate"])
 
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"CALIBRATION & REGISTER CONTRACT FOR THIS TURN:\n"
+            f"CALIBRATION & REGISTER HARMONY FOR THIS TURN:\n"
             f"- Depth: {self._level_calibration_guide(level)}\n"
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
-            f"- ACTIVE REGISTER LOCK ({active_vibe_badge}): {vibe_rules}\n"
-            f"- THREE RECAST STRATEGIES WITHIN {active_vibe_badge}:\n"
-            f"  1. `rewrite_articulate` (Natural Flow): Preserve the full thought, certainty, scope, and causality with natural spoken rhythm in {active_vibe_badge}.\n"
-            f"  2. `rewrite_casual` (Punchy Cut): Compress the same thought concisely in {active_vibe_badge} without exaggerating the claim.\n"
-            f"  3. `rewrite_witty` (Spoken Fronting/Ellipsis): First-person spoken alternative using fronting or ellipsis in {active_vibe_badge}.\n"
-            f"- LANGUAGE POLICY: Keep all spoken dialogue, rewrites, and examples in natural American English, while ALWAYS populating `arabic_equivalent` with the accurate Arabic meaning.\n"
+            f"- ACTIVE VIBE ({active_vibe_badge}): {vibe_rules}\n"
+            f"- {harmony_rule}\n"
+            f"- TWO PRIMARY SPOKEN RECASTS IN {active_vibe_badge} (Preserve the user's natural voice and certainty—NO literary purple prose):\n"
+            f"  1. `rewrite_articulate` (Natural Flow): Smooth, idiomatic spoken recast of the user's exact thought in {active_vibe_badge}.\n"
+            f"  2. `rewrite_casual` (Punchy Cut): Concise, high-impact spoken compression in {active_vibe_badge} without exaggerating the claim.\n"
+            f"- RECENT EXPRESSIONS TO AVOID REPEATING IN `lexical_upgrades`: {do_not_repeat_str}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING:\n"
             f"- Candidate Vault Phrases: {stealth_chunks_str}\n"
             f"- Only weave a candidate phrase into `chat_turns` if it fits 100% naturally. Wrap woven phrases in `<i>phrase</i>`.\n\n"
             f"RECURRING HABITS TO WATCH FOR: {weakness_str}\n"
             f"RELEVANT COLLOCATIONS:\n{rag_str}\n\n"
-            f"RECENT CONVERSATION (For topic continuity ONLY — strictly use {active_vibe_badge} now):\n{hist_str}\n"
+            f"RECENT CONVERSATION CONTEXT:\n{hist_str}\n"
             f"{PRIORITY_1_TO_5_BLOCK}"
         )
 
@@ -859,19 +892,19 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                f"Listen to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` in {active_vibe_badge}, provide the 3 recast strategies (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), set `diagnostics_status` honestly ('corrections_found', 'checked_no_corrections', or 'not_assessed'), provide at most 1 genuine fix in `diagnostics`, and provide 3 fresh `lexical_upgrades` with `arabic_equivalent`."
+                f"Listen to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` strictly in {active_vibe_badge} without tonal dissonance, provide `rewrite_articulate` (Natural Flow) and `rewrite_casual` (Punchy Cut) preserving the member's natural voice, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
             )
         else:
             contents.append(
                 f"MEMBER MESSAGE:\n{user_text}\n\n"
-                f"Respond in `chat_turns` in {active_vibe_badge}, provide the 3 recast strategies (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), set `diagnostics_status` honestly, provide at most 1 genuine fix in `diagnostics`, and provide 3 fresh `lexical_upgrades` with `arabic_equivalent`."
+                f"Respond in `chat_turns` strictly in {active_vibe_badge} without tonal dissonance, provide `rewrite_articulate` (Natural Flow) and `rewrite_casual` (Punchy Cut) preserving the member's natural voice, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
             )
 
         res: LoungeTurnResponse = self._call_structured(
             contents=contents,
             schema_cls=LoungeTurnResponse,
             system_instruction=system_prompt,
-            temperature=0.70,
+            temperature=0.68,
             max_output_tokens=4096
         )
 
@@ -1186,3 +1219,29 @@ class NYCLoungeAI:
         except Exception as e:
             logger.warning(f"Drill fallback: {e}")
             return {"text": "🎯 <b>Live Spoken Workout</b>\nSend a voice note describing a recent plan that changed!", "tts_target": ""}
+
+    def _get_active_exclusion_chunks(self, uid: int) -> List[str]:
+        """
+        Balanced anti-recycling window shared identically between the prompt and post-filter:
+        - Last 9 expressions shown in the active session (last ~3 turns)
+        - Last 12 expressions saved in the user's Vault
+        Prevents back-to-back repetition without causing lexical starvation in long chats.
+        """
+        if not uid:
+            return []
+        session_recent = list(self._recent_taught_by_user.get(uid, []))[-9:]
+        vault_recent: List[str] = []
+        try:
+            if self.db:
+                vault_items = self.db.get_user_vault(uid, limit=12)
+                vault_recent = [it["chunk"] for it in vault_items if it.get("chunk")]
+        except Exception:
+            pass
+        combined: List[str] = []
+        seen = set()
+        for ch in (session_recent + vault_recent):
+            norm = re.sub(r"\s+", " ", (ch or "").strip().lower())
+            if norm and norm not in seen:
+                seen.add(norm)
+                combined.append(ch.strip())
+        return combined[:18]

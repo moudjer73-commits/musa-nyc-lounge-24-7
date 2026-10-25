@@ -175,9 +175,6 @@ def format_lounge_turn_html(
     ]
     if punchy_cut and punchy_cut.strip() != natural_flow.strip():
         mirror_lines.append(f"• <b>Punchy Cut:</b> <code>{_e(punchy_cut)}</code>")
-    if third_alt and third_alt.strip() not in (natural_flow.strip(), punchy_cut.strip()):
-        mirror_lines.append(f"• <b>Spoken Pivot:</b> <code>{_e(third_alt)}</code>")
-
     if is_voice and getattr(res, "acoustic_prosody_xray", ""):
         mirror_lines.append(f"• 🎧 <b>Voice & Rhythm Check:</b> {_e(res.acoustic_prosody_xray)}")
 
