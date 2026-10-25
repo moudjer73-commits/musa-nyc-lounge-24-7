@@ -469,7 +469,29 @@ class NYCLoungeAI:
         if solo_only:
             allowed_hosts = [solo_only]
         else:
-            allowed_hosts = [h for h in preset_hosts if h not in excluded_hosts] or [called_host or "jake"]
+            allowed_hosts = [h for h in preset_hosts if h not in excluded_hosts]
+
+        # If all 3 hosts were explicitly excluded by the user, fail closed into the neutral studio fallback
+        if not allowed_hosts:
+            raise ValueError("All table hosts were explicitly excluded for this turn")
+
+        def _strip_injected_excluded_speakers(txt: str) -> str:
+            """Removes any inline HTML or speaker-tag dialogue attributed to excluded hosts inside a turn's text."""
+            lines_out = []
+            for raw_ln in (txt or "").splitlines():
+                s_ln = raw_ln.strip()
+                if not s_ln:
+                    continue
+                # Check if a line starts with an excluded host's speaker label (e.g., "🧔‍♂️ <b>Marcus:</b> ...")
+                dropped = False
+                for ex_h in excluded_hosts:
+                    if re.match(rf"^(?:🧔‍♂️|👩🏼‍💼|🧢|🗽)?\s*(?:<b>)?\s*{ex_h}\s*:\s*(?:</b>)?", s_ln, flags=re.IGNORECASE):
+                        dropped = True
+                        break
+                if not dropped:
+                    lines_out.append(s_ln)
+            cleaned = " ".join(lines_out).strip()
+            return re.sub(r"^(?:🧔‍♂️|👩🏼‍💼|🧢|🗽)?\s*(?:<b>)?\s*(?:Marcus|Chloe|Jake)\s*:\s*(?:</b>)?\s*", "", cleaned, flags=re.IGNORECASE).strip()
 
         if res.chat_turns:
             filtered_turns = []
@@ -478,12 +500,11 @@ class NYCLoungeAI:
                 sp_k = (ct.speaker or allowed_hosts[0]).strip().lower()
                 if sp_k not in ("marcus", "chloe", "jake"):
                     sp_k = allowed_hosts[0]
-                # Strictly drop excluded or non-solo hosts
                 if sp_k in excluded_hosts or (solo_only and sp_k != solo_only):
                     continue
                 ct.speaker = sp_k
                 p_meta = PERSONAS[sp_k]
-                clean_line = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", (ct.text or "").strip(), flags=re.IGNORECASE)
+                clean_line = _strip_injected_excluded_speakers(ct.text or "")
                 ct.text = clean_line
                 if clean_line:
                     filtered_turns.append(ct)
@@ -496,10 +517,9 @@ class NYCLoungeAI:
 
         sp_k = called_host if (called_host and called_host not in excluded_hosts) else allowed_hosts[0]
         p_meta = PERSONAS[sp_k]
-        raw_reply = (res.lounge_reply or "").strip()
-        if not raw_reply:
+        clean_reply = _strip_injected_excluded_speakers(res.lounge_reply or "")
+        if not clean_reply:
             raise ValueError("Empty conversational response after host filtering")
-        clean_reply = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", raw_reply, flags=re.IGNORECASE)
         res.responding_persona = sp_k
         res.chat_turns = [ChatBubbleLine(speaker=sp_k, pacing="normal", text=clean_reply)]
         res.lounge_reply = f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {clean_reply}"
@@ -619,9 +639,8 @@ class NYCLoungeAI:
             res = self._finalize_chat_turns(res, active_persona=_active_persona, user_text=user_text)
         except Exception as exc:
             import traceback as _tb
-            raw_log_payload = f"Structured turn fallback triggered: {exc}\n{_tb.format_exc()}"
-            safe_log_payload = re.sub(r"AIza[0-9A-Za-z\-_]{20,}", "[REDACTED_KEY]", raw_log_payload)
-            safe_log_payload = re.sub(r"ghp_[0-9A-Za-z]{20,}", "[REDACTED_TOKEN]", safe_log_payload)
+            raw_log_payload = f"Structured turn fallback triggered [{type(exc).__name__}]: {exc}\n{_tb.format_exc()}"
+            safe_log_payload = self.redact_sensitive_log(raw_log_payload, private_user_text=str(user_text or ""))
             logger.error(safe_log_payload)
 
             preset_hosts = list(CAST_PRESETS.get(_active_persona, CAST_PRESETS["trio"])["hosts"])
@@ -1361,18 +1380,48 @@ class NYCLoungeAI:
                 solo_only = h
                 break
 
+        # If a solo host is explicitly requested, all other hosts are implicitly excluded from having their own speaker turns
+        if solo_only:
+            for other_h in ("marcus", "chloe", "jake"):
+                if other_h != solo_only and other_h not in excluded:
+                    excluded.append(other_h)
+
         addressed: Optional[str] = solo_only
         if not addressed:
-            # Find the earliest non-excluded host mentioned in the user's message
             found_positions = []
             for h in ("jake", "chloe", "marcus"):
                 if h in excluded:
                     continue
-                m = re.search(rf"\b{h}\b", low)
-                if m:
+                # Ignore names that appear solely as the object of "ask/tell/roast <host>"
+                for m in re.finditer(rf"\b{h}\b", low):
+                    prefix_slice = low[max(0, m.start() - 18) : m.start()]
+                    if re.search(r"\b(?:ask|asks|asking|tell|tells|about)\s+$", prefix_slice):
+                        continue
                     found_positions.append((m.start(), h))
+                    break
             if found_positions:
                 found_positions.sort(key=lambda x: x[0])
                 addressed = found_positions[0][1]
 
         return addressed, excluded, solo_only
+
+    @staticmethod
+    def redact_sensitive_log(raw_text: str, private_user_text: str = "") -> str:
+        if not raw_text:
+            return ""
+        s = str(raw_text)
+        if private_user_text and len(private_user_text.strip()) >= 4:
+            s = s.replace(private_user_text.strip(), "[REDACTED_USER_TEXT]")
+        # 1. Gemini / Google API keys
+        s = re.sub(r"AIza[0-9A-Za-z\-_]{20,}", "[REDACTED_GEMINI_KEY]", s)
+        # 2. Telegram Bot tokens (e.g., 1234567890:AAH_xyz...)
+        s = re.sub(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b", "[REDACTED_TG_TOKEN]", s)
+        # 3. GitHub PATs (classic & fine-grained)
+        s = re.sub(r"\b(?:ghp|gho|ghu|ghs|ghr)_[0-9A-Za-z]{20,}\b", "[REDACTED_GH_TOKEN]", s)
+        s = re.sub(r"\bgithub_pat_[0-9A-Za-z_]{20,}\b", "[REDACTED_GH_TOKEN]", s)
+        # 4. Authorization / Bearer headers
+        s = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", r"\1[REDACTED_BEARER]", s)
+        s = re.sub(r"(?i)(Authorization\s*[:=]\s*['\"]?)[A-Za-z0-9\-._~+/ ]+", r"\1[REDACTED_AUTH]", s)
+        # 5. Credentials embedded in URLs (https://user:pass@host)
+        s = re.sub(r"(https?://)[^/\s:@]+:[^/\s@]+@", r"\1[REDACTED_URL_CREDS]@", s)
+        return s

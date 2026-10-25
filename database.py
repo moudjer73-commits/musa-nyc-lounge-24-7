@@ -204,22 +204,32 @@ class LoungeDatabase:
         self.init_schema()
         self.init_corpus_fts5()
 
-    @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(self.user_db_path, timeout=30, check_same_thread=False)
+        if getattr(self, "_active_tx_conn", None) is not None:
+            class _SharedTxProxy:
+                def __init__(self, conn):
+                    self._c = conn
+                def __enter__(self):
+                    # Must return self (the proxy) so `with self._conn() as conn:` intercepts `conn.commit()`!
+                    return self
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    return False
+                def commit(self):
+                    # Deferred to outer atomic_turn_transaction() boundary
+                    pass
+                def close(self):
+                    # Closed by outer atomic_turn_transaction() boundary
+                    pass
+                def __getattr__(self, name):
+                    return getattr(self._c, name)
+            return _SharedTxProxy(self._active_tx_conn)
+
+        target_db = getattr(self, "user_db_path", getattr(self, "db_path", None))
+        conn = sqlite3.connect(str(target_db), timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-        except Exception:
-            pass
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        return conn
 
     @contextmanager
     def _corpus_conn(self):
@@ -1076,3 +1086,29 @@ class LoungeDatabase:
         with self._lock, self._conn() as conn:
             conn.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id))
             conn.commit()
+
+    @contextmanager
+    def atomic_turn_transaction(self):
+        """
+        Executes all turn persistence operations (uptake, history, diagnostics, stealth, atomic batch)
+        inside a single ACID SQLite transaction. If any step raises an exception, all writes roll back.
+        """
+        with self._lock:
+            if getattr(self, "_active_tx_conn", None) is not None:
+                yield self._active_tx_conn
+                return
+            target_db = getattr(self, "user_db_path", getattr(self, "db_path", None))
+            raw_conn = sqlite3.connect(str(target_db), timeout=30.0, check_same_thread=False)
+            raw_conn.row_factory = sqlite3.Row
+            raw_conn.execute("PRAGMA journal_mode=WAL;")
+            raw_conn.execute("PRAGMA synchronous=NORMAL;")
+            self._active_tx_conn = raw_conn
+            try:
+                yield raw_conn
+                raw_conn.commit()
+            except Exception:
+                raw_conn.rollback()
+                raise
+            finally:
+                self._active_tx_conn = None
+                raw_conn.close()

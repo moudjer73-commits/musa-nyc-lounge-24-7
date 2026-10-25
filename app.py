@@ -1529,32 +1529,31 @@ if bot:
                 active_uptakes = []
             else:
                 res, stealth_ids = ai_engine.process_lounge_turn(user=user, user_text=text)
-                active_uptakes = db.detect_and_record_active_uptake(uid, text)
+                active_cast_key = user.get("active_persona", "trio")
+                token_key = uuid.uuid4().hex[:10]
+                upgrades_dicts = [u.model_dump() for u in res.lexical_upgrades]
+                turns_json = json.dumps([ct.model_dump() for ct in getattr(res, "chat_turns", [])], ensure_ascii=False) if getattr(res, "chat_turns", None) else res.lounge_reply
 
-            db.append_history(uid, "user", text)
-            db.append_history(uid, "assistant", res.lounge_reply)
-            db.record_diagnostics(uid, [d.model_dump() for d in res.diagnostics])
-            if stealth_ids:
-                db.increment_stealth_done(stealth_ids)
-
-            token_key = uuid.uuid4().hex[:10]
-            upgrades_dicts = [u.model_dump() for u in res.lexical_upgrades]
-            active_cast_key = user.get("active_persona", "trio")
-            turns_json = json.dumps([ct.model_dump() for ct in getattr(res, "chat_turns", [])], ensure_ascii=False) if getattr(res, "chat_turns", None) else res.lounge_reply
-
-            db.store_atomic_batch(
-                user_id=uid,
-                token_key=token_key,
-                items=upgrades_dicts,
-                audio_clean_text=get_active_recast(res, user.get('preferred_register', 'articulate')),
-                user_transcript_text=res.mirror_clean_target or text,
-                host_reply_text=turns_json,
-                active_persona=active_cast_key
-            )
-
-            formatted_html = format_lounge_turn_html(
-                res, is_voice=False, stealth_count=len(stealth_ids), active_uptakes=active_uptakes, active_reg=user.get('preferred_register', 'articulate')
-            )
+                # 1. Render HTML BEFORE opening the DB transaction so a formatting error never leaves partial DB state
+                with db.atomic_turn_transaction():
+                    active_uptakes = db.detect_and_record_active_uptake(uid, text)
+                    formatted_html = format_lounge_turn_html(
+                        res, is_voice=False, stealth_count=len(stealth_ids), active_uptakes=active_uptakes, active_reg=user.get('preferred_register', 'articulate')
+                    )
+                    db.append_history(uid, "user", text)
+                    db.append_history(uid, "assistant", res.lounge_reply)
+                    db.record_diagnostics(uid, [d.model_dump() for d in res.diagnostics])
+                    if stealth_ids:
+                        db.increment_stealth_done(stealth_ids)
+                    db.store_atomic_batch(
+                        user_id=uid,
+                        token_key=token_key,
+                        items=upgrades_dicts,
+                        audio_clean_text=get_active_recast(res, user.get('preferred_register', 'articulate')),
+                        user_transcript_text=res.mirror_clean_target or text,
+                        host_reply_text=turns_json,
+                        active_persona=active_cast_key
+                    )
             safe_edit_text(
                 message.chat.id,
                 status_msg.message_id,
