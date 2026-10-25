@@ -1,3 +1,8 @@
+import html
+import json
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # -*- coding: utf-8 -*-
 """
 app.py — Main Club Host Engine for Musa's NYC Lounge
@@ -871,16 +876,17 @@ if bot:
                     bot.answer_callback_query(call.id, "Already in your Vault!", show_alert=False)
 
             elif data.startswith("take2:"):
-                tok = data.split(":", 1)[1]
+                cb_uid = call.from_user.id
+                tok = data.split(":", 1)[1] if ":" in data else ""
                 msg_raw_text = getattr(call.message, "text", "") or getattr(call.message, "caption", "") or ""
-                prompt_html, _ = build_contextual_take2_prompt(uid, tok, msg_raw_text)
+                prompt_html, _ = build_contextual_take2_prompt(cb_uid, tok, msg_raw_text)
                 bot.answer_callback_query(call.id, "🎙️ Take 2 activated! Reply with a voice note or text.")
                 kb_take2 = InlineKeyboardMarkup(row_width=2)
                 kb_take2.add(
                     InlineKeyboardButton("🗣️ Hear My Recast", callback_data=f"tts:{tok}"),
                     InlineKeyboardButton("🎧 Trio Voice", callback_data=f"host_tts:{tok}")
                 )
-                bot.send_message(call.message.chat.id, prompt_html, reply_markup=kb_take2)
+                bot.send_message(call.message.chat.id, prompt_html, parse_mode="HTML", reply_markup=kb_take2)
                 return
 
             elif data.startswith("host_tts:"):
