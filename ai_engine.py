@@ -28,15 +28,22 @@ from database import LoungeDatabase
 
 logger = logging.getLogger("MusaNYCLounge.AI")
 
+HostLiteral = Literal["marcus", "chloe", "jake"]
+PacingLiteral = Literal["fast_interjection", "normal", "thoughtful_slow"]
+DiagnosticsStatusLiteral = Literal["corrections_found", "checked_no_corrections", "not_assessed"]
+DiagnosticCategoryLiteral = Literal["🎭 Natural Flow", "💎 Lexical Upgrade", "📐 Spoken Structure", "🗽 Pragmatic Nuance"]
+RegisterTagLiteral = Literal["🎙️ Articulate", "☕ Casual", "🎭 Witty", "💼 Executive", "🤝 Diplomatic"]
+
+
 
 class DiagnosticItem(BaseModel):
-    category: str = Field(
+    category: DiagnosticCategoryLiteral = Field(
         default="🎭 Natural Flow",
-        description="Strictly one of: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'. Never flag opinions or reasoning as language errors."
+        description="Strictly one of: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'."
     )
     user_said: str = Field(
         default="",
-        description="Exact verbatim substring from the member's message that contains a genuine grammatical error, awkward non-native collocation, or clear register mismatch. Leave empty if none."
+        description="Exact verbatim substring from the member's message that contains a genuine grammatical error, awkward non-native collocation, or clear register mismatch."
     )
     native_fix: str = Field(
         default="",
@@ -53,7 +60,7 @@ class LexicalFrameUpgrade(BaseModel):
         default="",
         description="High-value C1/C2 spoken American phrasal verb, collocation, idiom, or conversational gambit."
     )
-    register_tag: str = Field(
+    register_tag: RegisterTagLiteral = Field(
         default="🎙️ Articulate",
         description="Strictly one of the 5 supported registers: '🎙️ Articulate', '☕ Casual', '🎭 Witty', '💼 Executive', or '🤝 Diplomatic'."
     )
@@ -83,7 +90,7 @@ class LexicalFrameUpgrade(BaseModel):
     )
     example: str = Field(
         default="",
-        description="Authentic 1-sentence spoken example demonstrating the exact meaning in context."
+        description="Authentic 1-sentence spoken example that explicitly contains `chunk` in context."
     )
     cloze_sentence: str = Field(
         default="",
@@ -92,14 +99,16 @@ class LexicalFrameUpgrade(BaseModel):
 
 
 class ChatBubbleLine(BaseModel):
-    speaker: str = Field(default="", 
+    speaker: HostLiteral = Field(
+        default="marcus",
         description="Strictly one of the active hosts at the table: 'marcus', 'chloe', or 'jake'."
     )
-    pacing: str = Field(
+    pacing: PacingLiteral = Field(
         default="normal",
         description="Strictly 'fast_interjection', 'normal', or 'thoughtful_slow'."
     )
-    text: str = Field(default="", 
+    text: str = Field(
+        default="",
         description="This host's spoken conversational turn (without speaker name prefix). Wrap any naturally woven Vault phrases in <i>italics</i>."
     )
 
@@ -109,7 +118,7 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Verbatim transcription if voice input was provided; empty string for text input."
     )
-    responding_persona: str = Field(
+    responding_persona: HostLiteral = Field(
         default="marcus",
         description="Primary host voice: strictly 'marcus', 'chloe', or 'jake'."
     )
@@ -143,9 +152,9 @@ class LoungeTurnResponse(BaseModel):
         default="",
         description="Clean, natural version of the member's sentence for 1-to-1 Voice Mirror comparison."
     )
-    diagnostics_status: str = Field(
+    diagnostics_status: DiagnosticsStatusLiteral = Field(
         default="checked_no_corrections",
-        description="Strictly one of: 'corrections_found' (when `diagnostics` has a genuine language error), 'checked_no_corrections' (when the member's English sentence was evaluated and is already natural), or 'not_assessed' (when the input was in Arabic, a short greeting, or a scenario/topic prompt)."
+        description="Strictly one of: 'corrections_found', 'checked_no_corrections', or 'not_assessed'."
     )
     diagnostics: List[DiagnosticItem] = Field(
         default_factory=list,
@@ -162,9 +171,9 @@ class SituationGambitResponse(BaseModel):
         default="",
         description="1-sentence pragmatic reading of the speech act, relationship dynamics, and social stakes."
     )
-    responding_persona: str = Field(
+    responding_persona: HostLiteral = Field(
         default="chloe",
-        description="Lead coach for this scenario ('chloe', 'marcus', or 'jake')."
+        description="Lead coach for this scenario: strictly 'chloe', 'marcus', or 'jake'."
     )
     host_commentary: str = Field(
         default="",
@@ -172,23 +181,23 @@ class SituationGambitResponse(BaseModel):
     )
     best_line: str = Field(
         default="",
-        description="The #1 immediate, instinctive first-person spoken line an American naturally says in this exact situation (matching the active register)."
+        description="REQUIRED NON-EMPTY: The #1 immediate, instinctive first-person spoken line an American naturally says in this exact situation (matching the active register)."
     )
     softer_alternative: str = Field(
         default="",
-        description="A gentler, face-saving first-person alternative that lowers tension while keeping the same intent."
+        description="REQUIRED NON-EMPTY: A gentler, face-saving first-person alternative that lowers tension while keeping the same intent."
     )
     firmer_alternative: str = Field(
         default="",
-        description="A firmer, direct boundary-setting first-person alternative that holds the line without aggression."
+        description="REQUIRED NON-EMPTY: A firmer, direct boundary-setting first-person alternative that holds the line without aggression."
     )
     why_it_works: str = Field(
         default="",
-        description="Concise pragmatic explanation of why `best_line` works socially and what tone trap it avoids."
+        description="REQUIRED NON-EMPTY: Concise pragmatic explanation of why `best_line` works socially and what tone trap it avoids."
     )
     arabic_equivalent: str = Field(
         default="",
-        description="Accurate Arabic translation / pragmatic equivalent (المكافئ العربي الدقيق) of the recommended line."
+        description="REQUIRED NON-EMPTY: Accurate Arabic translation / pragmatic equivalent (المكافئ العربي الدقيق) of the recommended line."
     )
     follow_up_line: str = Field(
         default="",
@@ -198,6 +207,8 @@ class SituationGambitResponse(BaseModel):
         default_factory=list,
         description="3 savable situational gambits from this scenario (for the member's Vault), each with `chunk`, `arabic_equivalent`, `explanation`, and `example`."
     )
+
+
 
 
 class PodcastTurnLine(BaseModel):
@@ -565,6 +576,7 @@ class NYCLoungeAI:
             )
             return fallback_res, []
 
+        # 1. Context-Independent Orthographic Normalization ONLY (No context-blind semantic rewriting!)
         known_ing_stems = (
             "work", "get", "stay", "look", "breath", "talk", "walk", "think", "go", "do",
             "mak", "tak", "com", "runn", "hitt", "try", "say", "play", "grind", "slack",
@@ -572,49 +584,27 @@ class NYCLoungeAI:
         )
         ing_pattern = re.compile(r"\b(" + "|".join(known_ing_stems) + r")in'(?!\w)", flags=re.IGNORECASE)
 
-        def _clean_spoken_text(txt: str) -> str:
+        def _normalize_orthography(txt: str) -> str:
             if not txt:
                 return ""
-            txt = ing_pattern.sub(r"\1ing", txt)
-            safe_replacements = [
-                (r"^(?:Frankly|Honestly),?\s+I(?:'m| am) of the (?:mind|opinion) that\s+", "Honestly, I think "),
-                (r"\bI(?:'m| am) of the (?:mind|opinion) that\b", "I think"),
-                (r"\ba lapse in focus\b", "losing focus"),
-                (r"\bthose working remotely\b", "people working from home"),
-                (r"\bis a (?:total )?productivity killer\b", "can really hurt productivity"),
-                (r"\b(?:just )?kills productivity\b", "can hurt productivity"),
-                (r"\bthere(?:'s| is) zero accountability\b", "there's less direct oversight"),
-            ]
-            for pat, rep in safe_replacements:
-                txt = re.sub(pat, rep, txt, flags=re.IGNORECASE)
-            return txt.strip()
+            return ing_pattern.sub(r"\1ing", txt).strip()
 
         if getattr(res, "chat_turns", None):
             for ct in res.chat_turns:
-                ct.text = _clean_spoken_text(getattr(ct, "text", ""))
-        res.lounge_reply = _clean_spoken_text(getattr(res, "lounge_reply", ""))
+                ct.text = _normalize_orthography(getattr(ct, "text", ""))
+        res.lounge_reply = _normalize_orthography(getattr(res, "lounge_reply", ""))
         res = self._finalize_chat_turns(res, active_persona=_active_persona, user_text=user_text)
 
-        res.rewrite_articulate = _clean_spoken_text(getattr(res, "rewrite_articulate", ""))
-        res.rewrite_casual = _clean_spoken_text(getattr(res, "rewrite_casual", ""))
-        res.rewrite_witty = _clean_spoken_text(getattr(res, "rewrite_witty", ""))
-        res.tts_clean_target = _clean_spoken_text(getattr(res, "tts_clean_target", "")) or res.rewrite_articulate
+        res.rewrite_articulate = _normalize_orthography(getattr(res, "rewrite_articulate", ""))
+        res.rewrite_casual = _normalize_orthography(getattr(res, "rewrite_casual", ""))
+        res.rewrite_witty = _normalize_orthography(getattr(res, "rewrite_witty", ""))
+        res.tts_clean_target = _normalize_orthography(getattr(res, "tts_clean_target", "")) or res.rewrite_articulate
+        res.mirror_clean_target = _normalize_orthography(getattr(res, "mirror_clean_target", ""))
 
+        # 2. Explicit, Non-Heuristic Assessment Policy for `diagnostics_status` & `diagnostics`
         u_raw = (user_text or getattr(res, "transcription", "") or "").strip()
         u_lower = u_raw.lower()
-        user_hedged = any(h in u_lower for h in ("i think", "might", "maybe", "can ", "some ", "tend to", "probably"))
-        if user_hedged and not any(a in u_lower for a in ("nobody", "no one ever", "zero", "impossible")):
-            for attr in ("rewrite_articulate", "rewrite_casual", "rewrite_witty"):
-                val = getattr(res, attr, "")
-                val = re.sub(r"\bnobody gets anything done\b", "people get less done", val, flags=re.IGNORECASE)
-                val = re.sub(r"\bno one gets anything done\b", "people get less done", val, flags=re.IGNORECASE)
-                setattr(res, attr, val)
-
-        has_arabic_input = bool(re.search(r"[\u0600-\u06FF]", u_raw))
-        is_scenario_prompt = bool(
-            re.match(r"^(?:what to say when|how do i |how to |apologizing for |politely )", u_lower)
-            or _mode in ("situation_gambit", "subtext_decoder")
-        )
+        has_latin_letters = bool(re.search(r"[a-zA-Z]{2,}", u_raw))
         protected_natural_phrases = {
             "people who work from home",
             "don't have anyone checking on them",
@@ -627,7 +617,7 @@ class NYCLoungeAI:
             "what do you think",
         }
 
-        if has_arabic_input or is_scenario_prompt or not u_raw:
+        if not u_raw or not has_latin_letters:
             res.diagnostics = []
             res.diagnostics_status = "not_assessed"
         else:
@@ -636,52 +626,99 @@ class NYCLoungeAI:
                 u_said_raw = (getattr(d, "user_said", "") or "").strip()
                 u_said_norm = u_said_raw.lower().strip(".,!?\"'")
                 n_fix_norm = (getattr(d, "native_fix", "") or "").strip().lower().strip(".,!?\"'")
-                if not u_said_norm or not n_fix_norm or u_said_norm == n_fix_norm:
+                why_raw = (getattr(d, "why_note", "") or "").strip()
+                if not u_said_norm or not n_fix_norm or not why_raw or u_said_norm == n_fix_norm:
                     continue
-                if u_lower and u_said_norm not in u_lower:
+                if u_said_norm not in u_lower:
                     continue
                 if u_said_norm in protected_natural_phrases:
                     continue
                 if any(bad in n_fix_norm for bad in ("of the mind", "of the opinion", "remote workforce", "looking over their shoulder")):
                     continue
-                d.native_fix = _clean_spoken_text(d.native_fix)
+                d.native_fix = _normalize_orthography(d.native_fix)
                 valid_diags.append(d)
             res.diagnostics = valid_diags[:1]
-            res.diagnostics_status = "corrections_found" if res.diagnostics else "checked_no_corrections"
+            if res.diagnostics:
+                res.diagnostics_status = "corrections_found"
+            elif getattr(res, "diagnostics_status", "") == "not_assessed" and len(u_raw.split()) <= 3:
+                res.diagnostics_status = "not_assessed"
+            else:
+                res.diagnostics_status = "checked_no_corrections"
+
+        # 3. Strict Freshness & Validated Cloze Enforcement for Lexical Upgrades (Never restore duplicates!)
+        res.lexical_upgrades = self._validate_and_filter_upgrades(
+            getattr(res, "lexical_upgrades", None) or [],
+            uid=uid,
+            badge_r=_badge_r,
+            normalize_fn=_normalize_orthography
+        )
+        return res, used_stealth_ids
+
+
+    @staticmethod
+    def _build_validated_cloze(chunk: str, example: str, existing_cloze: str = "") -> str:
+        chunk_c = (chunk or "").strip()
+        example_c = (example or "").strip()
+        existing_c = (existing_cloze or "").strip()
+        if not chunk_c or not example_c:
+            return ""
+        if "______" in existing_c and existing_c.lower() != example_c.lower():
+            return existing_c
+        pattern = re.compile(re.escape(chunk_c), flags=re.IGNORECASE)
+        if pattern.search(example_c):
+            cloze_cand = pattern.sub("______", example_c, count=1)
+            if "______" in cloze_cand and cloze_cand != example_c:
+                return cloze_cand
+        return ""
+
+
+    def _validate_and_filter_upgrades(
+        self,
+        raw_upgrades: List[LexicalFrameUpgrade],
+        uid: int,
+        badge_r: str,
+        normalize_fn: Any = None
+    ) -> List[LexicalFrameUpgrade]:
+        if normalize_fn is None:
+            normalize_fn = lambda s: (s or "").strip()
 
         recent_chunks = set()
         try:
             if self.db and uid:
-                vault_items = self.db.get_user_vault(uid, limit=25)
-                recent_chunks = {(item.get("chunk") or "").strip().lower() for item in vault_items}
+                vault_items = self.db.get_user_vault(uid, limit=30)
+                recent_chunks = {re.sub(r"\s+", " ", (item.get("chunk") or "").strip().lower()) for item in vault_items if item.get("chunk")}
         except Exception:
             pass
 
-        if getattr(res, "lexical_upgrades", None):
-            seen_in_turn = set()
-            filtered_upgrades = []
-            for _u_item in res.lexical_upgrades:
-                _u_item.register_tag = _badge_r
-                _u_item.chunk = _clean_spoken_text(getattr(_u_item, "chunk", ""))
-                _u_item.b2_foil = _clean_spoken_text(getattr(_u_item, "b2_foil", ""))
-                _u_item.explanation = _clean_spoken_text(getattr(_u_item, "explanation", ""))
-                _u_item.example = _clean_spoken_text(getattr(_u_item, "example", ""))
-                _u_item.followup = _clean_spoken_text(getattr(_u_item, "followup", ""))
-                if not getattr(_u_item, "arabic_equivalent", "").strip() and "—" in _u_item.explanation:
-                    parts = _u_item.explanation.split("—", 1)
-                    _u_item.arabic_equivalent = parts[0].strip()
-                    _u_item.explanation = parts[1].strip()
-                if _u_item.chunk and _u_item.example and not getattr(_u_item, "cloze_sentence", "").strip():
-                    _u_item.cloze_sentence = re.sub(re.escape(_u_item.chunk), "______", _u_item.example, flags=re.IGNORECASE)
-                c_key = _u_item.chunk.lower()
-                if not c_key or c_key in seen_in_turn:
-                    continue
-                seen_in_turn.add(c_key)
-                if c_key not in recent_chunks or len(res.lexical_upgrades) <= 1:
-                    filtered_upgrades.append(_u_item)
-            res.lexical_upgrades = (filtered_upgrades or list(res.lexical_upgrades)[:1])[:3]
+        seen_in_turn = set()
+        fresh_valid: List[LexicalFrameUpgrade] = []
+        for item in (raw_upgrades or []):
+            item.register_tag = badge_r
+            item.chunk = normalize_fn(getattr(item, "chunk", ""))
+            item.b2_foil = normalize_fn(getattr(item, "b2_foil", ""))
+            item.explanation = normalize_fn(getattr(item, "explanation", ""))
+            item.example = normalize_fn(getattr(item, "example", ""))
+            item.followup = normalize_fn(getattr(item, "followup", ""))
+            item.arabic_equivalent = (getattr(item, "arabic_equivalent", "") or "").strip()
 
-        return res, used_stealth_ids
+            if not item.arabic_equivalent and "—" in item.explanation:
+                parts = item.explanation.split("—", 1)
+                item.arabic_equivalent = parts[0].strip()
+                item.explanation = parts[1].strip()
+
+            c_key = re.sub(r"\s+", " ", item.chunk.lower()).strip()
+            if not c_key or not item.example or not (item.arabic_equivalent or item.explanation):
+                continue
+            if c_key in seen_in_turn or c_key in recent_chunks:
+                continue
+
+            item.cloze_sentence = self._build_validated_cloze(
+                item.chunk, item.example, getattr(item, "cloze_sentence", "")
+            )
+            seen_in_turn.add(c_key)
+            fresh_valid.append(item)
+
+        return fresh_valid[:3]
 
 
     def process_situation_gambit(
@@ -691,6 +728,7 @@ class NYCLoungeAI:
         audio_bytes: Optional[bytes] = None,
         audio_mime: str = "audio/ogg"
     ) -> SituationGambitResponse:
+        uid = user.get("user_id", 0) if isinstance(user, dict) else 0
         pref_reg = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
         if pref_reg not in REGISTERS_MAP:
             pref_reg = "articulate"
@@ -704,10 +742,10 @@ class NYCLoungeAI:
             f"TASK:\n"
             f"The member is describing a social, workplace, or interpersonal scenario (in English or Arabic) and needs the exact instinctive spoken English lines to use in that moment.\n"
             f"1. Analyze the speech act, relationship/power dynamic, and interpersonal risk in `situation_summary`.\n"
-            f"2. Provide `best_line`: the #1 natural first-person spoken line an American would actually say out loud in {vibe_badge}.\n"
-            f"3. Provide `softer_alternative` (more tactful/indirect) and `firmer_alternative` (clearer boundary/directness) while preserving the member's intended outcome.\n"
-            f"4. Explain the pragmatic nuance in `why_it_works`, provide the accurate Arabic equivalent in `arabic_equivalent`, and give a realistic `follow_up_line` if the other person pushes back.\n"
-            f"5. Populate `lexical_upgrades` with 3 reusable spoken gambits from your recommendations so the member can save them to their Vault."
+            f"2. Provide `best_line` (REQUIRED NON-EMPTY): the #1 natural first-person spoken line an American would actually say out loud in {vibe_badge}.\n"
+            f"3. Provide `softer_alternative` and `firmer_alternative` (REQUIRED NON-EMPTY and distinct from `best_line`) while preserving the member's intended outcome.\n"
+            f"4. Explain the pragmatic nuance in `why_it_works`, provide the accurate Arabic equivalent in `arabic_equivalent` (REQUIRED NON-EMPTY), and give a realistic `follow_up_line` if the other person pushes back.\n"
+            f"5. Populate `lexical_upgrades` with 3 fresh, reusable spoken gambits from your recommendations (where `example` explicitly contains `chunk` and `arabic_equivalent` is populated)."
         )
 
         contents: List[Any] = []
@@ -717,32 +755,54 @@ class NYCLoungeAI:
         else:
             contents.append(f"SCENARIO DESCRIPTION:\n{user_text}\n\nReturn the complete `SituationGambitResponse` calibrated to {vibe_badge}.")
 
-        try:
-            g_res: SituationGambitResponse = self._call_structured(
-                contents=contents,
-                schema_cls=SituationGambitResponse,
-                system_instruction=system_prompt,
-                temperature=0.65,
-                max_output_tokens=3072
-            )
-            for up in (g_res.lexical_upgrades or []):
-                up.register_tag = vibe_badge
-            g_res.lexical_upgrades = list(g_res.lexical_upgrades or [])[:3]
-            return g_res
-        except Exception as exc:
-            logger.warning(f"Situation gambit fallback triggered: {exc}")
-            return SituationGambitResponse(
-                situation_summary="Setting a clear, respectful boundary without escalating tension.",
-                responding_persona="chloe",
-                host_commentary="Here is the cleanest way to handle that moment on the spot:",
-                best_line="I want to make sure we're on the same page here—let's clarify how we're handling this moving forward.",
-                softer_alternative="Just so nothing gets lost in translation, could we quickly align on who's leading which part?",
-                firmer_alternative="I want to clarify one thing: I led that part of the work, and it's important our contributions are represented accurately.",
-                why_it_works="It addresses the issue calmly in the first person without sounding defensive or accusatory.",
-                arabic_equivalent="أود توضيح نقطة واحدة لضمان الدقة والاتفاق على سير العمل.",
-                follow_up_line="I'm happy to collaborate closely, as long as we're transparent about ownership.",
-                lexical_upgrades=[]
-            )
+        for attempt in range(2):
+            try:
+                g_res: SituationGambitResponse = self._call_structured(
+                    contents=contents,
+                    schema_cls=SituationGambitResponse,
+                    system_instruction=system_prompt,
+                    temperature=0.65 if attempt == 0 else 0.45,
+                    max_output_tokens=3072
+                )
+                if not isinstance(g_res, SituationGambitResponse):
+                    raise ValueError("Returned object is not SituationGambitResponse")
+
+                g_res.best_line = (g_res.best_line or "").strip()
+                g_res.softer_alternative = (g_res.softer_alternative or "").strip()
+                g_res.firmer_alternative = (g_res.firmer_alternative or "").strip()
+                g_res.why_it_works = (g_res.why_it_works or "").strip()
+                g_res.arabic_equivalent = (g_res.arabic_equivalent or "").strip()
+
+                if not g_res.best_line or not g_res.arabic_equivalent or not g_res.why_it_works:
+                    raise ValueError("Missing required non-empty fields in SituationGambitResponse")
+                if not g_res.softer_alternative or g_res.softer_alternative.lower() == g_res.best_line.lower():
+                    raise ValueError("softer_alternative is missing or identical to best_line")
+                if not g_res.firmer_alternative or g_res.firmer_alternative.lower() in (g_res.best_line.lower(), g_res.softer_alternative.lower()):
+                    raise ValueError("firmer_alternative is missing or not distinct")
+                if g_res.responding_persona not in ("marcus", "chloe", "jake"):
+                    g_res.responding_persona = "chloe"
+
+                g_res.lexical_upgrades = self._validate_and_filter_upgrades(
+                    getattr(g_res, "lexical_upgrades", None) or [],
+                    uid=uid,
+                    badge_r=vibe_badge
+                )
+                return g_res
+            except Exception as exc:
+                logger.warning(f"Situation gambit validation/attempt {attempt + 1} note: {exc}")
+
+        return SituationGambitResponse(
+            situation_summary="Setting a clear, respectful boundary without escalating tension.",
+            responding_persona="chloe",
+            host_commentary="Here is the cleanest way to handle that moment on the spot:",
+            best_line="I want to make sure we're on the same page here—let's clarify how we're handling this moving forward.",
+            softer_alternative="Just so nothing gets lost in translation, could we quickly align on who's leading which part?",
+            firmer_alternative="I want to clarify one thing: I led that part of the work, and it's important our contributions are represented accurately.",
+            why_it_works="It addresses the issue calmly in the first person without sounding defensive or accusatory.",
+            arabic_equivalent="أود توضيح نقطة واحدة لضمان الدقة والاتفاق على سير العمل.",
+            follow_up_line="I'm happy to collaborate closely, as long as we're transparent about ownership.",
+            lexical_upgrades=[]
+        )
 
     def _raw_process_lounge_turn(
         self,

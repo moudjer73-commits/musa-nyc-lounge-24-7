@@ -63,23 +63,15 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True, num_threads=1
 def sanitize_ai_html(raw_text: str) -> str:
     if not raw_text:
         return ""
-    placeholders = {
-        "<i>": "___OPEN_I___", "</i>": "___CLOSE_I___",
-        "<b>": "___OPEN_B___", "</b>": "___CLOSE_B___",
-        "<code>": "___OPEN_C___", "</code>": "___CLOSE_C___",
-        "<s>": "___OPEN_S___", "</s>": "___CLOSE_S___"
-    }
-    t = raw_text
-    for tag, ph in placeholders.items():
-        t = t.replace(tag, ph)
-    t = html.escape(t)
-    for tag, ph in placeholders.items():
-        t = t.replace(ph, tag)
-    for tag_name in ("i", "b", "code", "s"):
-        o_tag, c_tag = f"<{tag_name}>", f"</{tag_name}>"
-        if t.count(o_tag) > t.count(c_tag):
-            t += c_tag * (t.count(o_tag) - t.count(c_tag))
-    return t
+    escaped = html.escape(str(raw_text), quote=False)
+    allowed_tags = ("b", "i", "u", "s", "code")
+    for tag in allowed_tags:
+        open_pat = re.compile(rf"&lt;{tag}&gt;", flags=re.IGNORECASE)
+        close_pat = re.compile(rf"&lt;/{tag}&gt;", flags=re.IGNORECASE)
+        if len(open_pat.findall(escaped)) == len(close_pat.findall(escaped)) and len(open_pat.findall(escaped)) > 0:
+            escaped = open_pat.sub(f"<{tag}>", escaped)
+            escaped = close_pat.sub(f"</{tag}>", escaped)
+    return escaped
 
 
 def safe_edit_text(chat_id: int, message_id: int, text: str, reply_markup=None):
@@ -759,6 +751,18 @@ if bot:
             # --- 4. Room Switching ---
             elif data.startswith("mode:"):
                 new_mode = data.split(":", 1)[1]
+                allowed_modes = {
+                    "spontaneous_chat", "devils_advocate", "storytelling_gym", "register_lab",
+                    "subtext_decoder", "situation_gambit", "podcast_guest", "fast_lookup",
+                    "chunk_miner", "podcast_custom_trio", "podcast_custom_duo",
+                    "podcast_custom_topic", "admin_add_user", "admin_del_user"
+                }
+                if new_mode not in allowed_modes:
+                    bot.answer_callback_query(call.id, "⚠️ Unknown room.", show_alert=False)
+                    return
+                if new_mode in ("admin_add_user", "admin_del_user") and uid != ADMIN_ID:
+                    bot.answer_callback_query(call.id, "🔒 Admin access required.", show_alert=True)
+                    return
                 db.update_user(uid, current_mode=new_mode)
                 user = db.get_user(uid)
                 bot.answer_callback_query(call.id, "✅ Room Ready!")
@@ -1499,7 +1503,7 @@ if bot:
                     token_key=token_key,
                     items=upgrades_dicts,
                     audio_clean_text=g_res.best_line,
-                    user_transcript_text=g_res.best_line,
+                    user_transcript_text=text,
                     host_reply_text=host_turns_json,
                     active_persona=active_cast_key
                 )
