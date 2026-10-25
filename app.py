@@ -174,7 +174,8 @@ def format_lounge_turn_html(
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     natural_flow = res.rewrite_articulate or res.tts_clean_target or ""
-    punchy_cut = res.rewrite_casual or res.rewrite_witty or ""
+    punchy_cut = res.rewrite_casual or ""
+    third_alt = res.rewrite_witty or ""
 
     mirror_lines = [
         f"🪞 <b>5-Second Native Mirror ({vibe_label}):</b>",
@@ -182,28 +183,40 @@ def format_lounge_turn_html(
     ]
     if punchy_cut and punchy_cut.strip() != natural_flow.strip():
         mirror_lines.append(f"• <b>Punchy Cut:</b> <code>{_e(punchy_cut)}</code>")
+    if third_alt and third_alt.strip() not in (natural_flow.strip(), punchy_cut.strip()):
+        mirror_lines.append(f"• <b>Spoken Pivot:</b> <code>{_e(third_alt)}</code>")
 
     if is_voice and getattr(res, "acoustic_prosody_xray", ""):
         mirror_lines.append(f"• 🎧 <b>Voice & Rhythm Check:</b> {_e(res.acoustic_prosody_xray)}")
 
+    diag_status = getattr(res, "diagnostics_status", "checked_no_corrections")
     if res.diagnostics:
         d = res.diagnostics[0]
         mirror_lines.append(
             f"• ⚡ <b>Quick Fix:</b> <s>{_e(d.user_said)}</s> ➔ ✅ <b>{_e(d.native_fix)}</b> "
             f"<i>({_e(d.why_note)})</i>"
         )
+    elif diag_status == "not_assessed":
+        mirror_lines.append(
+            "• ℹ️ <b>Language Check:</b> <i>Scenario/topic prompt — direct coaching mode.</i>"
+        )
     else:
         mirror_lines.append(
-            "• ✨ <b>Quick Fix:</b> No correction needed — your original phrasing is natural American English."
+            "• ✨ <b>Quick Fix:</b> Checked — your original phrasing is already natural American English."
         )
 
     if res.lexical_upgrades:
         mirror_lines.append("\n💎 <b>Steal These Expressions (Tap ⭐ Save 1/2/3):</b>")
-        for idx, up in enumerate(res.lexical_upgrades[:4], start=1):
+        for idx, up in enumerate(res.lexical_upgrades[:3], start=1):
             b2_foil_str = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
             foil_part = f" (instead of: <i>{_e(b2_foil_str)}</i>)" if b2_foil_str else ""
-            expl_str = getattr(up, "explanation", "")
-            expl_part = f"\n  └ 💡 {_e(expl_str)}" if expl_str else ""
+            ar_eq = getattr(up, "arabic_equivalent", "").strip()
+            expl_str = getattr(up, "explanation", "").strip()
+            if ar_eq and expl_str and ar_eq not in expl_str:
+                note_txt = f"{ar_eq} — {expl_str}"
+            else:
+                note_txt = ar_eq or expl_str
+            expl_part = f"\n  └ 💡 {_e(note_txt)}" if note_txt else ""
             mirror_lines.append(
                 f"<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
                 f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
@@ -211,6 +224,53 @@ def format_lounge_turn_html(
 
     mirror_block = "\n".join(mirror_lines)
     return f"{top_section}<blockquote expandable>{mirror_block}</blockquote>"
+
+
+def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> str:
+    def _e(val: Any) -> str:
+        return html.escape(str(val or ""), quote=False)
+
+    vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
+    resp_p = (getattr(g_res, "responding_persona", "chloe") or "chloe").lower()
+    p_meta = {"marcus": ("🧔‍♂️", "Marcus"), "chloe": ("👩🏼‍💼", "Chloe"), "jake": ("🧢", "Jake")}.get(resp_p, ("👩🏼‍💼", "Chloe"))
+
+    lines = [
+        f"⚡ <b>What to Say When... ({vibe_label})</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+    if getattr(g_res, "situation_summary", ""):
+        lines.append(f"🎯 <b>Situation Read:</b> <i>{_e(g_res.situation_summary)}</i>\n")
+    if getattr(g_res, "host_commentary", ""):
+        lines.append(f"{p_meta[0]} <b>{p_meta[1]}:</b> {_e(g_res.host_commentary)}\n")
+
+    lines.append(f"🗣️ <b>Best Instinctive Line (Say This First):</b>\n<code>{_e(g_res.best_line)}</code>\n")
+    if getattr(g_res, "softer_alternative", ""):
+        lines.append(f"🕊️ <b>Softer / Tactful Option:</b>\n<code>{_e(g_res.softer_alternative)}</code>")
+    if getattr(g_res, "firmer_alternative", ""):
+        lines.append(f"🛡️ <b>Firmer / Boundary Option:</b>\n<code>{_e(g_res.firmer_alternative)}</code>")
+
+    details = []
+    if getattr(g_res, "arabic_equivalent", ""):
+        details.append(f"• 🇸🇦 <b>Arabic Meaning:</b> {_e(g_res.arabic_equivalent)}")
+    if getattr(g_res, "why_it_works", ""):
+        details.append(f"• 💡 <b>Why It Works:</b> {_e(g_res.why_it_works)}")
+    if getattr(g_res, "follow_up_line", ""):
+        details.append(f"• 🔄 <b>If They Push Back:</b> <code>{_e(g_res.follow_up_line)}</code>")
+
+    if getattr(g_res, "lexical_upgrades", None):
+        details.append("\n💎 <b>Key Gambits to Save (Tap ⭐ Save 1/2/3):</b>")
+        for idx, up in enumerate(g_res.lexical_upgrades[:3], start=1):
+            ar_eq = getattr(up, "arabic_equivalent", "").strip()
+            expl_str = getattr(up, "explanation", "").strip()
+            note_txt = f"{ar_eq} — {expl_str}" if (ar_eq and expl_str and ar_eq not in expl_str) else (ar_eq or expl_str)
+            details.append(
+                f"<b>({idx})</b> <code>{_e(up.chunk)}</code> — <i>{_e(note_txt)}</i>\n"
+                f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
+            )
+
+    body_main = "\n".join(lines)
+    body_expand = "\n".join(details)
+    return f"{body_main}\n\n<blockquote expandable>{body_expand}</blockquote>"
 
 
 def send_srs_card_prompt(chat_id: int, user_id: int, card: Dict[str, Any], edit_msg_id: int = 0):
@@ -1426,7 +1486,39 @@ if bot:
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
-            if mode == "__disabled_chunk_miner__":
+            if mode == "situation_gambit":
+                g_res = ai_engine.process_situation_gambit(user=user, user_text=text)
+                db.append_history(uid, "user", f"[Situation]: {text}")
+                db.append_history(uid, "assistant", g_res.best_line)
+                token_key = uuid.uuid4().hex[:10]
+                upgrades_dicts = [u.model_dump() for u in (g_res.lexical_upgrades or [])]
+                active_cast_key = g_res.responding_persona or "chloe"
+                host_turns_json = json.dumps([{"speaker": active_cast_key, "pacing": "normal", "text": f"{g_res.host_commentary} {g_res.best_line}".strip()}], ensure_ascii=False)
+                db.store_atomic_batch(
+                    user_id=uid,
+                    token_key=token_key,
+                    items=upgrades_dicts,
+                    audio_clean_text=g_res.best_line,
+                    user_transcript_text=g_res.best_line,
+                    host_reply_text=host_turns_json,
+                    active_persona=active_cast_key
+                )
+                formatted_html = format_situation_gambit_html(g_res, active_reg=user.get("preferred_register", "articulate"))
+                safe_edit_text(
+                    message.chat.id,
+                    status_msg.message_id,
+                    formatted_html,
+                    reply_markup=LoungeKeyboards.turn_action_bar(
+                        token_key,
+                        len(upgrades_dicts),
+                        has_user_voice=False,
+                        has_host_voice=True,
+                        persona_key=active_cast_key,
+                        recast_label="🗣️ Hear Best Line"
+                    )
+                )
+                return
+            elif mode == "__disabled_chunk_miner__":
                 res = ai_engine.mine_text_and_subtext(user, text)
                 stealth_ids = []
                 active_uptakes = []

@@ -9,7 +9,7 @@ import time
 import html
 import random
 import logging
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Literal
 from pydantic import BaseModel, Field
 
 from google import genai
@@ -30,29 +30,64 @@ logger = logging.getLogger("MusaNYCLounge.AI")
 
 
 class DiagnosticItem(BaseModel):
-    category: str = Field(default="", 
-        description="Pick ONE phrasing category: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'. NEVER use pronunciation/vowel categories."
+    category: str = Field(
+        default="🎭 Natural Flow",
+        description="Strictly one of: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'. Never flag opinions or reasoning as language errors."
     )
-    user_said: str = Field(default="", description="Exact segment from the member's message that can be phrased more naturally.")
-    native_fix: str = Field(default="", description="Crisp, natural spoken American phrasing upgrade (NEVER put IPA phonetic symbols like /.../ here).")
-    why_note: str = Field(default="", description="1-sentence pragmatic or stylistic explanation of why native speakers prefer this phrasing.")
+    user_said: str = Field(
+        default="",
+        description="Exact verbatim substring from the member's message that contains a genuine grammatical error, awkward non-native collocation, or clear register mismatch. Leave empty if none."
+    )
+    native_fix: str = Field(
+        default="",
+        description="Natural spoken American correction that preserves the member's exact meaning, certainty, and connotation."
+    )
+    why_note: str = Field(
+        default="",
+        description="1-sentence explanation distinguishing whether this fixes an error or clarifies register/connotation."
+    )
 
 
 class LexicalFrameUpgrade(BaseModel):
-    chunk: str = Field(default="", description="High-value C1/C2 American phrasal verb, collocation, idiom, or conversational gambit.")
-    register_tag: str = Field(default="", description="Strictly one of: '🎙️ Articulate', '☕ Casual', or '🎭 Witty'.")
+    chunk: str = Field(
+        default="",
+        description="High-value C1/C2 spoken American phrasal verb, collocation, idiom, or conversational gambit."
+    )
+    register_tag: str = Field(
+        default="🎙️ Articulate",
+        description="Strictly one of the 5 supported registers: '🎙️ Articulate', '☕ Casual', '🎭 Witty', '💼 Executive', or '🤝 Diplomatic'."
+    )
     b2_foil: str = Field(
         default="",
-        description="The flat, textbook B2 phrase learners usually overuse instead of this native expression."
+        description="Simpler everyday phrase for contrast."
     )
-    explanation: str = Field(default="", description="Clear meaning, tone nuance, and semantic distinction from near-synonyms.")
-    trigger: str = Field(default="", description="When to reach for it: the exact real-life social or mental moment.")
-    pattern: str = Field(default="", description="Colligation & pattern: typical verb/preposition collocations and grammatical frame.")
-    followup: str = Field(default="", description="Natural follow-up: the next sentence an American says right after this.")
-    example: str = Field(default="", description="Vivid, authentic everyday New York example sentence.")
+    arabic_equivalent: str = Field(
+        default="",
+        description="REQUIRED: Accurate Arabic equivalent (المكافئ العربي الدقيق) of the expression in context."
+    )
+    explanation: str = Field(
+        default="",
+        description="Concise English note on tone nuance, connotation, and usage boundaries."
+    )
+    trigger: str = Field(
+        default="",
+        description="When to reach for it: the exact real-life social or conversational moment."
+    )
+    pattern: str = Field(
+        default="",
+        description="Typical grammatical frame and collocation pattern."
+    )
+    followup: str = Field(
+        default="",
+        description="Natural follow-up line an American might say right after."
+    )
+    example: str = Field(
+        default="",
+        description="Authentic 1-sentence spoken example demonstrating the exact meaning in context."
+    )
     cloze_sentence: str = Field(
         default="",
-        description="The exact `example` sentence above, but with the target expression replaced by '______'."
+        description="The exact `example` sentence above with the target expression replaced by '______'."
     )
 
 
@@ -72,7 +107,7 @@ class ChatBubbleLine(BaseModel):
 class LoungeTurnResponse(BaseModel):
     transcription: str = Field(
         default="",
-        description="If voice input was provided, the exact verbatim transcription of what the user said. Empty if text input."
+        description="Verbatim transcription if voice input was provided; empty string for text input."
     )
     responding_persona: str = Field(
         default="marcus",
@@ -80,26 +115,89 @@ class LoungeTurnResponse(BaseModel):
     )
     chat_turns: List[ChatBubbleLine] = Field(
         default_factory=list,
-        description="REQUIRED: The structured conversational turns from the active host(s) at the table. If 1 host (Solo): 1 turn. If 2 hosts (Duo): 2 to 3 interactive turns between both hosts. If 3 hosts (Trio): 3 to 4 lively turns where ALL THREE hosts ('marcus', 'chloe', AND 'jake') speak and react to the user and each other!"
+        description="Conversational turns from the active host(s) at the table reacting naturally to the member and to one another."
     )
     lounge_reply: str = Field(
         default="",
-        description="Fallback summary; main display is built from `chat_turns`."
+        description="Combined spoken reply built from `chat_turns`."
     )
-    rewrite_articulate: str = Field(default="", description="Natural Flow: Recast the user's thought in a natural spoken version of the active register WITHOUT changing its factual content, scope, degree of certainty (keep 'I think' as an opinion, NEVER turn it into 'I am convinced'), or causal claims. Standard spelling only (never 'workin'' or 'gettin'').")
-    rewrite_casual: str = Field(default="", description="Punchy Cut: Compress the user's exact thought concisely in the active register WITHOUT exaggerating or distorting its meaning. Never turn 'less productive' into 'a total productivity killer' or 'nobody checking' into 'zero accountability'.")
-    rewrite_witty: str = Field(default="", description="Alternative 3 (Punchy Ellipsis & Spoken Syntax \u2014 100% MEMBER'S FIRST-PERSON POV): A concise, high-impact spoken way the MEMBER themselves says their message using conversational ellipsis or fronting. NEVER flip perspective to the hosts!")
+    rewrite_articulate: str = Field(
+        default="",
+        description="Strategy 1 — Natural Flow (strictly in the member's ACTIVE register): Preserve the full thought, scope, causality, and degree of certainty while optimizing spoken rhythm. In Witty mode, use dry understatement or comic contrast in imagery without distorting the claim."
+    )
+    rewrite_casual: str = Field(
+        default="",
+        description="Strategy 2 — Punchy Cut (strictly in the member's ACTIVE register): Compress the member's exact thought concisely without exaggerating certainty or scope. In Witty mode, keep the compression sharp and ironical without turning a moderate claim into an absolute."
+    )
+    rewrite_witty: str = Field(
+        default="",
+        description="Strategy 3 — Conversational Fronting / Ellipsis (strictly in the member's ACTIVE register, 1st-person POV): Recast the member's thought using spoken fronting or conversational ellipsis. In Witty mode, land a dry observational twist while keeping the exact meaning."
+    )
     self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
-    acoustic_prosody_xray: str = Field(default="", description="Leave empty string '' in chat mode.")
-    tts_clean_target: str = Field(default="", 
-        description="Clean plain-text version of the recast that matches the member's ACTIVE VIBE (no brackets or phonetic symbols) ready for voice synthesis."
+    acoustic_prosody_xray: str = Field(default="", description="1-sentence rhythm/stress note for voice input; empty string for text input.")
+    tts_clean_target: str = Field(
+        default="",
+        description="Clean plain-text version of `rewrite_articulate` ready for TTS voice synthesis."
     )
     mirror_clean_target: str = Field(
         default="",
-        description="A clean, grammatically natural version of the user's sentence keeping their original word sequence for 1-to-1 Voice Mirror comparison."
+        description="Clean, natural version of the member's sentence for 1-to-1 Voice Mirror comparison."
     )
-    diagnostics: List[DiagnosticItem] = Field(default_factory=list, description="Up to 2 spoken phrasing upgrades on the member's sentence tailored to the active Vibe. CRITICAL: Leave EMPTY [] if the member sent a short greeting ('Hi guys') OR if the member is describing a scenario/topic prompt ('Apologizing for being late', 'Politely disagreeing with a manager').")
-    lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list, description="3 fresh, 100% SPOKEN C1/C2 American expressions FOR THE MEMBER'S OWN ROLE that strictly match BOTH the active Spoken Vibe (Articulate/Casual/Witty/Executive/Diplomatic) AND the active Chat Room Mode. Never repeat Candidate Vault Phrases and never use stiff written corporate-memo phrases.")
+    diagnostics_status: str = Field(
+        default="checked_no_corrections",
+        description="Strictly one of: 'corrections_found' (when `diagnostics` has a genuine language error), 'checked_no_corrections' (when the member's English sentence was evaluated and is already natural), or 'not_assessed' (when the input was in Arabic, a short greeting, or a scenario/topic prompt)."
+    )
+    diagnostics: List[DiagnosticItem] = Field(
+        default_factory=list,
+        description="At most 1 genuine grammatical, collocational, or register fix. Must be empty `[]` whenever `diagnostics_status` is 'checked_no_corrections' or 'not_assessed'."
+    )
+    lexical_upgrades: List[LexicalFrameUpgrade] = Field(
+        default_factory=list,
+        description="3 distinct, reusable spoken expressions suited to the active register and topic, each with a populated `arabic_equivalent` and `explanation`."
+    )
+
+
+class SituationGambitResponse(BaseModel):
+    situation_summary: str = Field(
+        default="",
+        description="1-sentence pragmatic reading of the speech act, relationship dynamics, and social stakes."
+    )
+    responding_persona: str = Field(
+        default="chloe",
+        description="Lead coach for this scenario ('chloe', 'marcus', or 'jake')."
+    )
+    host_commentary: str = Field(
+        default="",
+        description="1-2 natural spoken sentences from the lead host framing the strategy before giving the lines."
+    )
+    best_line: str = Field(
+        default="",
+        description="The #1 immediate, instinctive first-person spoken line an American naturally says in this exact situation (matching the active register)."
+    )
+    softer_alternative: str = Field(
+        default="",
+        description="A gentler, face-saving first-person alternative that lowers tension while keeping the same intent."
+    )
+    firmer_alternative: str = Field(
+        default="",
+        description="A firmer, direct boundary-setting first-person alternative that holds the line without aggression."
+    )
+    why_it_works: str = Field(
+        default="",
+        description="Concise pragmatic explanation of why `best_line` works socially and what tone trap it avoids."
+    )
+    arabic_equivalent: str = Field(
+        default="",
+        description="Accurate Arabic translation / pragmatic equivalent (المكافئ العربي الدقيق) of the recommended line."
+    )
+    follow_up_line: str = Field(
+        default="",
+        description="What the member should say next if the other person pushes back or gets defensive."
+    )
+    lexical_upgrades: List[LexicalFrameUpgrade] = Field(
+        default_factory=list,
+        description="3 savable situational gambits from this scenario (for the member's Vault), each with `chunk`, `arabic_equivalent`, `explanation`, and `example`."
+    )
 
 
 class PodcastTurnLine(BaseModel):
@@ -298,17 +396,17 @@ class NYCLoungeAI:
 
         if count == 3:
             lead_note = (
-                f"- IMPORTANT: Musa directly addressed `{called_host.capitalize()}` in his message, so `{called_host}` MUST speak FIRST in Turn 1, and then the other two hosts jump in right after!"
+                f"- Musa directly addressed `{called_host.capitalize()}`, so `{called_host}` MUST speak first."
                 if called_host else
-                "- Turn 1: Have the most fitting host react directly to Musa's message first."
+                "- Start with whichever host has the sharpest immediate reaction to Musa's point."
             )
             return (
-                "ACTIVE TABLE CAST: 🗽 3-HOST TRIO ROUNDTABLE (`marcus`, `chloe`, AND `jake`).\n"
-                "- MANDATORY SCHEMA RULE: Populate `chat_turns` with 3 to 4 conversational turns where ALL THREE hosts (`marcus`, `chloe`, and `jake`) speak!\n"
+                "ACTIVE TABLE CAST: 🗽 NYC TRIO (`marcus`, `chloe`, `jake`).\n"
                 f"{lead_note}\n"
-                "- Turn 2: A second host jumps in ('Wait, hold on—', 'See, I'm with Jake on this...', etc.) adding a contrasting angle or story.\n"
-                "- Turn 3: The third host synthesizes the subtext or teases the others and tosses an engaging follow-up question back to Musa.\n"
-                "- Do NOT put speaker names inside `ChatBubbleLine.text` (the `speaker` field handles that)."
+                "- Default cognitive tendencies (allow natural overlap): Marcus clarifies concepts & assumptions; Chloe reads interpersonal/social dynamics; Jake grounds in practical everyday reality.\n"
+                "- Write 2 to 4 natural conversational turns in `chat_turns` with varied turn lengths (mix short 1-sentence reactions or challenges with 2-sentence observations).\n"
+                "- NEVER use a rigid script ('Marcus abstract -> Jake Wait hold on -> Chloe synthesis + question'). Only end with a question when it genuinely advances the conversation.\n"
+                "- Do NOT put speaker names inside `ChatBubbleLine.text`."
             )
         elif count == 2:
             if called_host and called_host not in hosts:
@@ -318,19 +416,16 @@ class NYCLoungeAI:
             h1, h2 = hosts[0], hosts[1]
             p1, p2 = PERSONAS[h1], PERSONAS[h2]
             return (
-                f"ACTIVE TABLE CAST: 👥 2-HOST DUO BANTER (`{h1}` and `{h2}` ONLY).\n"
-                f"- Host 1 (Leads first): {p1['title']} — {p1['style_desc']}\n"
-                f"- Host 2: {p2['title']} — {p2['style_desc']}\n"
-                f"- MANDATORY SCHEMA RULE: Populate `chat_turns` with 2 to 3 interactive turns strictly alternating between `{h1}` and `{h2}`!\n"
-                f"- Have `{h1}` and `{h2}` react both to Musa and to each other naturally, ending with a question for Musa."
+                f"ACTIVE TABLE CAST: 👥 2-HOST DUO (`{h1}` and `{h2}`).\n"
+                f"- {p1['title']} & {p2['title']}.\n"
+                f"- Populate `chat_turns` with 2 to 3 natural back-and-forth turns between `{h1}` and `{h2}`."
             )
         else:
             h1 = called_host if called_host else hosts[0]
             p1 = PERSONAS.get(h1, PERSONAS["marcus"])
             return (
-                f"ACTIVE TABLE CAST: 👤 1-ON-1 SOLO CHAT WITH {p1['title']} (`{h1}` ONLY).\n"
-                f"- Persona Style: {p1['style_desc']}\n"
-                f"- MANDATORY SCHEMA RULE: Populate `chat_turns` with exactly 1 rich, engaging turn where `speaker` is '{h1}'."
+                f"ACTIVE TABLE CAST: 👤 1-ON-1 SOLO WITH {p1['title']} (`{h1}` ONLY).\n"
+                f"- Populate `chat_turns` with 1 natural spoken turn where `speaker` is '{h1}'."
             )
 
     @staticmethod
@@ -439,43 +534,88 @@ class NYCLoungeAI:
             logger.warning(f"Spark fallback: {e}")
             return "🗽 <b>The Table Is Yours!</b>\nDrop a voice note or text on whatever is on your mind today!"
 
-    def process_lounge_turn(self, *args, **kwargs) -> Tuple[LoungeTurnResponse, float]:
-        res, latency = self._raw_process_lounge_turn(*args, **kwargs)
+    def process_lounge_turn(self, *args, **kwargs) -> Tuple[LoungeTurnResponse, List[int]]:
         user = args[0] if len(args) > 0 else kwargs.get("user", {})
         user_text = args[1] if len(args) > 1 else (kwargs.get("user_text") or kwargs.get("text") or "")
+        uid = user.get("user_id", 0) if isinstance(user, dict) else 0
         _pref_r = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
-        _badge_r = REGISTERS_MAP.get(_pref_r, "🎙️ Articulate")
+        if _pref_r not in REGISTERS_MAP:
+            _pref_r = "articulate"
+        _badge_r = REGISTERS_MAP[_pref_r]
+        _active_persona = user.get("active_persona", "trio") if isinstance(user, dict) else "trio"
+        _mode = user.get("current_mode", "spontaneous_chat") if isinstance(user, dict) else "spontaneous_chat"
+
+        try:
+            res, used_stealth_ids = self._raw_process_lounge_turn(*args, **kwargs)
+            if not isinstance(res, LoungeTurnResponse):
+                raise ValueError("Invalid LoungeTurnResponse object returned")
+            if not isinstance(used_stealth_ids, list):
+                used_stealth_ids = []
+        except Exception as exc:
+            logger.warning(f"Structured turn fallback triggered: {exc}")
+            fallback_res = LoungeTurnResponse(
+                responding_persona="marcus",
+                chat_turns=[ChatBubbleLine(speaker="marcus", pacing="normal", text="Give me one second—my train of thought just derailed. Drop that line on me one more time?")],
+                lounge_reply="🧔‍♂️ <b>Marcus:</b> Give me one second—my train of thought just derailed. Drop that line on me one more time?",
+                rewrite_articulate=str(user_text or ""),
+                rewrite_casual=str(user_text or ""),
+                diagnostics_status="not_assessed",
+                diagnostics=[],
+                lexical_upgrades=[]
+            )
+            return fallback_res, []
+
+        known_ing_stems = (
+            "work", "get", "stay", "look", "breath", "talk", "walk", "think", "go", "do",
+            "mak", "tak", "com", "runn", "hitt", "try", "say", "play", "grind", "slack",
+            "spinn", "paint", "clean", "crank", "bugg", "push", "pull", "call", "wait"
+        )
+        ing_pattern = re.compile(r"\b(" + "|".join(known_ing_stems) + r")in'(?!\w)", flags=re.IGNORECASE)
 
         def _clean_spoken_text(txt: str) -> str:
             if not txt:
-                return txt
-            # 1. تحويل شامل لأي كلمة تنتهي بـ in' إلى ing (مثل paintin', cleanin', crankin', buggin', workin', gettin')
-            txt = re.sub(r"\b([a-zA-Z]{2,})in'(?!\w)", r"\1ing", txt)
-            # 2. إزالة التراكيب التقريرية المتكلفة واستبدالها بالبدائل الشفهية الطبيعية
-            replacements = [
+                return ""
+            txt = ing_pattern.sub(r"\1ing", txt)
+            safe_replacements = [
                 (r"^(?:Frankly|Honestly),?\s+I(?:'m| am) of the (?:mind|opinion) that\s+", "Honestly, I think "),
                 (r"\bI(?:'m| am) of the (?:mind|opinion) that\b", "I think"),
-                (r"\bprimarily due to\b", "mainly because of"),
                 (r"\ba lapse in focus\b", "losing focus"),
-                (r"\bthe erosion of boundaries\b", "boundaries starting to blur"),
-                (r"\bthe erosion of accountability\b", "it being harder to hold people accountable"),
                 (r"\bthose working remotely\b", "people working from home"),
-                # 3. منع تضخيم الادعاء (Semantic Fidelity)
                 (r"\bis a (?:total )?productivity killer\b", "can really hurt productivity"),
                 (r"\b(?:just )?kills productivity\b", "can hurt productivity"),
                 (r"\bthere(?:'s| is) zero accountability\b", "there's less direct oversight"),
             ]
-            for pat, rep in replacements:
+            for pat, rep in safe_replacements:
                 txt = re.sub(pat, rep, txt, flags=re.IGNORECASE)
-            return txt
+            return txt.strip()
 
+        if getattr(res, "chat_turns", None):
+            for ct in res.chat_turns:
+                ct.text = _clean_spoken_text(getattr(ct, "text", ""))
         res.lounge_reply = _clean_spoken_text(getattr(res, "lounge_reply", ""))
+        res = self._finalize_chat_turns(res, active_persona=_active_persona, user_text=user_text)
+
         res.rewrite_articulate = _clean_spoken_text(getattr(res, "rewrite_articulate", ""))
         res.rewrite_casual = _clean_spoken_text(getattr(res, "rewrite_casual", ""))
         res.rewrite_witty = _clean_spoken_text(getattr(res, "rewrite_witty", ""))
+        res.tts_clean_target = _clean_spoken_text(getattr(res, "tts_clean_target", "")) or res.rewrite_articulate
 
-        # Priority 1: فلتر النزاهة التصحيحية الصارم لمنع التصحيحات الزائفة
-        false_fix_targets = {
+        u_raw = (user_text or getattr(res, "transcription", "") or "").strip()
+        u_lower = u_raw.lower()
+        user_hedged = any(h in u_lower for h in ("i think", "might", "maybe", "can ", "some ", "tend to", "probably"))
+        if user_hedged and not any(a in u_lower for a in ("nobody", "no one ever", "zero", "impossible")):
+            for attr in ("rewrite_articulate", "rewrite_casual", "rewrite_witty"):
+                val = getattr(res, attr, "")
+                val = re.sub(r"\bnobody gets anything done\b", "people get less done", val, flags=re.IGNORECASE)
+                val = re.sub(r"\bno one gets anything done\b", "people get less done", val, flags=re.IGNORECASE)
+                setattr(res, attr, val)
+
+        has_arabic_input = bool(re.search(r"[\u0600-\u06FF]", u_raw))
+        is_scenario_prompt = bool(
+            re.match(r"^(?:what to say when|how do i |how to |apologizing for |politely )", u_lower)
+            or _mode in ("situation_gambit", "subtext_decoder")
+        )
+        protected_natural_phrases = {
             "people who work from home",
             "don't have anyone checking on them",
             "checking on them",
@@ -484,28 +624,125 @@ class NYCLoungeAI:
             "honestly i think",
             "work from home",
             "less productive",
+            "what do you think",
         }
-        if isinstance(user_text, str) and len(user_text.split()) >= 45:
+
+        if has_arabic_input or is_scenario_prompt or not u_raw:
             res.diagnostics = []
-        elif getattr(res, "diagnostics", None):
+            res.diagnostics_status = "not_assessed"
+        else:
             valid_diags = []
-            for d in res.diagnostics:
-                u_said = (getattr(d, "user_said", "") or "").strip().lower().strip(".,!?\"'")
-                n_fix = (getattr(d, "native_fix", "") or "").strip().lower()
-                if u_said in false_fix_targets:
+            for d in (getattr(res, "diagnostics", None) or []):
+                u_said_raw = (getattr(d, "user_said", "") or "").strip()
+                u_said_norm = u_said_raw.lower().strip(".,!?\"'")
+                n_fix_norm = (getattr(d, "native_fix", "") or "").strip().lower().strip(".,!?\"'")
+                if not u_said_norm or not n_fix_norm or u_said_norm == n_fix_norm:
                     continue
-                if "of the mind" in n_fix or "of the opinion" in n_fix or "remote workforce" in n_fix or "looking over their shoulder" in n_fix:
+                if u_lower and u_said_norm not in u_lower:
                     continue
+                if u_said_norm in protected_natural_phrases:
+                    continue
+                if any(bad in n_fix_norm for bad in ("of the mind", "of the opinion", "remote workforce", "looking over their shoulder")):
+                    continue
+                d.native_fix = _clean_spoken_text(d.native_fix)
                 valid_diags.append(d)
             res.diagnostics = valid_diags[:1]
+            res.diagnostics_status = "corrections_found" if res.diagnostics else "checked_no_corrections"
+
+        recent_chunks = set()
+        try:
+            if self.db and uid:
+                vault_items = self.db.get_user_vault(uid, limit=25)
+                recent_chunks = {(item.get("chunk") or "").strip().lower() for item in vault_items}
+        except Exception:
+            pass
 
         if getattr(res, "lexical_upgrades", None):
-            res.lexical_upgrades = list(res.lexical_upgrades)[:4]
+            seen_in_turn = set()
+            filtered_upgrades = []
             for _u_item in res.lexical_upgrades:
                 _u_item.register_tag = _badge_r
                 _u_item.chunk = _clean_spoken_text(getattr(_u_item, "chunk", ""))
+                _u_item.b2_foil = _clean_spoken_text(getattr(_u_item, "b2_foil", ""))
+                _u_item.explanation = _clean_spoken_text(getattr(_u_item, "explanation", ""))
                 _u_item.example = _clean_spoken_text(getattr(_u_item, "example", ""))
-        return res, latency
+                _u_item.followup = _clean_spoken_text(getattr(_u_item, "followup", ""))
+                if not getattr(_u_item, "arabic_equivalent", "").strip() and "—" in _u_item.explanation:
+                    parts = _u_item.explanation.split("—", 1)
+                    _u_item.arabic_equivalent = parts[0].strip()
+                    _u_item.explanation = parts[1].strip()
+                if _u_item.chunk and _u_item.example and not getattr(_u_item, "cloze_sentence", "").strip():
+                    _u_item.cloze_sentence = re.sub(re.escape(_u_item.chunk), "______", _u_item.example, flags=re.IGNORECASE)
+                c_key = _u_item.chunk.lower()
+                if not c_key or c_key in seen_in_turn:
+                    continue
+                seen_in_turn.add(c_key)
+                if c_key not in recent_chunks or len(res.lexical_upgrades) <= 1:
+                    filtered_upgrades.append(_u_item)
+            res.lexical_upgrades = (filtered_upgrades or list(res.lexical_upgrades)[:1])[:3]
+
+        return res, used_stealth_ids
+
+
+    def process_situation_gambit(
+        self,
+        user: Dict[str, Any],
+        user_text: str = "",
+        audio_bytes: Optional[bytes] = None,
+        audio_mime: str = "audio/ogg"
+    ) -> SituationGambitResponse:
+        pref_reg = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
+        if pref_reg not in REGISTERS_MAP:
+            pref_reg = "articulate"
+        vibe_badge = REGISTERS_MAP[pref_reg]
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+
+        system_prompt = (
+            f"{CORE_NYC_PERSONA_PROMPT}\n\n"
+            f"ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... (Dedicated Situational Gambit Engine)\n"
+            f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
+            f"TASK:\n"
+            f"The member is describing a social, workplace, or interpersonal scenario (in English or Arabic) and needs the exact instinctive spoken English lines to use in that moment.\n"
+            f"1. Analyze the speech act, relationship/power dynamic, and interpersonal risk in `situation_summary`.\n"
+            f"2. Provide `best_line`: the #1 natural first-person spoken line an American would actually say out loud in {vibe_badge}.\n"
+            f"3. Provide `softer_alternative` (more tactful/indirect) and `firmer_alternative` (clearer boundary/directness) while preserving the member's intended outcome.\n"
+            f"4. Explain the pragmatic nuance in `why_it_works`, provide the accurate Arabic equivalent in `arabic_equivalent`, and give a realistic `follow_up_line` if the other person pushes back.\n"
+            f"5. Populate `lexical_upgrades` with 3 reusable spoken gambits from your recommendations so the member can save them to their Vault."
+        )
+
+        contents: List[Any] = []
+        if audio_bytes:
+            contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+            contents.append("Listen to the member's scenario description and return the complete `SituationGambitResponse`.")
+        else:
+            contents.append(f"SCENARIO DESCRIPTION:\n{user_text}\n\nReturn the complete `SituationGambitResponse` calibrated to {vibe_badge}.")
+
+        try:
+            g_res: SituationGambitResponse = self._call_structured(
+                contents=contents,
+                schema_cls=SituationGambitResponse,
+                system_instruction=system_prompt,
+                temperature=0.65,
+                max_output_tokens=3072
+            )
+            for up in (g_res.lexical_upgrades or []):
+                up.register_tag = vibe_badge
+            g_res.lexical_upgrades = list(g_res.lexical_upgrades or [])[:3]
+            return g_res
+        except Exception as exc:
+            logger.warning(f"Situation gambit fallback triggered: {exc}")
+            return SituationGambitResponse(
+                situation_summary="Setting a clear, respectful boundary without escalating tension.",
+                responding_persona="chloe",
+                host_commentary="Here is the cleanest way to handle that moment on the spot:",
+                best_line="I want to make sure we're on the same page here—let's clarify how we're handling this moving forward.",
+                softer_alternative="Just so nothing gets lost in translation, could we quickly align on who's leading which part?",
+                firmer_alternative="I want to clarify one thing: I led that part of the work, and it's important our contributions are represented accurately.",
+                why_it_works="It addresses the issue calmly in the first person without sounding defensive or accusatory.",
+                arabic_equivalent="أود توضيح نقطة واحدة لضمان الدقة والاتفاق على سير العمل.",
+                follow_up_line="I'm happy to collaborate closely, as long as we're transparent about ownership.",
+                lexical_upgrades=[]
+            )
 
     def _raw_process_lounge_turn(
         self,
@@ -516,11 +753,11 @@ class NYCLoungeAI:
     ) -> Tuple[LoungeTurnResponse, List[int]]:
         uid = user["user_id"]
         level = user.get("level", "C1")
-        eng_only = bool(user.get("english_only", 1)) or level in ("C1", "C2")
         pref_reg = user.get("preferred_register", "articulate")
-        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
+        if pref_reg not in REGISTERS_MAP:
+            pref_reg = "articulate"
+        active_vibe_badge = REGISTERS_MAP[pref_reg]
         vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
-        active_vibe_badge = vibe_badge
         active_persona = user.get("active_persona", "trio")
         mode = user.get("current_mode", "spontaneous_chat")
         session_meta = self.db.get_session_meta(uid)
@@ -530,104 +767,61 @@ class NYCLoungeAI:
             ", ".join([f"'{it['chunk']}' (Use when: {it.get('trigger_context', 'fitting')})" for it in stealth_items])
             if stealth_items else "None"
         )
-
         weaknesses = self.db.get_weaknesses(uid, limit=3)
         weakness_str = "; ".join([f"Watch for '{w['user_said']}' -> Prefer '{w['native_fix']}'" for w in weaknesses]) if weaknesses else "None"
-
         rag_hits = self.db.get_rag_collocations_for_context(user_text, limit=3) if user_text else []
-        rag_str = "\n".join([f"  - {r}" for r in rag_hits]) if rag_hits else "  - Prioritize high-utility C1/C2 Spoken American collocations."
-
+        rag_str = "\n".join([f" - {r}" for r in rag_hits]) if rag_hits else " - Prioritize high-utility C1/C2 Spoken American collocations."
         history = self.db.get_history(uid, limit=6)
         hist_str = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in history]) if history else "Start of conversation."
 
-        lang_rule = (
-            "100% ENGLISH IMMERSION: Every single word of your output MUST be in English."
-            if eng_only else
-            "Keep all conversation and rewrites in English; you may add a brief Arabic hint ONLY inside `why_note` if helpful."
-        )
-
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"CALIBRATION FOR THIS TURN:\n"
-            f"- {self._level_calibration_guide(level)}\n"
+            f"CALIBRATION & REGISTER CONTRACT FOR THIS TURN:\n"
+            f"- Depth: {self._level_calibration_guide(level)}\n"
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
-            f"- STRICT SESSION VIBE LOCK ({active_vibe_badge}): {vibe_rules}\n"
-            f"- NO REGISTER SHIFTING: Every host in `chat_turns`, your `lounge_reply`, ALL 3 recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), `tts_clean_target`, and ALL 3 `lexical_upgrades` MUST strictly belong to the {active_vibe_badge} register!\n"
-            f"- SPONTANEOUS HOST PIVOTS: Do NOT follow any fixed count or quota for mid-sentence pivots; weave them into `chat_turns` (matching {active_vibe_badge}) whenever a thought naturally shifts mid-stream, as long as it never disrupts the spontaneity of the dialogue.\n"
-            f"- {lang_rule}\n"
+            f"- ACTIVE REGISTER LOCK ({active_vibe_badge}): {vibe_rules}\n"
+            f"- THREE RECAST STRATEGIES WITHIN {active_vibe_badge}:\n"
+            f"  1. `rewrite_articulate` (Natural Flow): Preserve the full thought, certainty, scope, and causality with natural spoken rhythm in {active_vibe_badge}.\n"
+            f"  2. `rewrite_casual` (Punchy Cut): Compress the same thought concisely in {active_vibe_badge} without exaggerating the claim.\n"
+            f"  3. `rewrite_witty` (Spoken Fronting/Ellipsis): First-person spoken alternative using fronting or ellipsis in {active_vibe_badge}.\n"
+            f"- LANGUAGE POLICY: Keep all spoken dialogue, rewrites, and examples in natural American English, while ALWAYS populating `arabic_equivalent` with the accurate Arabic meaning.\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
-            f"ORGANIC PHRASE WEAVING (CONTEXTUAL FILTER):\n"
+            f"ORGANIC PHRASE WEAVING:\n"
             f"- Candidate Vault Phrases: {stealth_chunks_str}\n"
-            f"- Only weave a candidate phrase into `chat_turns` if it fits this topic 100% naturally. Wrap woven phrases in `<i>phrase</i>`.\n\n"
+            f"- Only weave a candidate phrase into `chat_turns` if it fits 100% naturally. Wrap woven phrases in `<i>phrase</i>`.\n\n"
             f"RECURRING HABITS TO WATCH FOR: {weakness_str}\n"
             f"RELEVANT COLLOCATIONS:\n{rag_str}\n\n"
-            f"RECENT CONVERSATION (For topic continuity ONLY — if earlier turns used a different tone, IGNORE their tone and strictly use {active_vibe_badge} now!):\n{hist_str}"
+            f"RECENT CONVERSATION (For topic continuity ONLY — strictly use {active_vibe_badge} now):\n{hist_str}\n"
+            f"{PRIORITY_1_TO_5_BLOCK}"
         )
 
         contents: List[Any] = []
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                "Listen carefully to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` matching the active cast (1, 2, or 3 hosts), provide 3 distinct native recast alternatives (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`) ALL strictly in the member's ACTIVE VIBE, `mirror_clean_target`, phrasing-only `diagnostics` (NO pronunciation/IPA notes), and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
+                f"Listen to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` in {active_vibe_badge}, provide the 3 recast strategies (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), set `diagnostics_status` honestly ('corrections_found', 'checked_no_corrections', or 'not_assessed'), provide at most 1 genuine fix in `diagnostics`, and provide 3 fresh `lexical_upgrades` with `arabic_equivalent`."
             )
         else:
             contents.append(
                 f"MEMBER MESSAGE:\n{user_text}\n\n"
-                "Populate `chat_turns` with the active cast (1, 2, or 3 hosts) and provide phrasing-only `diagnostics` (NO pronunciation/vowel/IPA comments) and 3 `lexical_upgrades`. Leave `acoustic_prosody_xray` empty."
+                f"Respond in `chat_turns` in {active_vibe_badge}, provide the 3 recast strategies (`rewrite_articulate`, `rewrite_casual`, `rewrite_witty`), set `diagnostics_status` honestly, provide at most 1 genuine fix in `diagnostics`, and provide 3 fresh `lexical_upgrades` with `arabic_equivalent`."
             )
 
         res: LoungeTurnResponse = self._call_structured(
             contents=contents,
             schema_cls=LoungeTurnResponse,
-            system_instruction=(system_prompt) + '\n' + PRIORITY_1_TO_5_BLOCK,
-            temperature=0.72,
+            system_instruction=system_prompt,
+            temperature=0.70,
             max_output_tokens=4096
         )
 
-        active_badge = REGISTERS_MAP.get(pref_reg, "🎙️ Articulate")
-        for up in res.lexical_upgrades:
-            up.register_tag = active_badge
-
-        res = self._finalize_chat_turns(res, active_persona=active_persona, user_text=user_text)
-
         used_stealth_ids: List[int] = []
-        reply_lower = (res.lounge_reply or "").lower()
+        combined_raw = " ".join([getattr(ct, "text", "") for ct in (res.chat_turns or [])]) + " " + (res.lounge_reply or "")
+        reply_lower = combined_raw.lower()
         for it in stealth_items:
             if it["chunk"].lower() in reply_lower:
                 used_stealth_ids.append(it["id"])
 
-        try:
-            _u_txt = (user_text or "").strip().strip('"').strip("'").strip().lower()
-            _u_mode = (user.get("current_mode", "spontaneous_chat") if isinstance(user, dict) else "spontaneous_chat")
-            if len(_u_txt.split()) <= 7 and (
-                _u_txt.startswith(("apologiz", "how to ", "what to ", "asking ", "declin", "disagree", "politely ", "saying ", "telling "))
-                or _u_mode not in ("spontaneous_chat", "", None)
-            ):
-                res.diagnostics = []
-            _vault_lower = {
-                (it.get("chunk", "") if isinstance(it, dict) else str(it)).strip().lower()
-                for it in (stealth_items if "stealth_items" in locals() else [])
-            }
-            if len((user_text or "").split()) >= 40:
-                res.diagnostics = []
-            _pref_r = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
-            _badge_r = REGISTERS_MAP.get(_pref_r, "🎙️ Articulate")
-            for _u_item in (getattr(res, "lexical_upgrades", None) or []):
-                _u_item.register_tag = _badge_r
-            if _vault_lower and getattr(res, "lexical_upgrades", None):
-                res.lexical_upgrades = [
-                    u for u in res.lexical_upgrades
-                    if getattr(u, "chunk", "").strip().lower() not in _vault_lower
-                ]
-        except Exception:
-            pass
-        try:
-            _pref_r = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
-            _badge = REGISTERS_MAP.get(_pref_r, "🎙️ Articulate")
-            for _u in (getattr(res, "lexical_upgrades", None) or []):
-                _u.register_tag = _badge
-        except Exception:
-            pass
         return res, used_stealth_ids
 
     def explore_collocations_live(self, user: Dict[str, Any], query_word: str) -> CollocationExplorerSchema:
