@@ -280,8 +280,10 @@ CRITICAL COACHING, REGISTER COHERENCE & PRAGMATIC MIRROR RULES (MUST OBEY):
 class NYCLoungeAI:
     def __init__(self, api_key: str, db: LoungeDatabase):
         self.db = db
-        self.keys_pool = GEMINI_KEYS if GEMINI_KEYS else ([api_key] if api_key else [])
+        raw_pool = GEMINI_KEYS if GEMINI_KEYS else ([api_key] if api_key else [])
+        self.keys_pool = [k.strip() for k in raw_pool if k and k.strip()]
         self._key_idx = 0
+        self._dead_keys_until: Dict[int, float] = {}
         self._dead_models_until: Dict[str, float] = {}
         self._discovered_models: List[str] = list(GEMINI_MODELS_CHAIN)
         self._recent_taught_by_user: Dict[int, List[str]] = {}
@@ -324,17 +326,38 @@ class NYCLoungeAI:
         schema_cls: Any,
         system_instruction: str,
         temperature: float = 0.72,
-        max_output_tokens: int = 4096
+        max_output_tokens: int = 8192
     ) -> Any:
         """
-        Executes structured Gemini calls with sanitized per-attempt telemetry logging:
-        logs `req_id`, `model`, `attempt`, `stage` (api_call vs schema_validation), `latency_ms`, `exc_type`, and `outcome`.
+        Resilient structured Gemini caller:
+        - Tries all healthy keys in `self.keys_pool` and quarantines invalid/quota-exhausted keys in `_dead_keys_until`.
+        - Uses `max_output_tokens >= 8192` so thinking tokens never truncate JSON output.
+        - Retries or falls back to the next model on both transient errors and truncated JSON (`ValidationError`).
         """
+        if not self.keys_pool:
+            raise RuntimeError("API key is not configured.")
+
         req_id = uuid.uuid4().hex[:8]
         last_err = None
-        for key_round in range(max(1, min(2, len(self.keys_pool)))):
-            client = self._get_client()
+        now = time.time()
+        dead_keys = getattr(self, "_dead_keys_until", {})
+        healthy_key_indices = [i for i in range(len(self.keys_pool)) if dead_keys.get(i, 0) < now]
+        if not healthy_key_indices:
+            dead_keys.clear()
+            healthy_key_indices = list(range(len(self.keys_pool)))
+
+        start_pos = self._key_idx % len(healthy_key_indices)
+        ordered_key_indices = healthy_key_indices[start_pos:] + healthy_key_indices[:start_pos]
+        self._key_idx = (self._key_idx + 1) % max(1, len(self.keys_pool))
+
+        eff_tokens = max(8192, int(max_output_tokens or 8192))
+
+        for k_idx in ordered_key_indices:
+            key = self.keys_pool[k_idx]
+            client = genai.Client(api_key=key, http_options={"timeout": 45000})
             models_to_try = self._get_active_models(client)
+            key_failed_auth_or_quota = False
+
             for model_name in models_to_try:
                 for attempt in range(1, 3):
                     t0 = time.perf_counter()
@@ -343,7 +366,7 @@ class NYCLoungeAI:
                         cfg_kwargs: Dict[str, Any] = {
                             "system_instruction": system_instruction,
                             "temperature": temperature,
-                            "max_output_tokens": max_output_tokens,
+                            "max_output_tokens": eff_tokens,
                             "response_mime_type": "application/json",
                             "response_schema": schema_cls
                         }
@@ -356,7 +379,7 @@ class NYCLoungeAI:
                         latency_ms = int((time.perf_counter() - t0) * 1000)
                         if getattr(resp, "parsed", None) is not None:
                             logger.info(
-                                f"TELEMETRY req_id={req_id} model={model_name} attempt={attempt} "
+                                f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
                                 f"stage=complete latency_ms={latency_ms} status=ok_parsed"
                             )
                             return resp.parsed
@@ -367,7 +390,7 @@ class NYCLoungeAI:
                                 raw_txt = raw_txt.strip("`").removeprefix("json").strip()
                             parsed_obj = schema_cls.model_validate_json(raw_txt)
                             logger.info(
-                                f"TELEMETRY req_id={req_id} model={model_name} attempt={attempt} "
+                                f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
                                 f"stage=complete latency_ms={latency_ms} status=ok_json"
                             )
                             return parsed_obj
@@ -380,24 +403,35 @@ class NYCLoungeAI:
                         code_match = re.search(r"\b(400|401|403|404|408|429|500|502|503|504)\b", err_str)
                         err_code = code_match.group(1) if code_match else "none"
                         logger.warning(
-                            f"TELEMETRY req_id={req_id} model={model_name} attempt={attempt} "
+                            f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
                             f"stage={stage} latency_ms={latency_ms} exc_type={exc_type} code={err_code} "
-                            f"detail={err_str[:140]}"
+                            f"detail={err_str[:160]}"
                         )
-                        if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                        upper_err = err_str.upper()
+                        # If the API key itself is invalid, leaked, or forbidden, quarantine it for 1 hour and switch to next key immediately
+                        if any(bad_k in upper_err for bad_k in ("API_KEY_INVALID", "PERMISSION_DENIED", "403", "401", "LEAKED")):
+                            if hasattr(self, "_dead_keys_until"):
+                                self._dead_keys_until[k_idx] = time.time() + 3600
+                            key_failed_auth_or_quota = True
+                            break
+                        # If this key hit a 429 quota limit, quarantine key for 60s and try the next key in pool
+                        if "429" in upper_err or "RESOURCE_EXHAUSTED" in upper_err:
+                            if hasattr(self, "_dead_keys_until"):
+                                self._dead_keys_until[k_idx] = time.time() + 60
+                            if len(ordered_key_indices) > 1:
+                                key_failed_auth_or_quota = True
+                                break
+                        if "404" in upper_err or "NOT_FOUND" in upper_err or "NO LONGER AVAILABLE" in upper_err:
                             self._dead_models_until[model_name] = time.time() + 86400
                             break
-                        # Only retry on transient network/server/rate-limit errors (503, 502, 504, 429, Timeout, Empty payload)
-                        is_transient = any(
-                            tok in err_str.upper()
-                            for tok in ("503", "502", "504", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "TIMEOUT", "DEADLINE", "EMPTY RESPONSE")
-                        )
-                        if is_transient and attempt == 1:
-                            time.sleep(1.2 + random.uniform(0.2, 0.6))
+                        if attempt == 1:
+                            time.sleep(0.9 + random.uniform(0.1, 0.4))
                             continue
-                        # Do not blindly retry the same model on deterministic schema/validation errors; move to next model in chain
                         break
-        raise RuntimeError(f"req_id={req_id} Service temporarily busy after model chain: {last_err}")
+                if key_failed_auth_or_quota:
+                    break
+
+        raise RuntimeError(f"req_id={req_id} All keys/models exhausted: {last_err}")
 
     @staticmethod
     def _level_calibration_guide(level: str) -> str:
@@ -1038,7 +1072,7 @@ class NYCLoungeAI:
             schema_cls=LoungeTurnResponse,
             system_instruction=system_prompt,
             temperature=0.68,
-            max_output_tokens=4096
+            max_output_tokens=8192
         )
 
         if not getattr(res, "chat_turns", None) and not (getattr(res, "lounge_reply", "") or "").strip():
