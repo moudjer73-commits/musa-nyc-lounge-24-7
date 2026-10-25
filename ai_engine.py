@@ -312,10 +312,19 @@ class NYCLoungeAI:
     def __init__(self, api_key: str, db: LoungeDatabase):
         self.db = db
         raw_pool = GEMINI_KEYS if GEMINI_KEYS else ([api_key] if api_key else [])
-        self.keys_pool = [k.strip() for k in raw_pool if k and k.strip()]
+        # Deduplicate keys while preserving order
+        seen_k = set()
+        self.keys_pool = []
+        for k in raw_pool:
+            ks = (k or "").strip()
+            if ks and ks not in seen_k:
+                seen_k.add(ks)
+                self.keys_pool.append(ks)
         self._key_idx = 0
         self._dead_keys_until: Dict[int, float] = {}
         self._dead_models_until: Dict[str, float] = {}
+        self._dead_key_models_until: Dict[Tuple[int, str], float] = {}
+        self._models_discovered_from_api: bool = False
         self._discovered_models: List[str] = list(GEMINI_MODELS_CHAIN)
         self._recent_taught_by_user: Dict[int, List[str]] = {}
 
@@ -326,21 +335,83 @@ class NYCLoungeAI:
         self._key_idx = (self._key_idx + 1) % len(self.keys_pool)
         return genai.Client(api_key=key, http_options={"timeout": 45000})
 
-    def _get_active_models(self, client: Any = None) -> List[str]:
+    def _get_active_models(self, client: Any = None, k_idx: int = 0) -> List[str]:
+        """
+        Dynamically discovers all live text/structured-output Gemini models via `client.models.list()`
+        (excluding retired 1.5/2.0/2.5 models and non-text models), so when `gemini-3-flash-preview`
+        hits its 20 RPD free-tier quota or 503 spike, the bot seamlessly uses other live models
+        (`gemini-3.1-flash-lite-preview`, `gemini-flash-lite-latest`, `gemini-flash-latest`, etc.)
+        which have their own separate Per-Model quota buckets!
+        """
         now = time.time()
-        guaranteed_chain = [
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-3-flash-preview",
+        if client is not None and not getattr(self, "_models_discovered_from_api", False):
+            try:
+                api_models = []
+                for m in client.models.list():
+                    raw_name = getattr(m, "name", "") or ""
+                    short_name = raw_name.removeprefix("models/").strip()
+                    low = short_name.lower()
+                    if not low.startswith("gemini"):
+                        continue
+                    # Skip retired generations (1.0, 1.5, 2.0, 2.5) and specialized non-text endpoints
+                    if any(bad in low for bad in (
+                        "1.0", "1.5", "2.0", "2.5", "embedding", "imagen", "veo",
+                        "tts", "audio", "vision", "aqa", "robotics", "computer-use",
+                        "learnlm", "gemma", "thinking"
+                    )):
+                        continue
+                    actions = [str(a).lower() for a in (getattr(m, "supported_actions", None) or getattr(m, "supported_generation_methods", None) or [])]
+                    if actions and not any("generatecontent" in a for a in actions):
+                        continue
+                    api_models.append(short_name)
+
+                if api_models:
+                    def _rank_model(name: str) -> int:
+                        n = name.lower()
+                        if "3.1-flash-lite" in n or "3-flash-lite" in n:
+                            return 0
+                        if "flash-lite" in n:
+                            return 1
+                        if "3-flash" in n or "3.1-flash" in n or "3.8-flash" in n:
+                            return 2
+                        if "flash" in n:
+                            return 3
+                        if "pro" in n:
+                            return 4
+                        return 5
+
+                    api_models.sort(key=_rank_model)
+                    merged = []
+                    for cand in api_models + list(self._discovered_models):
+                        if cand not in merged and not any(old in cand for old in ("2.0", "2.5")):
+                            merged.append(cand)
+                    self._discovered_models = merged
+                    self._models_discovered_from_api = True
+                    logger.info(f"TELEMETRY DISCOVERED_MODELS count={len(merged)} models={merged}")
+            except Exception as e:
+                logger.warning(f"TELEMETRY model_discovery_note={self.redact_sensitive_log(str(e))[:120]}")
+
+        seed_chain = [
+            m for m in getattr(self, "_discovered_models", [])
+            if not any(old in m for old in ("2.0", "2.5"))
         ]
-        for m in getattr(self, "_discovered_models", []):
-            if m not in guaranteed_chain and "2.0" not in m:
-                guaranteed_chain.append(m)
-        active = [m for m in guaranteed_chain if self._dead_models_until.get(m, 0) < now]
+        if not seed_chain:
+            seed_chain = [
+                "gemini-3.1-flash-lite-preview",
+                "gemini-3-flash-preview",
+                "gemini-flash-lite-latest",
+                "gemini-flash-latest",
+            ]
+
+        dead_km = getattr(self, "_dead_key_models_until", {})
+        active = [
+            m for m in seed_chain
+            if self._dead_models_until.get(m, 0) < now and dead_km.get((k_idx, m), 0) < now
+        ]
         if not active:
-            self._dead_models_until.clear()
-            return list(guaranteed_chain)
-        return active
+            # Fallback to any model not globally 404'd
+            active = [m for m in seed_chain if self._dead_models_until.get(m, 0) < now]
+        return active or list(seed_chain)
 
     def _call_structured(
         self,
@@ -351,7 +422,10 @@ class NYCLoungeAI:
         max_output_tokens: int = 8192
     ) -> Any:
         """
-        Null-safe, multi-model, multi-key structured Gemini caller.
+        Null-safe, dynamic multi-model, multi-key structured Gemini caller:
+        - Isolates 429 Free-Tier Per-Model quota exhaustion per `(key_idx, model_name)` pair.
+        - Retries 503 temporary demand spikes with backoff AND falls back across all discovered Gemini 3 / Flash-Lite models.
+        - Automatically extracts replacement model hints if Google returns a 404 deprecation message.
         """
         if not self.keys_pool:
             raise RuntimeError("API key is not configured.")
@@ -360,6 +434,9 @@ class NYCLoungeAI:
         last_err = None
         now = time.time()
         dead_keys = getattr(self, "_dead_keys_until", {})
+        if not hasattr(self, "_dead_key_models_until"):
+            self._dead_key_models_until = {}
+
         healthy_key_indices = [i for i in range(len(self.keys_pool)) if dead_keys.get(i, 0) < now]
         if not healthy_key_indices:
             dead_keys.clear()
@@ -373,11 +450,16 @@ class NYCLoungeAI:
 
         for k_idx in ordered_key_indices:
             key = self.keys_pool[k_idx]
-            client = genai.Client(api_key=key, http_options={"timeout": 45000})
-            models_to_try = self._get_active_models(client)
+            client = genai.Client(api_key=key, http_options={"timeout": 28000})
+            models_to_try = self._get_active_models(client, k_idx=k_idx)
             key_invalid = False
 
             for model_name in models_to_try:
+                if self._dead_models_until.get(model_name, 0) >= time.time():
+                    continue
+                if self._dead_key_models_until.get((k_idx, model_name), 0) >= time.time():
+                    continue
+
                 for attempt in range(1, 3):
                     t0 = time.perf_counter()
                     stage = "api_call"
@@ -423,20 +505,40 @@ class NYCLoungeAI:
                         logger.warning(
                             f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
                             f"stage={stage} latency_ms={latency_ms} exc_type={exc_type} code={err_code} "
-                            f"detail={err_str[:180]}"
+                            f"detail={err_str[:220]}"
                         )
                         upper_err = err_str.upper()
+
+                        # 1. Invalid or leaked key -> quarantine whole key
                         if any(bad_k in upper_err for bad_k in ("API_KEY_INVALID", "PERMISSION_DENIED", "403", "401", "LEAKED")):
-                            if hasattr(self, "_dead_keys_until"):
-                                self._dead_keys_until[k_idx] = time.time() + 3600
+                            self._dead_keys_until[k_idx] = time.time() + 3600
                             key_invalid = True
                             break
+
+                        # 2. 404 Model deprecated/not found -> quarantine model globally and extract replacement hint if present
                         if "404" in upper_err or "NOT_FOUND" in upper_err or "NO LONGER AVAILABLE" in upper_err:
                             self._dead_models_until[model_name] = time.time() + 86400
+                            hint_m = re.search(r"models/([a-zA-Z0-9._-]+)", err_str)
+                            if hint_m:
+                                suggested = hint_m.group(1).strip(".")
+                                if suggested and suggested != model_name and suggested not in self._discovered_models:
+                                    self._discovered_models.insert(0, suggested)
+                                    models_to_try.append(suggested)
                             break
-                        if any(q_err in upper_err for q_err in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE")):
-                            time.sleep(1.0)
+
+                        # 3. 429 Quota Exceeded -> quarantine ONLY this (key_idx, model_name) pair and immediately try next model on same key!
+                        if "429" in upper_err or "RESOURCE_EXHAUSTED" in upper_err:
+                            cooldown = 3600 if "PER_DAY" in upper_err or "PERDAY" in upper_err or "DAY" in upper_err else 65
+                            self._dead_key_models_until[(k_idx, model_name)] = time.time() + cooldown
                             break
+
+                        # 4. 503 High Demand / Timeout -> retry once after brief pause, then move to next model/key
+                        if any(t_err in upper_err for t_err in ("503", "UNAVAILABLE", "502", "504", "TIMEOUT", "DEADLINE")):
+                            if attempt == 1:
+                                time.sleep(1.5)
+                                continue
+                            break
+
                         if attempt == 1:
                             time.sleep(0.8)
                             continue
