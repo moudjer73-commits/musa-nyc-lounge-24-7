@@ -13,7 +13,7 @@ import html
 import random
 import logging
 from typing import List, Dict, Optional, Any, Tuple, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from google import genai
 from google.genai import types
@@ -48,6 +48,13 @@ class DiagnosticItem(BaseModel):
     native_fix: str = Field(default="")
     why_note: str = Field(default="")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nulls(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {k: ("" if v is None else v) for k, v in data.items()}
+        return data
+
     @field_validator("category", mode="before")
     @classmethod
     def _norm_category(cls, value: Any) -> str:
@@ -77,6 +84,13 @@ class LexicalFrameUpgrade(BaseModel):
     example: str = Field(default="")
     cloze_sentence: str = Field(default="")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nulls(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {k: ("" if v is None else v) for k, v in data.items()}
+        return data
+
     @field_validator("register_tag", mode="before")
     @classmethod
     def _norm_reg_tag(cls, value: Any) -> str:
@@ -100,6 +114,13 @@ class ChatBubbleLine(BaseModel):
     speaker: str = Field(default="marcus", description="Must be 'marcus', 'chloe', or 'jake'.")
     pacing: str = Field(default="normal", description="One of: 'fast_interjection', 'normal', or 'thoughtful_slow'.")
     text: str = Field(default="")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nulls(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {k: ("" if v is None else v) for k, v in data.items()}
+        return data
 
     @field_validator("speaker", mode="before")
     @classmethod
@@ -145,6 +166,24 @@ class LoungeTurnResponse(BaseModel):
     diagnostics: List[DiagnosticItem] = Field(default_factory=list)
     lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list)
     is_fallback: bool = Field(default=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_null_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        cleaned = dict(data)
+        list_keys = {"chat_turns", "diagnostics", "lexical_upgrades"}
+        bool_keys = {"is_fallback"}
+        for k, v in list(cleaned.items()):
+            if v is None:
+                if k in list_keys:
+                    cleaned[k] = []
+                elif k in bool_keys:
+                    cleaned[k] = False
+                else:
+                    cleaned[k] = ""
+        return cleaned
 
     @field_validator("responding_persona", mode="before")
     @classmethod
@@ -292,11 +331,10 @@ class NYCLoungeAI:
         guaranteed_chain = [
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
-            "gemini-2.0-flash",
             "gemini-3-flash-preview",
         ]
         for m in getattr(self, "_discovered_models", []):
-            if m not in guaranteed_chain:
+            if m not in guaranteed_chain and "2.0" not in m:
                 guaranteed_chain.append(m)
         active = [m for m in guaranteed_chain if self._dead_models_until.get(m, 0) < now]
         if not active:
@@ -309,14 +347,11 @@ class NYCLoungeAI:
         contents: List[Any],
         schema_cls: Any,
         system_instruction: str,
-        temperature: float = 0.72,
+        temperature: float = 0.7,
         max_output_tokens: int = 8192
     ) -> Any:
         """
-        Bulletproof multi-model, multi-key structured caller:
-        - Explicitly disables false-positive safety blocks on debate topics (`BLOCK_NONE`).
-        - Prioritizes high-quota stable models (`gemini-2.5-flash` -> `gemini-2.5-flash-lite` -> `gemini-2.0-flash` -> `gemini-3-flash-preview`).
-        - Adds smart backoff on 429/503 so rapid transitions never trip burst rate limits.
+        Null-safe, multi-model, multi-key structured Gemini caller.
         """
         if not self.keys_pool:
             raise RuntimeError("API key is not configured.")
@@ -336,13 +371,6 @@ class NYCLoungeAI:
 
         eff_tokens = max(8192, int(max_output_tokens or 8192))
 
-        safety_cfg = [
-            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-        ]
-
         for k_idx in ordered_key_indices:
             key = self.keys_pool[k_idx]
             client = genai.Client(api_key=key, http_options={"timeout": 45000})
@@ -360,7 +388,6 @@ class NYCLoungeAI:
                             "max_output_tokens": eff_tokens,
                             "response_mime_type": "application/json",
                             "response_schema": schema_cls,
-                            "safety_settings": safety_cfg,
                         }
                         resp = client.models.generate_content(
                             model=model_name,
@@ -369,15 +396,8 @@ class NYCLoungeAI:
                         )
                         stage = "schema_validation"
                         latency_ms = int((time.perf_counter() - t0) * 1000)
-                        if getattr(resp, "parsed", None) is not None:
-                            logger.info(
-                                f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
-                                f"stage=complete latency_ms={latency_ms} status=ok_parsed"
-                            )
-                            return resp.parsed
-                        raw_txt = getattr(resp, "text", "") or ""
+                        raw_txt = (getattr(resp, "text", "") or "").strip()
                         if raw_txt:
-                            raw_txt = raw_txt.strip()
                             if raw_txt.startswith("```"):
                                 raw_txt = raw_txt.strip("`").removeprefix("json").strip()
                             parsed_obj = schema_cls.model_validate_json(raw_txt)
@@ -386,7 +406,13 @@ class NYCLoungeAI:
                                 f"stage=complete latency_ms={latency_ms} status=ok_json"
                             )
                             return parsed_obj
-                        raise ValueError(f"Empty response payload (finish_reason={getattr(resp, 'candidates', None)})")
+                        if getattr(resp, "parsed", None) is not None:
+                            logger.info(
+                                f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
+                                f"stage=complete latency_ms={latency_ms} status=ok_parsed"
+                            )
+                            return resp.parsed
+                        raise ValueError("Empty response payload from Gemini API")
                     except Exception as e:
                         latency_ms = int((time.perf_counter() - t0) * 1000)
                         last_err = e
@@ -397,7 +423,7 @@ class NYCLoungeAI:
                         logger.warning(
                             f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
                             f"stage={stage} latency_ms={latency_ms} exc_type={exc_type} code={err_code} "
-                            f"detail={err_str[:160]}"
+                            f"detail={err_str[:180]}"
                         )
                         upper_err = err_str.upper()
                         if any(bad_k in upper_err for bad_k in ("API_KEY_INVALID", "PERMISSION_DENIED", "403", "401", "LEAKED")):
@@ -409,7 +435,7 @@ class NYCLoungeAI:
                             self._dead_models_until[model_name] = time.time() + 86400
                             break
                         if any(q_err in upper_err for q_err in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE")):
-                            time.sleep(1.0 + random.uniform(0.2, 0.5))
+                            time.sleep(1.0)
                             break
                         if attempt == 1:
                             time.sleep(0.8)
