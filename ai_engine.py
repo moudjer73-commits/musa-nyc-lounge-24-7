@@ -153,6 +153,36 @@ class SpokenFluencyAuditSchema(BaseModel):
     recommended_next_steps: str = Field(default="", description="Concrete 3-step coaching plan from Marcus, Chloe, and Jake.")
 
 
+
+PRIORITY_1_TO_5_BLOCK = """
+CRITICAL COACHING & DIALOGUE OVERRIDE (PRIORITIES 1–5 — MUST OBEY):
+1. PRIORITY 1 — CORRECTION INTEGRITY (`diagnostics`):
+   - NEVER invent errors just to fill `diagnostics`! If the user's input is already natural, grammatical American English (e.g., "Honestly, I think people who work from home are less productive. They get distracted all day and don't have anyone checking on them. What do you think?"), you MUST return `diagnostics = []` (EMPTY LIST)!
+   - NEVER replace "checking on them" (routine/supportive check) with "looking over their shoulder" (intrusive micromanagement—different meaning!).
+   - NEVER replace "people who work from home" with "the remote workforce" or "Honestly, I think" with "I'm of the mind that".
+   - ONLY populate `diagnostics` when the user makes a real grammatical, lexical, or non-native collocational mistake.
+2. PRIORITY 2 — SEMANTIC FIDELITY IN MIRRORS (`rewrite_articulate` = Natural Flow, `rewrite_casual` = Punchy Cut):
+   - Preserve the user's original claim, degree of certainty ("I think" / "can be" / "tend to"), and scope.
+   - NEVER escalate "are less productive" into "kills productivity" or "is a productivity killer".
+   - NEVER escalate "don't have anyone checking on them" into "zero accountability".
+   - `Natural Flow` optimizes for natural spoken rhythm & the active mode's communicative strategy.
+   - `Punchy Cut` optimizes for brevity/compression without exaggerating the claim (e.g., "Honestly, I think working from home can hurt productivity. People get distracted, and there's less oversight.").
+3. PRIORITY 3 — DISTINCT COMMUNICATIVE STRATEGY PER MODE (IN BOTH BANTER & MIRROR):
+   - 🎙️ Articulate: Qualify the claim and develop clear reasoning in plain, natural spoken English (e.g., "I think remote work can undermine productivity when people struggle to separate work from their personal lives."). Ban report-speak ("I'm of the opinion that", "primarily due to", "erosion of boundaries", "physical architecture", "lapse in focus").
+   - ☕ Casual: Relaxed, spontaneous flow ("I think working from home can make it harder to stay focused. There's just more stuff competing for your attention."). Use standard `-ing` spelling ALWAYS—never write `paintin'`, `cleanin'`, `crankin'`, `buggin'`, or `workin'`.
+   - 🎭 Witty: Both the hosts AND the Mirror (`Natural Flow` & `Punchy Cut`) MUST use a recognizable comic mechanism—hyperbole, irony, comic contrast, or dry understatement (e.g., "Working from home is great until a five-minute break somehow turns into a full kitchen renovation.").
+   - 💼 Executive: Frame around management reasoning, measurable targets, and variables (e.g., "I'd focus less on where people work and more on whether their output meets clearly defined targets."). Never misuse "executive presence" for working near a kitchen or make sweeping absolute claims.
+   - 🤝 Diplomatic: Demonstrate acknowledgment ("I can see why that would be a concern..."), qualified disagreement ("...although I think the impact probably depends on the person and the kind of work they're doing"), and constructive reframing. Never confuse diplomacy with stiff formality.
+4. PRIORITY 4 — NATURAL DIALOGUE REALISM (NO ENGINEERED 3-ESSAY SCRIPTS):
+   - Do NOT write three polished mini-essays in a fixed formula (Marcus abstract -> Jake counter -> Chloe synthesis + question).
+   - Write a realistic, spontaneous back-and-forth where hosts react directly to one another with varied turn lengths (including short 1-sentence reactions or quick challenges). Do NOT force every turn to end with a tutoring question directed at the user!
+5. PRIORITY 5 — FRESH EXPRESSIONS & ACCURATE ARABIC EQUIVALENTS (`lexical_upgrades`):
+   - Provide 3 high-value spoken expressions relevant to this specific mode and topic.
+   - DO NOT recycle overused defaults like "looking over someone's shoulder" or "phoning it in" across modes.
+   - In each item's `explanation`, ALWAYS begin with the accurate Arabic equivalent (المكافئ العربي الدقيق) followed by a 1-sentence note on its exact connotation and when to use it.
+"""
+
+
 class NYCLoungeAI:
     def __init__(self, api_key: str, db: LoungeDatabase):
         self.db = db
@@ -419,21 +449,24 @@ class NYCLoungeAI:
         def _clean_spoken_text(txt: str) -> str:
             if not txt:
                 return txt
-            for stem in ("work", "get", "stay", "look", "breath", "talk", "walk", "think", "go", "do", "mak", "tak", "com", "runn", "hitt", "try", "say", "play", "grind", "slac", "spin"):
-                txt = re.sub(rf"\b{stem}in'(?!\w)", f"{stem}ing", txt, flags=re.IGNORECASE)
-            txt = (
-                txt.replace("gettin'", "getting")
-                .replace("runnin'", "running")
-                .replace("hittin'", "hitting")
-                .replace("stayin'", "staying")
-                .replace("workin'", "working")
-                .replace("lookin'", "looking")
-                .replace("breathin'", "breathing")
-                .replace("comin'", "coming")
-                .replace("grindin'", "grinding")
-            )
-            txt = re.sub(r"^(?:Frankly|Honestly),?\s+I'm of the mind that\s+", "Honestly, I think ", txt, flags=re.IGNORECASE)
-            txt = re.sub(r"\bI'm of the mind that\b", "I think", txt, flags=re.IGNORECASE)
+            # 1. تحويل شامل لأي كلمة تنتهي بـ in' إلى ing (مثل paintin', cleanin', crankin', buggin', workin', gettin')
+            txt = re.sub(r"\b([a-zA-Z]{2,})in'(?!\w)", r"\1ing", txt)
+            # 2. إزالة التراكيب التقريرية المتكلفة واستبدالها بالبدائل الشفهية الطبيعية
+            replacements = [
+                (r"^(?:Frankly|Honestly),?\s+I(?:'m| am) of the (?:mind|opinion) that\s+", "Honestly, I think "),
+                (r"\bI(?:'m| am) of the (?:mind|opinion) that\b", "I think"),
+                (r"\bprimarily due to\b", "mainly because of"),
+                (r"\ba lapse in focus\b", "losing focus"),
+                (r"\bthe erosion of boundaries\b", "boundaries starting to blur"),
+                (r"\bthe erosion of accountability\b", "it being harder to hold people accountable"),
+                (r"\bthose working remotely\b", "people working from home"),
+                # 3. منع تضخيم الادعاء (Semantic Fidelity)
+                (r"\bis a (?:total )?productivity killer\b", "can really hurt productivity"),
+                (r"\b(?:just )?kills productivity\b", "can hurt productivity"),
+                (r"\bthere(?:'s| is) zero accountability\b", "there's less direct oversight"),
+            ]
+            for pat, rep in replacements:
+                txt = re.sub(pat, rep, txt, flags=re.IGNORECASE)
             return txt
 
         res.lounge_reply = _clean_spoken_text(getattr(res, "lounge_reply", ""))
@@ -441,13 +474,27 @@ class NYCLoungeAI:
         res.rewrite_casual = _clean_spoken_text(getattr(res, "rewrite_casual", ""))
         res.rewrite_witty = _clean_spoken_text(getattr(res, "rewrite_witty", ""))
 
+        # Priority 1: فلتر النزاهة التصحيحية الصارم لمنع التصحيحات الزائفة
+        false_fix_targets = {
+            "people who work from home",
+            "don't have anyone checking on them",
+            "checking on them",
+            "get distracted all day",
+            "honestly, i think",
+            "honestly i think",
+            "work from home",
+            "less productive",
+        }
         if isinstance(user_text, str) and len(user_text.split()) >= 45:
             res.diagnostics = []
         elif getattr(res, "diagnostics", None):
             valid_diags = []
             for d in res.diagnostics:
-                u_said = (getattr(d, "user_said", "") or "").strip().lower()
-                if u_said in ("people who work from home", "don't have anyone checking on them", "get distracted all day"):
+                u_said = (getattr(d, "user_said", "") or "").strip().lower().strip(".,!?\"'")
+                n_fix = (getattr(d, "native_fix", "") or "").strip().lower()
+                if u_said in false_fix_targets:
+                    continue
+                if "of the mind" in n_fix or "of the opinion" in n_fix or "remote workforce" in n_fix or "looking over their shoulder" in n_fix:
                     continue
                 valid_diags.append(d)
             res.diagnostics = valid_diags[:1]
@@ -456,6 +503,8 @@ class NYCLoungeAI:
             res.lexical_upgrades = list(res.lexical_upgrades)[:4]
             for _u_item in res.lexical_upgrades:
                 _u_item.register_tag = _badge_r
+                _u_item.chunk = _clean_spoken_text(getattr(_u_item, "chunk", ""))
+                _u_item.example = _clean_spoken_text(getattr(_u_item, "example", ""))
         return res, latency
 
     def _raw_process_lounge_turn(
@@ -530,7 +579,7 @@ class NYCLoungeAI:
         res: LoungeTurnResponse = self._call_structured(
             contents=contents,
             schema_cls=LoungeTurnResponse,
-            system_instruction=system_prompt,
+            system_instruction=(system_prompt) + '\n' + PRIORITY_1_TO_5_BLOCK,
             temperature=0.72,
             max_output_tokens=4096
         )

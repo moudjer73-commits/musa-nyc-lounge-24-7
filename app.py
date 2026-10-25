@@ -194,7 +194,7 @@ def format_lounge_turn_html(
         )
     else:
         mirror_lines.append(
-            "• ✨ <b>Quick Fix:</b> No correction needed — your original phrasing is already natural American English."
+            "• ✨ <b>Quick Fix:</b> No correction needed — your original phrasing is natural American English."
         )
 
     if res.lexical_upgrades:
@@ -203,7 +203,7 @@ def format_lounge_turn_html(
             b2_foil_str = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
             foil_part = f" (instead of: <i>{_e(b2_foil_str)}</i>)" if b2_foil_str else ""
             expl_str = getattr(up, "explanation", "")
-            expl_part = f" — <i>{_e(expl_str)}</i>" if expl_str else ""
+            expl_part = f"\n  └ 💡 {_e(expl_str)}" if expl_str else ""
             mirror_lines.append(
                 f"<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
                 f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
