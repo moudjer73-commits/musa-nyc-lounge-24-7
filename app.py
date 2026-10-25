@@ -1720,76 +1720,63 @@ if __name__ == "__main__":
 
 
 def build_contextual_take2_prompt(uid: int, tok: str, msg_text: str = "") -> Tuple[str, Optional[str]]:
-    """
-    Builds a context-aware Take 2 Active Speaking Task that:
-    1. Preserves the exact debate topic and quotes the hosts' follow-up question/challenge.
-    2. Extracts the Native Mirror recasts and the 3 target expressions from either `atomic_batches` or `msg_text`.
-    3. Gives the learner a concrete, two-track speaking task (defend/answer the host's challenge OR deliver the refined recast)
-       and activates Take 2 tracking in `session_meta` so the next message is evaluated as a live speaking attempt.
-    """
-    batch = db.get_atomic_batch(uid, tok) if tok else None
     host_question = ""
     natural_flow = ""
     punchy_cut = ""
     chunks: List[str] = []
 
-    if batch:
-        natural_flow = (batch.get("audio_clean_text") or "").strip()
-        for it in (batch.get("items") or []):
-            ch = (it.get("chunk") or "").strip()
-            if ch:
-                chunks.append(ch)
-        raw_hosts = batch.get("host_reply_text") or ""
-        try:
-            turns_data = json.loads(raw_hosts)
+    try:
+        batch = db.get_atomic_batch(uid, tok) if tok else None
+        if isinstance(batch, dict):
+            natural_flow = (batch.get("audio_clean_text") or "").strip()
+            for it in (batch.get("items") or []):
+                ch = (it.get("chunk") or "").strip() if isinstance(it, dict) else ""
+                if ch and ch not in chunks:
+                    chunks.append(ch)
+            raw_hosts = batch.get("host_reply_text") or ""
+            turns_data = json.loads(raw_hosts) if raw_hosts.startswith("[") else []
             if isinstance(turns_data, list) and turns_data:
                 last_t = turns_data[-1]
                 sp = (last_t.get("speaker") or "jake").capitalize()
                 tx = (last_t.get("text") or "").strip()
                 if tx:
                     host_question = f"{sp}: \"{tx}\""
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # Fallback / enrichment directly from the visible Telegram message text (`call.message.text`)
     if msg_text:
         lines = [ln.strip() for ln in msg_text.splitlines() if ln.strip()]
         if not host_question:
             host_lines = [ln for ln in lines if any(ln.startswith(p) for p in ("🧔‍♂️", "👩🏼‍💼", "🧢", "Marcus:", "Chloe:", "Jake:"))]
             if host_lines:
                 host_question = host_lines[-1]
-        if not natural_flow:
-            for ln in lines:
-                if "Natural Flow:" in ln:
-                    natural_flow = ln.split("Natural Flow:", 1)[1].strip()
-                elif "Punchy Cut:" in ln:
-                    punchy_cut = ln.split("Punchy Cut:", 1)[1].strip()
-        if not chunks:
-            for ln in lines:
-                m_ch = re.match(r"^\([123]\)\s+(.+?)(?:\s+\(instead of:|$)", ln)
-                if m_ch:
-                    chunks.append(m_ch.group(1).strip())
+        for ln in lines:
+            if "Natural Flow:" in ln and not natural_flow:
+                natural_flow = ln.split("Natural Flow:", 1)[1].strip()
+            elif "Punchy Cut:" in ln and not punchy_cut:
+                punchy_cut = ln.split("Punchy Cut:", 1)[1].strip()
+            m_ch = re.match(r"^(?:\u200e)?\([123]\)\s+(.+?)(?:\s+\(instead of:|$)", ln)
+            if m_ch and len(chunks) < 3:
+                c_val = m_ch.group(1).strip()
+                if c_val not in chunks:
+                    chunks.append(c_val)
 
-    # Persist Take 2 active state & expressions in session_meta so the next user turn is coached & scored in context
-    meta = db.get_session_meta(uid)
-    meta["retry_expected"] = True
-    meta["take2_active"] = True
-    meta["take2_token"] = tok
-    meta["take2_host_question"] = host_question
-    meta["take2_targets"] = chunks[:3]
-    meta["take2_natural_flow"] = natural_flow
-    db.update_session_meta(uid, meta)
+    try:
+        meta = db.get_session_meta(uid) if hasattr(db, "get_session_meta") else {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["retry_expected"] = True
+        meta["take2_active"] = True
+        meta["take2_token"] = tok
+        meta["take2_host_question"] = host_question
+        meta["take2_targets"] = chunks[:3]
+        meta["take2_natural_flow"] = natural_flow
+        if hasattr(db, "update_session_meta"):
+            db.update_session_meta(uid, meta)
+    except Exception:
+        pass
 
-    # Also ensure the 3 expressions are in the user's vault/history context if not already saved
-    if not batch and msg_text and host_question:
-        try:
-            hist = db.get_history(uid, limit=4)
-            if not any(host_question[:30] in (h.get("content") or "") for h in hist):
-                db.add_history(uid, "assistant", host_question)
-        except Exception:
-            pass
-
-    esc_q = html.escape(host_question or "Give a concrete example to defend or qualify your position.", quote=False)
+    esc_q = html.escape(host_question or "Give a concrete real-life example to defend or qualify your position.", quote=False)
     esc_nf = html.escape(natural_flow, quote=False)
     esc_pc = html.escape(punchy_cut, quote=False)
 

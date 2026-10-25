@@ -685,19 +685,26 @@ class NYCLoungeAI:
     def _build_mode_specific_directive(mode: str, session_meta: Dict[str, Any]) -> str:
         if mode in ("devils_advocate", "hot_take"):
             return (
-                "CURRENT ROOM: 🥊 DEVIL'S ADVOCATE (NUANCED SPOKEN PUSHBACK — ZERO PREACHING OR LECTURING).\n"
-                "- SPOKEN REALISM: Sound like real, sharp Americans talking at a coffee table—NO literary or writerly metaphors (never say things like 'the siren call of...'). Use grounded, everyday spoken phrasing.\n"
-                "- HOW TO CHALLENGE GENERALIZATIONS WITHOUT OVERGENERALIZING BACK:\n"
-                "  * Concede the kernel of truth first where appropriate (e.g., acknowledging that performative outrage online or walking on eggshells in corporate spaces is real) before dissecting the overgeneralization.\n"
-                "  * Distinguish between 'people getting offended' vs. 'people pushing back or disagreeing openly'—often, what feels like 'I can't say anything anymore' actually means 'people now challenge claims that used to go unquestioned.'\n"
-                "  * Distinguish between 'being honest/direct' and 'being blunt without tact'—honest conversation isn't impossible, it just requires reading the room and owning your framing rather than expecting zero pushback.\n"
-                "  * Differentiate between an anecdote/outlier and a general trend.\n"
-                "- FORCE AN ACTIVE NEXT TURN: End with a concrete, personal question that asks Musa to draw the line on a specific real-life example (e.g., asking him for an example of an honest point he feels he can't say anymore, or where he draws the line between candor and bluntness)."
+                "CURRENT ROOM: 🥊 DEVIL'S ADVOCATE (NUANCED SPOKEN PUSHBACK — ZERO PREACHING).\n"
+                "- SPOKEN REALISM: Sound like sharp Americans at a coffee table—NO literary clichés.\n"
+                "- Challenge generalizations by conceding the kernel of truth first, separating 'being offended' from 'open pushback', and distinguishing candor from bluntness.\n"
+                "- FORCE AN ACTIVE NEXT TURN: End by asking Musa for a concrete real-life example or where he draws the line on a specific trade-off."
             )
-        if mode == "cultural_decode":
+        if mode in ("subtext_decoder", "subtext", "cultural_decode"):
             return (
-                "CURRENT ROOM: 🎯 SAY IT RIGHT (PRAGMATICS & REAL-WORLD SITUATIONS).\n"
-                "- Focus on how Americans navigate this exact social/workplace situation with natural phrasing and tone."
+                "CURRENT ROOM: 🕵️‍♂️ SUBTEXT DECODER (READING BETWEEN THE LINES IN AMERICAN ENGLISH).\n"
+                "- GOAL: Decode the hidden pragmatic meaning, tone, politeness strategy, or power dynamic behind what Musa quotes or asks about (or behind how his own statement lands on an American ear).\n"
+                "- HOW THE 3 HOSTS RESPOND IN `chat_turns`:\n"
+                "  * Marcus unpacks the social/workplace subtext: what the speaker is *actually* signaling beneath the polite or indirect surface wording.\n"
+                "  * Chloe explains the pragmatic risk or how different tones (passive-aggressive, diplomatic brush-off, soft 'no', or genuine warmth) change the meaning.\n"
+                "  * Jake gives the street-smart translation ('In plain English, that means...') and asks Musa how he wants to play his response (push back politely, call it out, or play along).\n"
+                "- NATIVE MIRROR & EXPRESSIONS: Provide natural C1/C2 ways to respond to or express that exact subtext, and extract 3 expressions directly used in the hosts' turns."
+            )
+        if mode in ("situation_gambit", "say_it_right"):
+            return (
+                "CURRENT ROOM: 🎯 SAY IT RIGHT (HIGH-STAKES PRAGMATICS & REAL-WORLD SITUATIONS).\n"
+                "- Focus on how Americans navigate this exact social or workplace situation with natural phrasing, tact, and tone.\n"
+                "- Have the hosts roleplay or contrast the right vs. wrong way to handle the moment, then challenge Musa to try delivering his line."
             )
         return (
             "CURRENT ROOM: 🗣️ NYC SPONTANEOUS BANTER.\n"

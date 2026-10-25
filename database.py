@@ -1180,3 +1180,52 @@ class LoungeDatabase:
     @staticmethod
     def _exec_tx_sql(conn: sqlite3.Connection, sql: str):
         return conn.execute(sql)
+
+    def get_atomic_batch(self, arg1: Any, arg2: Any = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves an atomic turn batch by `(user_id, token_key)` or `(token_key,)`.
+        Populates normalized keys (`items`, `audio_clean_text`, `mirror_clean_text`, `host_reply_text`)
+        so all inline buttons (`take2:`, `save:`, `tts:`, `host_tts:`, `mirror:`) work reliably.
+        """
+        if arg2 is not None:
+            uid: Optional[int] = int(arg1)
+            token_key = str(arg2).strip()
+        else:
+            uid = None
+            token_key = str(arg1).strip()
+
+        if not token_key:
+            return None
+
+        with self._lock:
+            conn = self._get_conn()
+            row = None
+            if uid is not None:
+                row = conn.execute(
+                    "SELECT * FROM atomic_batches WHERE token_key = ? AND user_id = ?",
+                    (token_key, uid)
+                ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT * FROM atomic_batches WHERE token_key = ?",
+                    (token_key,)
+                ).fetchone()
+            if not row:
+                return None
+
+            data = dict(row)
+            raw_items = data.get("items_json") or data.get("items") or "[]"
+            if isinstance(raw_items, str):
+                try:
+                    data["items"] = json.loads(raw_items)
+                except Exception:
+                    data["items"] = []
+            elif isinstance(raw_items, list):
+                data["items"] = raw_items
+            else:
+                data["items"] = []
+
+            data.setdefault("audio_clean_text", data.get("tts_clean_target") or "")
+            data.setdefault("mirror_clean_text", data.get("mirror_clean_target") or data.get("audio_clean_text") or "")
+            data.setdefault("host_reply_text", data.get("chat_turns_json") or "")
+            return data
