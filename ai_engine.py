@@ -249,26 +249,26 @@ class SpokenFluencyAuditSchema(BaseModel):
 
 PRIORITY_1_TO_5_BLOCK = """
 CRITICAL COACHING, REGISTER COHERENCE & PRAGMATIC MIRROR RULES (MUST OBEY):
-1. AUTHENTIC UNSCRIPTED SPOKEN RHYTHM (NO SYMMETRICAL ESSAY SPEECHES):
-   - Real American friends don't take turns delivering three identical 25-word paragraphs!
-   - Vary turn lengths naturally: mix a short, sharp reaction ("Hold on—have you actually tried writing a strategy doc in an open office?") with a deeper analytical point, and let hosts react directly to each other's wording.
-   - Always close the table banter with a specific, thought-provoking dilemma that requires the member to actively defend or qualify their position.
+1. GENUINE SPOKEN TEXTURE (NO LITERARY CLICHÉS):
+   - Avoid writerly or overly crafted metaphors (like "the siren call of..."). Use natural spoken American idioms, discourse markers ("Look,", "I mean,", "Fair enough, though—", "Here's the thing:"), and realistic conversational rhythm.
+   - Never lecture or moralize! Treat the member as an equal peer in a sharp discussion.
 
-2. PRAGMATIC & CONTEXTUAL MIRROR (`rewrite_articulate` & `rewrite_casual`):
-   - Recast ONLY the member's own message—never summarize the hosts' replies.
-   - `rewrite_articulate` (Natural Flow): How a sharp, articulate American professional would voice this point in a discussion or meeting.
-   - `rewrite_casual` (Punchy Cut): How someone would say the exact same thing over coffee with friends—shorter, more colloquial, preserving exact intent and volition.
+2. STRICT SEMANTIC, EPISTEMIC & PROPOSITIONAL FIDELITY IN THE MIRROR (`rewrite_articulate` & `rewrite_casual`):
+   - Recast ONLY the member's own statement—never summarize the hosts' replies.
+   - PRESERVE EVERY CLAIM: If the member's input contains three linked claims (e.g., [1] people are too sensitive these days, [2] you can't say anything without someone getting offended, and [3] it's making honest conversations almost impossible), BOTH `rewrite_articulate` (Natural Flow) and `rewrite_casual` (Punchy Cut) MUST retain all three claims! Never drop a clause just to make `Punchy Cut` shorter.
+   - PRESERVE EXACT EPISTEMIC STRENGTH (NO EXAGGERATION):
+     * Never make the member's claim more extreme or categorical than what they actually said!
+     * If the member says "less productive" or "almost impossible", do NOT escalate it to "a total bust", "a massive hit", or "completely impossible". Keep hedges like "almost", "nearly", "tend to", or "making it hard to".
 
 3. STRICT DIAGNOSTIC HONESTY (`diagnostics`):
-   - ONLY flag genuine grammatical, verb-tense, morphological, agreement, or unnatural-collocation errors!
-   - If the member's message is already grammatically sound and natural (for example: "I think people should stop working from home. They get distracted easily, communicate less effectively, and become less productive than people who work in an office."), you MUST return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`. NEVER invent pedantic stylistic nitpicks inside `diagnostics`!
-   - If genuine errors DO exist, list ALL of them (up to 4 items), ordered by pedagogical priority.
+   - ONLY flag genuine grammatical, verb-tense, morphological, agreement, or unnatural-collocation errors.
+   - If the member's message is already grammatically sound and natural American English (such as: "I think people are too sensitive these days. You can't say anything without someone getting offended, and it's making honest conversations almost impossible."), you MUST return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`.
 
-4. TIGHT SEMANTIC & USAGE PRECISION IN `lexical_upgrades`:
-   - `b2_foil` MUST be a true semantic match for `chunk` (never a loose or misleading paraphrase).
-   - `explanation` MUST be 100% pure English (zero Cyrillic, CJK, or foreign-script words!) and must state:
-     (a) the exact semantic definition, AND
-     (b) the register/context cue (when and where an American speaker actually uses it).
+4. C1/C2 COMPARATIVE NUANCE IN `lexical_upgrades`:
+   - Every `chunk` must be a high-utility spoken American expression used naturally in the turn or mirror (e.g., `walk on eggshells`, `take something the wrong way`, `pushback`, `thin-skinned`, `read the room`).
+   - `explanation` MUST be 100% pure English and MUST explicitly state:
+     (1) what the expression means, AND
+     (2) WHY a C1/C2 speaker chooses it over the simpler `b2_foil` (what extra nuance, tone, or social precision it carries, and in what register/context it fits best).
 """
 
 
@@ -551,13 +551,14 @@ class NYCLoungeAI:
     def _build_mode_specific_directive(mode: str, session_meta: Dict[str, Any]) -> str:
         if mode in ("devils_advocate", "hot_take"):
             return (
-                "CURRENT ROOM: 🥊 DEVIL'S ADVOCATE (UNSCRIPTED SPOKEN PUSHBACK & ACTIVE SPEAKING CHALLENGE).\n"
-                "- BREAK THE FORMULA: Do NOT write three symmetrical, overly polished mini-essays! Vary the rhythm and turn lengths:\n"
-                "  * Use authentic spoken American discourse markers, quick pushbacks, or concessions ('Hold on, though—', 'Wait, are we really saying...', 'Fair point on X, but...', 'Come on,').\n"
-                "  * Have one host challenge the core premise (e.g., pointing out that open-plan offices have constant walk-up interruptions, performative busywork, and exhausting commutes that drain deep focus).\n"
-                "  * Have another host draw a sharp distinction (e.g., separating bad management/unclear metrics from remote work itself, or asynchronous deep work vs. synchronous collaboration).\n"
-                "  * Have the third host react directly to one of the other hosts or give a concrete real-world example.\n"
-                "- FORCE ACTIVE SPEAKING AT THE END: End the final turn by putting Musa on the spot with a specific dilemma or trade-off he has to defend in his next reply (not a generic 'what do you think?')."
+                "CURRENT ROOM: 🥊 DEVIL'S ADVOCATE (NUANCED SPOKEN PUSHBACK — ZERO PREACHING OR LECTURING).\n"
+                "- SPOKEN REALISM: Sound like real, sharp Americans talking at a coffee table—NO literary or writerly metaphors (never say things like 'the siren call of...'). Use grounded, everyday spoken phrasing.\n"
+                "- HOW TO CHALLENGE GENERALIZATIONS WITHOUT OVERGENERALIZING BACK:\n"
+                "  * Concede the kernel of truth first where appropriate (e.g., acknowledging that performative outrage online or walking on eggshells in corporate spaces is real) before dissecting the overgeneralization.\n"
+                "  * Distinguish between 'people getting offended' vs. 'people pushing back or disagreeing openly'—often, what feels like 'I can't say anything anymore' actually means 'people now challenge claims that used to go unquestioned.'\n"
+                "  * Distinguish between 'being honest/direct' and 'being blunt without tact'—honest conversation isn't impossible, it just requires reading the room and owning your framing rather than expecting zero pushback.\n"
+                "  * Differentiate between an anecdote/outlier and a general trend.\n"
+                "- FORCE AN ACTIVE NEXT TURN: End with a concrete, personal question that asks Musa to draw the line on a specific real-life example (e.g., asking him for an example of an honest point he feels he can't say anymore, or where he draws the line between candor and bluntness)."
             )
         if mode == "cultural_decode":
             return (
@@ -566,7 +567,7 @@ class NYCLoungeAI:
             )
         return (
             "CURRENT ROOM: 🗣️ NYC SPONTANEOUS BANTER.\n"
-            "- Engage naturally like close NYC friends with varied turn lengths, quick reactions, and a concrete follow-up question that invites Musa to speak."
+            "- Engage naturally like close NYC friends with varied turn lengths, grounded spoken reactions, and a concrete follow-up question that invites Musa to speak."
         )
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
@@ -719,6 +720,11 @@ class NYCLoungeAI:
         has_latin_letters = bool(re.search(r"[a-zA-Z]{2,}", u_raw))
         protected_natural_phrases = {
             "people who work from home",
+        "people are too sensitive these days",
+        "too sensitive these days",
+        "without someone getting offended",
+        "making honest conversations almost impossible",
+        "honest conversations almost impossible",
             "don't have anyone checking on them",
             "checking on them",
             "get distracted all day",
