@@ -295,30 +295,21 @@ class NYCLoungeAI:
         self._key_idx = (self._key_idx + 1) % len(self.keys_pool)
         return genai.Client(api_key=key, http_options={"timeout": 45000})
 
-    def _get_active_models(self, client: genai.Client) -> List[str]:
+    def _get_active_models(self, client: Any = None) -> List[str]:
         now = time.time()
-        avail = [m for m in self._discovered_models if self._dead_models_until.get(m, 0) < now]
-        if avail:
-            return avail
-
-        found = []
-        try:
-            for m in client.models.list():
-                sn = (getattr(m, "name", "") or "").replace("models/", "")
-                low = sn.lower()
-                bad_w = ("image", "imagen", "veo", "embedding", "aqa", "tts", "audio", "learnlm", "robotics", "computer-use", "gemma")
-                if "gemini" in low and not any(b in low for b in bad_w):
-                    found.append(sn)
-        except Exception:
-            pass
-        if found:
-            found.sort(key=lambda x: (0 if "3-flash" in x else (1 if "flash" in x else 2)))
-            self._discovered_models = found[:6]
+        guaranteed_chain = [
+            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
+        ]
+        for m in getattr(self, "_discovered_models", []):
+            if m not in guaranteed_chain:
+                guaranteed_chain.append(m)
+        active = [m for m in guaranteed_chain if self._dead_models_until.get(m, 0) < now]
+        if not active:
             self._dead_models_until.clear()
-            return self._discovered_models
-
-        self._dead_models_until.clear()
-        return list(GEMINI_MODELS_CHAIN)
+            return list(guaranteed_chain)
+        return active
 
     def _call_structured(
         self,
@@ -329,10 +320,10 @@ class NYCLoungeAI:
         max_output_tokens: int = 8192
     ) -> Any:
         """
-        Resilient structured Gemini caller:
-        - Tries all healthy keys in `self.keys_pool` and quarantines invalid/quota-exhausted keys in `_dead_keys_until`.
-        - Uses `max_output_tokens >= 8192` so thinking tokens never truncate JSON output.
-        - Retries or falls back to the next model on both transient errors and truncated JSON (`ValidationError`).
+        Multi-model, multi-key resilient structured caller:
+        - Tries `gemini-2.5-flash` -> `gemini-3-flash-preview` -> `gemini-2.5-flash-lite` on each key.
+        - Note: 429 RESOURCE_EXHAUSTED in Gemini is per-model! So a 429 or 503 on one model immediately
+          switches to the next model in `models_to_try` within the SAME turn before rotating keys.
         """
         if not self.keys_pool:
             raise RuntimeError("API key is not configured.")
@@ -356,7 +347,7 @@ class NYCLoungeAI:
             key = self.keys_pool[k_idx]
             client = genai.Client(api_key=key, http_options={"timeout": 45000})
             models_to_try = self._get_active_models(client)
-            key_failed_auth_or_quota = False
+            key_invalid = False
 
             for model_name in models_to_try:
                 for attempt in range(1, 3):
@@ -408,27 +399,22 @@ class NYCLoungeAI:
                             f"detail={err_str[:160]}"
                         )
                         upper_err = err_str.upper()
-                        # If the API key itself is invalid, leaked, or forbidden, quarantine it for 1 hour and switch to next key immediately
                         if any(bad_k in upper_err for bad_k in ("API_KEY_INVALID", "PERMISSION_DENIED", "403", "401", "LEAKED")):
                             if hasattr(self, "_dead_keys_until"):
                                 self._dead_keys_until[k_idx] = time.time() + 3600
-                            key_failed_auth_or_quota = True
+                            key_invalid = True
                             break
-                        # If this key hit a 429 quota limit, quarantine key for 60s and try the next key in pool
-                        if "429" in upper_err or "RESOURCE_EXHAUSTED" in upper_err:
-                            if hasattr(self, "_dead_keys_until"):
-                                self._dead_keys_until[k_idx] = time.time() + 60
-                            if len(ordered_key_indices) > 1:
-                                key_failed_auth_or_quota = True
-                                break
                         if "404" in upper_err or "NOT_FOUND" in upper_err or "NO LONGER AVAILABLE" in upper_err:
                             self._dead_models_until[model_name] = time.time() + 86400
                             break
+                        # On 429 or 503, immediately move to the next model in `models_to_try` (e.g., gemini-2.5-flash -> gemini-2.5-flash-lite)
+                        if any(q_err in upper_err for q_err in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE")):
+                            break
                         if attempt == 1:
-                            time.sleep(0.9 + random.uniform(0.1, 0.4))
+                            time.sleep(0.8)
                             continue
                         break
-                if key_failed_auth_or_quota:
+                if key_invalid:
                     break
 
         raise RuntimeError(f"req_id={req_id} All keys/models exhausted: {last_err}")
@@ -566,26 +552,27 @@ class NYCLoungeAI:
         res.lounge_reply = f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {clean_reply}"
         return res
 
-    def _build_mode_specific_directive(self, mode: str, session_meta: Dict[str, Any]) -> str:
-        if mode == "devils_advocate":
-            return "ACTIVE ROOM: 🥊 DEVIL'S ADVOCATE. Challenge the member's premise with sharp New York pushback."
-        elif mode == "storytelling_gym":
-            return "ACTIVE ROOM: 🎭 STORYTELLING GYM (Delivered strictly in the member's ACTIVE VIBE). Coach dramatic present-tense storytelling and punchlines."
-        elif mode == "register_lab":
-            return "ACTIVE ROOM: 🎛️ VIBE & STYLE SHIFTER. Contrast Articulate, Casual, and Witty registers."
-        elif mode == "subtext_decoder":
-            return "ACTIVE ROOM: 🕵️‍♂️ SUBTEXT & NUANCE DECODER. Decode unspoken American hints and give 3 responses."
-        elif mode == "situation_gambit":
-            return "ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... Give instinctive phrases Americans reach for in that exact moment."
-        elif mode == "podcast_guest":
-            return "ACTIVE ROOM: 🎙️ LIVE RADIO INTERVIEW ('YOU ARE THE GUEST' with Marcus, Chloe & Jake)."
-        elif mode == "weakness_drill":
-            targets = session_meta.get("forced_targets", [])
-            return f"ACTIVE ROOM: 🔥 3-PHRASE CHALLENGE. Target phrases: {targets}."
-        elif mode == "shadowing_drill":
-            target_sent = session_meta.get("drill_target_sentence", "")
-            return f"ACTIVE ROOM: 🎙️ RHYTHM & SHADOWING WORKOUT. Target sentence: '{target_sent}'."
-        return "ACTIVE ROOM: 🗣️ NYC SPONTANEOUS BANTER. Engage in genuine, unscripted New York conversation strictly locked to the member's ACTIVE VIBE."
+    @staticmethod
+    def _build_mode_specific_directive(mode: str, session_meta: Dict[str, Any]) -> str:
+        if mode in ("devils_advocate", "hot_take"):
+            return (
+                "CURRENT ROOM: 🥊 DEVIL'S ADVOCATE (SHARP INTELLECTUAL & PRACTICAL PUSHBACK).\n"
+                "- DO NOT simply agree with Musa's opinion, and DO NOT give lazy or robotic contradiction!\n"
+                "- Challenge Musa's take with realistic, nuanced, real-world counter-arguments from each host's distinct lens:\n"
+                "  * Marcus challenges the hidden economic/time-cost trade-offs or structural assumptions (e.g., opportunity cost of grocery shopping, prep, and cleanup after a 10-hour workday, or third-place urban culture).\n"
+                "  * Chloe challenges the social, culinary, and psychological dimension (e.g., culinary craft you can't replicate in a home kitchen, social energy, and breaking out of routine).\n"
+                "  * Jake challenges it from a street-level NYC reality (e.g., tiny apartment kitchens, $12 bodega/Queens neighborhood gems that cost less than buying 9 raw ingredients that spoil in the fridge).\n"
+                "- Have the hosts bounce off each other's points naturally and end by putting a sharp, specific follow-up question back to Musa!"
+            )
+        if mode == "cultural_decode":
+            return (
+                "CURRENT ROOM: 🎯 SAY IT RIGHT (PRAGMATICS & REAL-WORLD SITUATIONS).\n"
+                "- Focus on how Americans navigate this exact social/workplace situation with natural phrasing and tone."
+            )
+        return (
+            "CURRENT ROOM: 🗣️ NYC SPONTANEOUS BANTER.\n"
+            "- Engage naturally like close NYC friends. IMPORTANT: If Musa shares an opinion or take (e.g., 'I think people spend way too much money eating out...'), do NOT just blindly agree! Push back playfully with realistic counter-perspectives, debate each other across turns, and ask Musa a follow-up question."
+        )
 
     def generate_studio_spark(self, user: Dict[str, Any], mode: Optional[str] = None) -> str:
         pref_reg = user.get("preferred_register", "articulate")
