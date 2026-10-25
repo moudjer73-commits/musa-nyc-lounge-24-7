@@ -208,20 +208,24 @@ class LoungeDatabase:
         if getattr(self, "_active_tx_conn", None) is not None:
             class _SharedTxProxy:
                 def __init__(self, conn):
-                    self._c = conn
+                    object.__setattr__(self, "_c", conn)
                 def __enter__(self):
-                    # Must return self (the proxy) so `with self._conn() as conn:` intercepts `conn.commit()`!
+                    # Returns the proxy itself so `with self._conn() as conn:` intercepts `.commit()` and `.close()`
                     return self
                 def __exit__(self, exc_type, exc_val, exc_tb):
+                    # Do not swallow exceptions; let them propagate to atomic_turn_transaction()
                     return False
                 def commit(self):
-                    # Deferred to outer atomic_turn_transaction() boundary
+                    # No-op: commit is strictly owned by the outer atomic_turn_transaction()
+                    pass
+                def rollback(self):
+                    # No-op: rollback is strictly owned by the outer atomic_turn_transaction()
                     pass
                 def close(self):
-                    # Closed by outer atomic_turn_transaction() boundary
+                    # No-op: underlying connection lifecycle is owned by atomic_turn_transaction()
                     pass
                 def __getattr__(self, name):
-                    return getattr(self._c, name)
+                    return getattr(object.__getattribute__(self, "_c"), name)
             return _SharedTxProxy(self._active_tx_conn)
 
         target_db = getattr(self, "user_db_path", getattr(self, "db_path", None))
@@ -1090,25 +1094,48 @@ class LoungeDatabase:
     @contextmanager
     def atomic_turn_transaction(self):
         """
-        Executes all turn persistence operations (uptake, history, diagnostics, stealth, atomic batch)
-        inside a single ACID SQLite transaction. If any step raises an exception, all writes roll back.
+        Establishes an explicit outer ACID transaction for all turn persistence operations.
+        - Owns the real connection's commit, rollback, and close lifecycle.
+        - Supports nested calls safely via SQLite SAVEPOINTs so an inner block never terminates the outer transaction.
+        - Yields the `_SharedTxProxy` so callers using `with db.atomic_turn_transaction() as tx:` cannot prematurely commit or close the raw connection.
         """
         with self._lock:
             if getattr(self, "_active_tx_conn", None) is not None:
-                yield self._active_tx_conn
+                depth = getattr(self, "_tx_depth", 1) + 1
+                self._tx_depth = depth
+                sp_name = f"sp_nested_{depth}"
+                raw_nested = self._active_tx_conn
+                raw_nested.execute(f"SAVEPOINT {sp_name};")
+                try:
+                    yield self._conn()
+                    raw_nested.execute(f"RELEASE SAVEPOINT {sp_name};")
+                except Exception:
+                    raw_nested.execute(f"ROLLBACK TO SAVEPOINT {sp_name};")
+                    raw_nested.execute(f"RELEASE SAVEPOINT {sp_name};")
+                    raise
+                finally:
+                    self._tx_depth = depth - 1
                 return
+
             target_db = getattr(self, "user_db_path", getattr(self, "db_path", None))
-            raw_conn = sqlite3.connect(str(target_db), timeout=30.0, check_same_thread=False)
+            # isolation_level=None lets us manage BEGIN IMMEDIATE / COMMIT / ROLLBACK explicitly
+            raw_conn = sqlite3.connect(str(target_db), timeout=30.0, check_same_thread=False, isolation_level=None)
             raw_conn.row_factory = sqlite3.Row
             raw_conn.execute("PRAGMA journal_mode=WAL;")
             raw_conn.execute("PRAGMA synchronous=NORMAL;")
+            raw_conn.execute("BEGIN IMMEDIATE;")
             self._active_tx_conn = raw_conn
+            self._tx_depth = 1
             try:
-                yield raw_conn
-                raw_conn.commit()
+                yield self._conn()
+                raw_conn.execute("COMMIT;")
             except Exception:
-                raw_conn.rollback()
+                try:
+                    raw_conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
                 raise
             finally:
+                self._tx_depth = 0
                 self._active_tx_conn = None
                 raw_conn.close()
