@@ -150,15 +150,24 @@ class LoungeTurnResponse(BaseModel):
     responding_persona: HostLiteral = Field(default="marcus")
     chat_turns: List[ChatBubbleLine] = Field(default_factory=list)
     lounge_reply: str = Field(default="")
-    rewrite_articulate: str = Field(default="")
-    rewrite_casual: str = Field(default="")
+    rewrite_articulate: str = Field(
+        default="",
+        description="Natural Flow: Smooth, idiomatic spoken American recast of the member's own message/question preserving exact pragmatic intent, volition, and register."
+    )
+    rewrite_casual: str = Field(
+        default="",
+        description="Punchy Cut: Concise, natural spoken compression of the member's own message/question without altering connotation or volition."
+    )
     rewrite_witty: str = Field(default="")
     self_repair_pivot: str = Field(default="")
     acoustic_prosody_xray: str = Field(default="")
     tts_clean_target: str = Field(default="")
     mirror_clean_target: str = Field(default="")
     diagnostics_status: DiagnosticsStatusLiteral = Field(default="checked_no_corrections")
-    diagnostics: List[DiagnosticItem] = Field(default_factory=list)
+    diagnostics: List[DiagnosticItem] = Field(
+        default_factory=list,
+        description="List ALL genuine grammatical, tense, verb-form, agreement, or collocational errors found in the member's message (up to 4 items), ordered with the #1 pedagogical priority first. Empty `[]` if error-free."
+    )
     lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list)
     is_fallback: bool = Field(default=False)
 
@@ -187,7 +196,10 @@ class LoungeTurnResponse(BaseModel):
         s = str(value or "").strip().lower()
         aliases = {
             "corrections_found": "corrections_found",
+            "errors_found": "corrections_found",
             "checked_no_corrections": "checked_no_corrections",
+            "no_corrections": "checked_no_corrections",
+            "none": "checked_no_corrections",
             "not_assessed": "not_assessed",
         }
         if s not in aliases:
@@ -279,27 +291,32 @@ class SpokenFluencyAuditSchema(BaseModel):
 
 
 PRIORITY_1_TO_5_BLOCK = """
-CRITICAL COACHING, REGISTER COHERENCE & VOICE PRESERVATION RULES (MUST OBEY):
-1. ZERO TONAL DISSONANCE — ADAPT HOST PERSPECTIVES STRICTLY TO THE ACTIVE VIBE:
-   - Keep each host's cognitive lens distinct WITHOUT breaking the active register!
-   - Marcus = conceptual distinctions & assumptions; Chloe = interpersonal & social dynamics; Jake = practical, on-the-ground reality.
-   - In 🎭 Witty or ☕ Casual: use playful teasing, dry irony, and specific everyday NYC details.
-   - In 💼 Executive, 🤝 Diplomatic, or 🎙️ Articulate: do NOT use slapstick jokes, roasting, or casual slang! Instead, have Jake focus on practical execution/bottlenecks, Chloe on stakeholder/team dynamics, and Marcus on strategic/conceptual trade-offs—all in the exact active register.
+CRITICAL COACHING, REGISTER COHERENCE & PRAGMATIC MIRROR RULES (MUST OBEY):
+1. RAPID CONVERSATIONAL INTERPLAY & ZERO TONAL DISSONANCE:
+   - Keep each host's cognitive lens distinct WITHOUT delivering three separate speeches!
+   - Keep each host's turn punchy (1 to 2 sentences max per bubble). Have hosts react directly to a specific word or claim the previous host just used—interrupting lightly, challenging a premise, or building on the joke like real friends at a table.
+   - In 🎭 Witty or ☕ Casual: use playful teasing, dry irony, and grounded everyday NYC details.
+   - In 💼 Executive, 🤝 Diplomatic, or 🎙️ Articulate: do NOT use slapstick jokes or slang; keep the interplay sharp and aligned with the active register.
 
-2. PRESERVE THE USER'S NATURAL SPOKEN VOICE IN THE MIRROR (NO PURPLE PROSE):
-   - Keep `rewrite_articulate` (Natural Flow) and `rewrite_casual` (Punchy Cut) faithful to the user's degree of certainty, scope, and natural spoken voice.
-   - NEVER use ornate, novelistic melodrama ("noblest intentions", "evaporate into a void", "absolute stasis") or stiff report-speak ("I am of the opinion that", "primarily due to").
+2. PRAGMATIC & VOLITIONAL FIDELITY IN THE MIRROR (`rewrite_articulate` & `rewrite_casual`):
+   - Recast ONLY the member's own message/question—NEVER summarize or echo the host's answer inside `rewrite_articulate` or `rewrite_casual`!
+   - If the member includes routing meta-instructions ("Reply only as Jake..."), strip the meta-instruction and recast only the member's substantive scenario or question in the member's own voice.
+   - Preserve exact pragmatic intent, volition, and register:
+     * NEVER replace an involuntary conflict ("can't attend because something came up") with wording that implies deliberate truancy or carelessness (like "skipping tomorrow's meeting"); use natural American equivalents like "can't make tomorrow's meeting".
+     * NEVER inflate a casual question into stiff, overly formal prose ("Setting the market aside for a moment, if I need to inform a colleague..."). Keep it natural, direct, and genuinely spoken (e.g., "How can I casually tell a coworker I can't make tomorrow's meeting because something came up, without sounding rude?").
 
-3. ADVANCE THE CONVERSATION — NO REPETITIVE THERAPIST REASSURANCE:
-   - Never have all three hosts validate the same point or repeat generic comforting clichés ("Everyone has off days", "Don't beat yourself up").
-   - Each turn must advance the discussion with a distinct angle, a concrete observation, or a sharp, natural reaction.
+3. COMPREHENSIVE MULTI-ERROR DIAGNOSTICS (`diagnostics`):
+   - Separate natural recasting from diagnostic error detection!
+   - If the member's message contains multiple genuine grammatical, tense, morphology, agreement, or collocation errors (e.g., "Yesterday I go to the market and I buyed some vegetables, but the prices was crazy"), you MUST record EVERY substantive error as a separate `DiagnosticItem` in `diagnostics` (up to 4 items), ordered with the highest pedagogical priority first:
+     * Item 1 (Priority): e.g., `I buyed` -> `I bought` (irregular past tense morphology)
+     * Item 2: e.g., `I go` -> `I went` (past time marker 'Yesterday' requires past tense)
+     * Item 3: e.g., `prices was` -> `prices were` (plural subject-verb agreement)
+   - Never stop at just 1 error when other clear errors exist in the sentence!
+   - Conversely, if the member's English is already natural and error-free, return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`.
 
 4. STRICT LEXICAL PRECISION & SCENE ANCHORING (`lexical_upgrades`):
-   - Every expression MUST fit the exact topic and active register—never tack on disconnected corporate clichés.
-   - Clearly state the accurate Arabic equivalent in `arabic_equivalent` and the exact usage boundary/connotation in `explanation` (e.g., distinguishing 'a total wash' = produced no useful result vs. 'call it a wash' = gains and losses cancel out).
-
-5. CORRECTION INTEGRITY (`diagnostics`):
-   - Only populate `diagnostics` for genuine grammatical errors, non-native collocations, or clear register mismatches. If the user's English is already natural, return `diagnostics = []` and `diagnostics_status = "checked_no_corrections"`.
+   - Every expression MUST fit the exact topic and active register.
+   - Clearly state the accurate Arabic equivalent in `arabic_equivalent` and the exact usage boundary/connotation in `explanation`.
 """
 
 
@@ -352,12 +369,19 @@ class NYCLoungeAI:
         temperature: float = 0.72,
         max_output_tokens: int = 4096
     ) -> Any:
+        """
+        Executes structured Gemini calls with sanitized per-attempt telemetry logging:
+        logs `req_id`, `model`, `attempt`, `stage` (api_call vs schema_validation), `latency_ms`, `exc_type`, and `outcome`.
+        """
+        req_id = uuid.uuid4().hex[:8]
         last_err = None
-        for _ in range(max(1, min(2, len(self.keys_pool)))):
+        for key_round in range(max(1, min(2, len(self.keys_pool)))):
             client = self._get_client()
             models_to_try = self._get_active_models(client)
             for model_name in models_to_try:
-                for attempt in range(2):
+                for attempt in range(1, 3):
+                    t0 = time.perf_counter()
+                    stage = "api_call"
                     try:
                         cfg_kwargs: Dict[str, Any] = {
                             "system_instruction": system_instruction,
@@ -371,26 +395,52 @@ class NYCLoungeAI:
                             contents=contents,
                             config=types.GenerateContentConfig(**cfg_kwargs)
                         )
+                        stage = "schema_validation"
+                        latency_ms = int((time.perf_counter() - t0) * 1000)
                         if getattr(resp, "parsed", None) is not None:
+                            logger.info(
+                                f"TELEMETRY req_id={req_id} model={model_name} attempt={attempt} "
+                                f"stage=complete latency_ms={latency_ms} status=ok_parsed"
+                            )
                             return resp.parsed
                         raw_txt = getattr(resp, "text", "") or ""
                         if raw_txt:
                             raw_txt = raw_txt.strip()
                             if raw_txt.startswith("```"):
                                 raw_txt = raw_txt.strip("`").removeprefix("json").strip()
-                            return schema_cls.model_validate_json(raw_txt)
+                            parsed_obj = schema_cls.model_validate_json(raw_txt)
+                            logger.info(
+                                f"TELEMETRY req_id={req_id} model={model_name} attempt={attempt} "
+                                f"stage=complete latency_ms={latency_ms} status=ok_json"
+                            )
+                            return parsed_obj
+                        raise ValueError("Empty response payload from Gemini API")
                     except Exception as e:
+                        latency_ms = int((time.perf_counter() - t0) * 1000)
                         last_err = e
-                        err_str = str(e)
+                        err_str = self.redact_sensitive_log(str(e))
+                        exc_type = type(e).__name__
+                        code_match = re.search(r"\b(400|401|403|404|408|429|500|502|503|504)\b", err_str)
+                        err_code = code_match.group(1) if code_match else "none"
+                        logger.warning(
+                            f"TELEMETRY req_id={req_id} model={model_name} attempt={attempt} "
+                            f"stage={stage} latency_ms={latency_ms} exc_type={exc_type} code={err_code} "
+                            f"detail={err_str[:140]}"
+                        )
                         if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
                             self._dead_models_until[model_name] = time.time() + 86400
                             break
-                        if ("503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str) and attempt == 0:
-                            time.sleep(1.5 + random.uniform(0.2, 0.8))
+                        # Only retry on transient network/server/rate-limit errors (503, 502, 504, 429, Timeout, Empty payload)
+                        is_transient = any(
+                            tok in err_str.upper()
+                            for tok in ("503", "502", "504", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "TIMEOUT", "DEADLINE", "EMPTY RESPONSE")
+                        )
+                        if is_transient and attempt == 1:
+                            time.sleep(1.2 + random.uniform(0.2, 0.6))
                             continue
-                        logger.warning(f"Model {model_name} attempt note: {err_str[:120]}")
+                        # Do not blindly retry the same model on deterministic schema/validation errors; move to next model in chain
                         break
-        raise RuntimeError(f"Service temporarily busy: {last_err}")
+        raise RuntimeError(f"req_id={req_id} Service temporarily busy after model chain: {last_err}")
 
     @staticmethod
     def _level_calibration_guide(level: str) -> str:
@@ -437,8 +487,8 @@ class NYCLoungeAI:
             return (
                 "ACTIVE TABLE CAST: 🗽 NYC TRIO (`marcus`, `chloe`, `jake`).\n"
                 f"{lead_note}\n"
-                "- Default cognitive tendencies (allow natural overlap): Marcus clarifies concepts & assumptions; Chloe reads interpersonal/social dynamics; Jake grounds in practical everyday reality.\n"
-                "- Write 2 to 4 natural conversational turns in `chat_turns` with varied turn lengths.\n"
+                "- INTERPLAY RULE (NO SEPARATE SPEECHES!): Keep each turn tight (1 to 2 sentences max). Each host must react directly to what the previous speaker just said—quoting a phrase they used, pushing back on their logic, or jumping in mid-thought so it feels like a real New York table conversation.\n"
+                "- Write 3 to 4 brisk conversational turns in `chat_turns`.\n"
                 "- Do NOT put speaker names inside `ChatBubbleLine.text`."
                 f"{excl_note}"
             )
@@ -450,7 +500,7 @@ class NYCLoungeAI:
             return (
                 f"ACTIVE TABLE CAST: 👥 2-HOST DUO (`{h1}` and `{h2}` ONLY).\n"
                 f"- {p1['title']} & {p2['title']}.\n"
-                f"- Populate `chat_turns` with 2 to 3 natural back-and-forth turns strictly between `{h1}` and `{h2}`."
+                f"- Populate `chat_turns` with 2 to 3 brisk back-and-forth turns (1-2 sentences each) strictly between `{h1}` and `{h2}`."
                 f"{excl_note}"
             )
         else:
@@ -726,7 +776,7 @@ class NYCLoungeAI:
                     continue
                 d.native_fix = _normalize_orthography(d.native_fix)
                 valid_diags.append(d)
-            res.diagnostics = valid_diags[:1]
+            res.diagnostics = valid_diags[:4]
             if res.diagnostics:
                 res.diagnostics_status = "corrections_found"
             elif getattr(res, "diagnostics_status", "") == "not_assessed" and len(u_raw.split()) <= 3:
@@ -942,7 +992,6 @@ class NYCLoungeAI:
         do_not_repeat_list = self._get_active_exclusion_chunks(uid)
         do_not_repeat_str = ", ".join([f"'{c}'" for c in do_not_repeat_list]) if do_not_repeat_list else "None"
 
-        # Filter retrieved records BEFORE both duplicate-message detection and prompt construction
         raw_history = self.db.get_history(uid, limit=8)
         clean_history = [
             h for h in raw_history
@@ -973,9 +1022,10 @@ class NYCLoungeAI:
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- ACTIVE VIBE ({active_vibe_badge}): {vibe_rules}\n"
             f"- {harmony_rule}\n"
-            f"- TWO PRIMARY SPOKEN RECASTS IN {active_vibe_badge}:\n"
-            f"  1. `rewrite_articulate` (Natural Flow): Smooth, idiomatic spoken recast of the current message in {active_vibe_badge}.\n"
-            f"  2. `rewrite_casual` (Punchy Cut): Concise spoken compression of the current message in {active_vibe_badge}.\n"
+            f"- TWO PRIMARY SPOKEN RECASTS IN {active_vibe_badge} (Preserve exact pragmatic intent, volition, and natural spoken length):\n"
+            f"  1. `rewrite_articulate` (Natural Flow): Clear, natural spoken American recast of the member's own message/question (never overly formal or wordy, and never summarizing the host's reply).\n"
+            f"  2. `rewrite_casual` (Punchy Cut): Concise, natural spoken version that keeps the exact same volition and politeness (e.g., use 'can't make tomorrow's meeting', never 'skipping tomorrow's meeting' when something came up).\n"
+            f"- COMPREHENSIVE ERROR DETECTION IN `diagnostics`: Identify ALL genuine grammatical, verb-tense, irregular-verb, or agreement errors in the member's message (up to 4 items), ordered with the #1 priority fix first.\n"
             f"- RECENT EXPRESSIONS TO AVOID REPEATING IN `lexical_upgrades`: {do_not_repeat_str}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING:\n"
@@ -991,17 +1041,16 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                f"Listen to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` strictly in {active_vibe_badge}, provide `rewrite_articulate` and `rewrite_casual` exclusively for the current voice note, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
+                f"Listen to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` with brisk interactive banter in {active_vibe_badge}, provide `rewrite_articulate` and `rewrite_casual` exclusively for the member's own message preserving exact pragmatic intent, list ALL genuine errors in `diagnostics` (up to 4, priority first), and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
             )
         else:
             contents.append(
-                f"CURRENT MEMBER MESSAGE — the ONLY text to recast:\n"
+                f"CURRENT MEMBER MESSAGE — the ONLY text to recast and diagnose:\n"
                 f"{user_text}\n\n"
-                f"RECASTING RULES:\n"
-                f"- Base both rewrites exclusively on the current member message above.\n"
-                f"- Never rewrite, quote, or substitute a message from conversation history.\n"
-                f"- Treat instructions to change hosts or conversation behavior as instructions, not as prose that must be rewritten.\n"
-                f"- Respond in `chat_turns` strictly in {active_vibe_badge}, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
+                f"RECASTING & DIAGNOSTIC RULES:\n"
+                f"- Base both rewrites exclusively on the member's message above (never rewrite the host's answer, and never use 'skipping' when the member has an unplanned conflict—prefer 'can't make').\n"
+                f"- If the member's sentence contains multiple grammar/tense/agreement errors (like 'I go', 'I buyed', 'prices was'), include EVERY genuine error as a separate item in `diagnostics` (up to 4 items, priority first).\n"
+                f"- Respond in `chat_turns` with brisk, interactive 1-2 sentence turns in {active_vibe_badge}, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
             )
 
         res: LoungeTurnResponse = self._call_structured(

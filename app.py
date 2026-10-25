@@ -164,7 +164,6 @@ def format_lounge_turn_html(
     else:
         top_section += f"{p_icon} {reply_clean}\n\n"
 
-    # Suppress the 5-Second Native Mirror whenever generation failed / returned fallback
     if getattr(res, "is_fallback", False):
         return top_section.strip()
 
@@ -184,11 +183,19 @@ def format_lounge_turn_html(
 
     diag_status = getattr(res, "diagnostics_status", "checked_no_corrections")
     if res.diagnostics:
-        d = res.diagnostics[0]
+        d0 = res.diagnostics[0]
+        label_0 = "Priority Fix" if len(res.diagnostics) > 1 else "Quick Fix"
         mirror_lines.append(
-            f"• ⚡ <b>Quick Fix:</b> <s>{_e(d.user_said)}</s> ➔ ✅ <b>{_e(d.native_fix)}</b> "
-            f"<i>({_e(d.why_note)})</i>"
+            f"• ⚡ <b>{label_0}:</b> <s>{_e(d0.user_said)}</s> ➔ ✅ <b>{_e(d0.native_fix)}</b> "
+            f"<i>({_e(d0.why_note)})</i>"
         )
+        if len(res.diagnostics) > 1:
+            mirror_lines.append("• 🔍 <b>Other Fixes in Your Sentence:</b>")
+            for extra_d in res.diagnostics[1:4]:
+                mirror_lines.append(
+                    f"  └ <s>{_e(extra_d.user_said)}</s> ➔ ✅ <b>{_e(extra_d.native_fix)}</b> "
+                    f"<i>({_e(extra_d.why_note)})</i>"
+                )
     elif diag_status == "not_assessed":
         mirror_lines.append(
             "• ℹ️ <b>Language Check:</b> <i>Scenario/topic prompt — direct coaching mode.</i>"
