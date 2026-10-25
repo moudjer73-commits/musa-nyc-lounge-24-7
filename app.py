@@ -164,10 +164,13 @@ def format_lounge_turn_html(
     else:
         top_section += f"{p_icon} {reply_clean}\n\n"
 
+    # Suppress the 5-Second Native Mirror whenever generation failed / returned fallback
+    if getattr(res, "is_fallback", False):
+        return top_section.strip()
+
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     natural_flow = res.rewrite_articulate or res.tts_clean_target or ""
     punchy_cut = res.rewrite_casual or ""
-    third_alt = res.rewrite_witty or ""
 
     mirror_lines = [
         f"🪞 <b>5-Second Native Mirror ({vibe_label}):</b>",
@@ -175,6 +178,7 @@ def format_lounge_turn_html(
     ]
     if punchy_cut and punchy_cut.strip() != natural_flow.strip():
         mirror_lines.append(f"• <b>Punchy Cut:</b> <code>{_e(punchy_cut)}</code>")
+
     if is_voice and getattr(res, "acoustic_prosody_xray", ""):
         mirror_lines.append(f"• 🎧 <b>Voice & Rhythm Check:</b> {_e(res.acoustic_prosody_xray)}")
 

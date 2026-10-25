@@ -10,7 +10,7 @@ import html
 import random
 import logging
 from typing import List, Dict, Optional, Any, Tuple, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from google import genai
 from google.genai import types
@@ -41,172 +41,187 @@ class DiagnosticItem(BaseModel):
         default="🎭 Natural Flow",
         description="Strictly one of: '🎭 Natural Flow', '💎 Lexical Upgrade', '📐 Spoken Structure', or '🗽 Pragmatic Nuance'."
     )
-    user_said: str = Field(
-        default="",
-        description="Exact verbatim substring from the member's message that contains a genuine grammatical error, awkward non-native collocation, or clear register mismatch."
-    )
-    native_fix: str = Field(
-        default="",
-        description="Natural spoken American correction that preserves the member's exact meaning, certainty, and connotation."
-    )
-    why_note: str = Field(
-        default="",
-        description="1-sentence explanation distinguishing whether this fixes an error or clarifies register/connotation."
-    )
+    user_said: str = Field(default="")
+    native_fix: str = Field(default="")
+    why_note: str = Field(default="")
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _norm_category(cls, value: Any) -> str:
+        s = str(value or "").strip()
+        aliases = {
+            "🎭 Natural Flow": "🎭 Natural Flow",
+            "natural flow": "🎭 Natural Flow",
+            "💎 Lexical Upgrade": "💎 Lexical Upgrade",
+            "lexical upgrade": "💎 Lexical Upgrade",
+            "lexical": "💎 Lexical Upgrade",
+            "📐 Spoken Structure": "📐 Spoken Structure",
+            "spoken structure": "📐 Spoken Structure",
+            "grammar": "📐 Spoken Structure",
+            "🗽 Pragmatic Nuance": "🗽 Pragmatic Nuance",
+            "pragmatic nuance": "🗽 Pragmatic Nuance",
+            "pragmatic": "🗽 Pragmatic Nuance",
+            "register mismatch": "🗽 Pragmatic Nuance",
+        }
+        if s in aliases:
+            return aliases[s]
+        if s.lower() in aliases:
+            return aliases[s.lower()]
+        raise ValueError(f"Invalid diagnostic category: {value!r}")
 
 
 class LexicalFrameUpgrade(BaseModel):
-    chunk: str = Field(
-        default="",
-        description="High-value C1/C2 spoken American phrasal verb, collocation, idiom, or conversational gambit."
-    )
-    register_tag: RegisterTagLiteral = Field(
-        default="🎙️ Articulate",
-        description="Strictly one of the 5 supported registers: '🎙️ Articulate', '☕ Casual', '🎭 Witty', '💼 Executive', or '🤝 Diplomatic'."
-    )
-    b2_foil: str = Field(
-        default="",
-        description="Simpler everyday phrase for contrast."
-    )
-    arabic_equivalent: str = Field(
-        default="",
-        description="REQUIRED: Accurate Arabic equivalent (المكافئ العربي الدقيق) of the expression in context."
-    )
-    explanation: str = Field(
-        default="",
-        description="Concise English note on tone nuance, connotation, and usage boundaries."
-    )
-    trigger: str = Field(
-        default="",
-        description="When to reach for it: the exact real-life social or conversational moment."
-    )
-    pattern: str = Field(
-        default="",
-        description="Typical grammatical frame and collocation pattern."
-    )
-    followup: str = Field(
-        default="",
-        description="Natural follow-up line an American might say right after."
-    )
-    example: str = Field(
-        default="",
-        description="Authentic 1-sentence spoken example that explicitly contains `chunk` in context."
-    )
-    cloze_sentence: str = Field(
-        default="",
-        description="The exact `example` sentence above with the target expression replaced by '______'."
-    )
+    chunk: str = Field(default="")
+    register_tag: RegisterTagLiteral = Field(default="🎙️ Articulate")
+    b2_foil: str = Field(default="")
+    arabic_equivalent: str = Field(default="")
+    explanation: str = Field(default="")
+    trigger: str = Field(default="")
+    pattern: str = Field(default="")
+    followup: str = Field(default="")
+    example: str = Field(default="")
+    cloze_sentence: str = Field(default="")
+
+    @field_validator("register_tag", mode="before")
+    @classmethod
+    def _norm_reg_tag(cls, value: Any) -> str:
+        s = str(value or "").strip()
+        aliases = {
+            "🎙️ Articulate": "🎙️ Articulate",
+            "articulate": "🎙️ Articulate",
+            "☕ Casual": "☕ Casual",
+            "casual": "☕ Casual",
+            "🎭 Witty": "🎭 Witty",
+            "witty": "🎭 Witty",
+            "💼 Executive": "💼 Executive",
+            "executive": "💼 Executive",
+            "🤝 Diplomatic": "🤝 Diplomatic",
+            "diplomatic": "🤝 Diplomatic",
+        }
+        if s in aliases:
+            return aliases[s]
+        if s.lower() in aliases:
+            return aliases[s.lower()]
+        raise ValueError(f"Invalid register_tag: {value!r}")
 
 
 class ChatBubbleLine(BaseModel):
-    speaker: HostLiteral = Field(
-        default="marcus",
-        description="Strictly one of the active hosts at the table: 'marcus', 'chloe', or 'jake'."
-    )
-    pacing: PacingLiteral = Field(
-        default="normal",
-        description="Strictly 'fast_interjection', 'normal', or 'thoughtful_slow'."
-    )
-    text: str = Field(
-        default="",
-        description="This host's spoken conversational turn (without speaker name prefix). Wrap any naturally woven Vault phrases in <i>italics</i>."
-    )
+    speaker: HostLiteral = Field(default="marcus")
+    pacing: PacingLiteral = Field(default="normal")
+    text: str = Field(default="")
+
+    @field_validator("speaker", mode="before")
+    @classmethod
+    def _norm_speaker(cls, value: Any) -> str:
+        s = str(value or "").strip().lower()
+        aliases = {
+            "marcus": "marcus",
+            "marcus:": "marcus",
+            "🧔‍♂️ marcus": "marcus",
+            "chloe": "chloe",
+            "chloe:": "chloe",
+            "👩🏼‍💼 chloe": "chloe",
+            "jake": "jake",
+            "jake:": "jake",
+            "🧢 jake": "jake",
+        }
+        if s not in aliases:
+            raise ValueError(f"Invalid host speaker: {value!r}")
+        return aliases[s]
+
+    @field_validator("pacing", mode="before")
+    @classmethod
+    def _norm_pacing(cls, value: Any) -> str:
+        s = str(value or "").strip().lower()
+        aliases = {
+            "fast_interjection": "fast_interjection",
+            "fast": "fast_interjection",
+            "normal": "normal",
+            "thoughtful_slow": "thoughtful_slow",
+            "slow": "thoughtful_slow",
+        }
+        if s not in aliases:
+            raise ValueError(f"Invalid pacing: {value!r}")
+        return aliases[s]
 
 
 class LoungeTurnResponse(BaseModel):
-    transcription: str = Field(
-        default="",
-        description="Verbatim transcription if voice input was provided; empty string for text input."
-    )
-    responding_persona: HostLiteral = Field(
-        default="marcus",
-        description="Primary host voice: strictly 'marcus', 'chloe', or 'jake'."
-    )
-    chat_turns: List[ChatBubbleLine] = Field(
-        default_factory=list,
-        description="Conversational turns from the active host(s) at the table reacting naturally to the member and to one another."
-    )
-    lounge_reply: str = Field(
-        default="",
-        description="Combined spoken reply built from `chat_turns`."
-    )
-    rewrite_articulate: str = Field(
-        default="",
-        description="Strategy 1 — Natural Flow (strictly in the member's ACTIVE register): Preserve the full thought, scope, causality, and degree of certainty while optimizing spoken rhythm. Never use literary melodrama."
-    )
-    rewrite_casual: str = Field(
-        default="",
-        description="Strategy 2 — Punchy Cut (strictly in the member's ACTIVE register): Compress the member's exact thought concisely without exaggerating certainty or scope."
-    )
-    rewrite_witty: str = Field(
-        default="",
-        description="Optional backup spoken alternative in 1st-person POV."
-    )
-    self_repair_pivot: str = Field(default="", description="Leave empty string ''.")
-    acoustic_prosody_xray: str = Field(default="", description="1-sentence rhythm/stress note for voice input; empty string for text input.")
-    tts_clean_target: str = Field(
-        default="",
-        description="Clean plain-text version of `rewrite_articulate` ready for TTS voice synthesis."
-    )
-    mirror_clean_target: str = Field(
-        default="",
-        description="Clean, natural version of the member's sentence for 1-to-1 Voice Mirror comparison."
-    )
-    diagnostics_status: DiagnosticsStatusLiteral = Field(
-        default="checked_no_corrections",
-        description="Strictly one of: 'corrections_found', 'checked_no_corrections', or 'not_assessed'."
-    )
-    diagnostics: List[DiagnosticItem] = Field(
-        default_factory=list,
-        description="At most 1 genuine grammatical, collocational, or register fix. Must be empty `[]` whenever `diagnostics_status` is 'checked_no_corrections' or 'not_assessed'."
-    )
-    lexical_upgrades: List[LexicalFrameUpgrade] = Field(
-        default_factory=list,
-        description="3 distinct, reusable spoken expressions suited to the active register and topic, each with a populated `arabic_equivalent` and `explanation`."
-    )
+    transcription: str = Field(default="")
+    responding_persona: HostLiteral = Field(default="marcus")
+    chat_turns: List[ChatBubbleLine] = Field(default_factory=list)
+    lounge_reply: str = Field(default="")
+    rewrite_articulate: str = Field(default="")
+    rewrite_casual: str = Field(default="")
+    rewrite_witty: str = Field(default="")
+    self_repair_pivot: str = Field(default="")
+    acoustic_prosody_xray: str = Field(default="")
+    tts_clean_target: str = Field(default="")
+    mirror_clean_target: str = Field(default="")
+    diagnostics_status: DiagnosticsStatusLiteral = Field(default="checked_no_corrections")
+    diagnostics: List[DiagnosticItem] = Field(default_factory=list)
+    lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list)
+    is_fallback: bool = Field(default=False)
+
+    @field_validator("responding_persona", mode="before")
+    @classmethod
+    def _norm_resp_persona(cls, value: Any) -> str:
+        s = str(value or "").strip().lower()
+        aliases = {
+            "marcus": "marcus",
+            "marcus:": "marcus",
+            "🧔‍♂️ marcus": "marcus",
+            "chloe": "chloe",
+            "chloe:": "chloe",
+            "👩🏼‍💼 chloe": "chloe",
+            "jake": "jake",
+            "jake:": "jake",
+            "🧢 jake": "jake",
+        }
+        if s not in aliases:
+            raise ValueError(f"Invalid responding_persona: {value!r}")
+        return aliases[s]
+
+    @field_validator("diagnostics_status", mode="before")
+    @classmethod
+    def _norm_diag_status(cls, value: Any) -> str:
+        s = str(value or "").strip().lower()
+        aliases = {
+            "corrections_found": "corrections_found",
+            "checked_no_corrections": "checked_no_corrections",
+            "not_assessed": "not_assessed",
+        }
+        if s not in aliases:
+            raise ValueError(f"Invalid diagnostics_status: {value!r}")
+        return aliases[s]
 
 
 class SituationGambitResponse(BaseModel):
-    situation_summary: str = Field(
-        default="",
-        description="1-sentence pragmatic reading of the speech act, relationship dynamics, and social stakes."
-    )
-    responding_persona: HostLiteral = Field(
-        default="chloe",
-        description="Lead coach for this scenario: strictly 'chloe', 'marcus', or 'jake'."
-    )
-    host_commentary: str = Field(
-        default="",
-        description="1-2 natural spoken sentences from the lead host framing the strategy before giving the lines."
-    )
-    best_line: str = Field(
-        default="",
-        description="REQUIRED NON-EMPTY: The #1 immediate, instinctive first-person spoken line an American naturally says in this exact situation (matching the active register)."
-    )
-    softer_alternative: str = Field(
-        default="",
-        description="REQUIRED NON-EMPTY: A gentler, face-saving first-person alternative that lowers tension while keeping the same intent."
-    )
-    firmer_alternative: str = Field(
-        default="",
-        description="REQUIRED NON-EMPTY: A firmer, direct boundary-setting first-person alternative that holds the line without aggression."
-    )
-    why_it_works: str = Field(
-        default="",
-        description="REQUIRED NON-EMPTY: Concise pragmatic explanation of why `best_line` works socially and what tone trap it avoids."
-    )
-    arabic_equivalent: str = Field(
-        default="",
-        description="REQUIRED NON-EMPTY: Accurate Arabic translation / pragmatic equivalent (المكافئ العربي الدقيق) of the recommended line."
-    )
-    follow_up_line: str = Field(
-        default="",
-        description="What the member should say next if the other person pushes back or gets defensive."
-    )
-    lexical_upgrades: List[LexicalFrameUpgrade] = Field(
-        default_factory=list,
-        description="3 savable situational gambits from this scenario (for the member's Vault), each with `chunk`, `arabic_equivalent`, `explanation`, and `example`."
-    )
+    situation_summary: str = Field(default="")
+    responding_persona: HostLiteral = Field(default="chloe")
+    host_commentary: str = Field(default="")
+    best_line: str = Field(default="")
+    softer_alternative: str = Field(default="")
+    firmer_alternative: str = Field(default="")
+    why_it_works: str = Field(default="")
+    arabic_equivalent: str = Field(default="")
+    follow_up_line: str = Field(default="")
+    lexical_upgrades: List[LexicalFrameUpgrade] = Field(default_factory=list)
+
+    @field_validator("responding_persona", mode="before")
+    @classmethod
+    def _norm_gambit_persona(cls, value: Any) -> str:
+        s = str(value or "").strip().lower()
+        aliases = {
+            "marcus": "marcus",
+            "marcus:": "marcus",
+            "chloe": "chloe",
+            "chloe:": "chloe",
+            "jake": "jake",
+            "jake:": "jake",
+        }
+        if s not in aliases:
+            raise ValueError(f"Invalid responding_persona: {value!r}")
+        return aliases[s]
 
 
 
@@ -387,22 +402,33 @@ class NYCLoungeAI:
         }
         return calibrations.get(level, calibrations["C1"])
 
-    @staticmethod
-    def _detect_addressed_host(user_text: str) -> Optional[str]:
-        low = (user_text or "").lower()
-        for h in ("jake", "chloe", "marcus"):
-            if re.search(rf"\b{h}\b", low):
-                return h
-        return None
+    @classmethod
+    def _detect_addressed_host(cls, user_text: str) -> Optional[str]:
+        addressed, _, _ = cls._parse_host_directives(user_text)
+        return addressed
 
     @classmethod
     def _persona_routing_directive(cls, active_persona: str, mode: str, user_text: str = "") -> str:
         preset = CAST_PRESETS.get(active_persona, CAST_PRESETS["trio"])
-        hosts = list(preset["hosts"])
-        count = preset["count"]
-        called_host = cls._detect_addressed_host(user_text)
+        base_hosts = list(preset["hosts"])
+        called_host, excluded_hosts, solo_only = cls._parse_host_directives(user_text)
 
-        if count == 3:
+        if solo_only:
+            hosts = [solo_only]
+        else:
+            hosts = [h for h in base_hosts if h not in excluded_hosts]
+            if not hosts:
+                hosts = [called_host or "jake"]
+            elif called_host and called_host not in hosts:
+                hosts = [called_host] + hosts
+
+        count = len(hosts)
+        excl_note = (
+            f"\n- STRICT EXCLUSION: Do NOT include {', '.join(h.capitalize() for h in excluded_hosts)} in `chat_turns` on this turn!"
+            if excluded_hosts else ""
+        )
+
+        if count >= 3:
             lead_note = (
                 f"- Musa directly addressed `{called_host.capitalize()}`, so `{called_host}` MUST speak first."
                 if called_host else
@@ -412,53 +438,67 @@ class NYCLoungeAI:
                 "ACTIVE TABLE CAST: 🗽 NYC TRIO (`marcus`, `chloe`, `jake`).\n"
                 f"{lead_note}\n"
                 "- Default cognitive tendencies (allow natural overlap): Marcus clarifies concepts & assumptions; Chloe reads interpersonal/social dynamics; Jake grounds in practical everyday reality.\n"
-                "- Write 2 to 4 natural conversational turns in `chat_turns` with varied turn lengths (mix short 1-sentence reactions or challenges with 2-sentence observations).\n"
-                "- NEVER use a rigid script ('Marcus abstract -> Jake Wait hold on -> Chloe synthesis + question'). Only end with a question when it genuinely advances the conversation.\n"
+                "- Write 2 to 4 natural conversational turns in `chat_turns` with varied turn lengths.\n"
                 "- Do NOT put speaker names inside `ChatBubbleLine.text`."
+                f"{excl_note}"
             )
         elif count == 2:
-            if called_host and called_host not in hosts:
-                hosts = [called_host, hosts[0]]
-            elif called_host and hosts[0] != called_host:
+            if called_host and called_host in hosts and hosts[0] != called_host:
                 hosts = [called_host, [h for h in hosts if h != called_host][0]]
             h1, h2 = hosts[0], hosts[1]
             p1, p2 = PERSONAS[h1], PERSONAS[h2]
             return (
-                f"ACTIVE TABLE CAST: 👥 2-HOST DUO (`{h1}` and `{h2}`).\n"
+                f"ACTIVE TABLE CAST: 👥 2-HOST DUO (`{h1}` and `{h2}` ONLY).\n"
                 f"- {p1['title']} & {p2['title']}.\n"
-                f"- Populate `chat_turns` with 2 to 3 natural back-and-forth turns between `{h1}` and `{h2}`."
+                f"- Populate `chat_turns` with 2 to 3 natural back-and-forth turns strictly between `{h1}` and `{h2}`."
+                f"{excl_note}"
             )
         else:
-            h1 = called_host if called_host else hosts[0]
-            p1 = PERSONAS.get(h1, PERSONAS["marcus"])
+            h1 = hosts[0]
+            p1 = PERSONAS.get(h1, PERSONAS["jake"])
             return (
                 f"ACTIVE TABLE CAST: 👤 1-ON-1 SOLO WITH {p1['title']} (`{h1}` ONLY).\n"
-                f"- Populate `chat_turns` with 1 natural spoken turn where `speaker` is '{h1}'."
+                f"- Populate `chat_turns` with 1 natural spoken turn where `speaker` is strictly '{h1}'."
+                f"{excl_note}"
             )
 
-    @staticmethod
-    def _finalize_chat_turns(res: LoungeTurnResponse, active_persona: str, user_text: str = "") -> LoungeTurnResponse:
+    @classmethod
+    def _finalize_chat_turns(cls, res: LoungeTurnResponse, active_persona: str, user_text: str = "") -> LoungeTurnResponse:
         preset_hosts = list(CAST_PRESETS.get(active_persona, CAST_PRESETS["trio"])["hosts"])
+        called_host, excluded_hosts, solo_only = cls._parse_host_directives(user_text)
+        if solo_only:
+            allowed_hosts = [solo_only]
+        else:
+            allowed_hosts = [h for h in preset_hosts if h not in excluded_hosts] or [called_host or "jake"]
+
         if res.chat_turns:
+            filtered_turns = []
             formatted_bubbles = []
             for ct in res.chat_turns:
-                sp_k = (ct.speaker or preset_hosts[0]).strip().lower()
+                sp_k = (ct.speaker or allowed_hosts[0]).strip().lower()
                 if sp_k not in ("marcus", "chloe", "jake"):
-                    sp_k = preset_hosts[0]
+                    sp_k = allowed_hosts[0]
+                # Strictly drop excluded or non-solo hosts
+                if sp_k in excluded_hosts or (solo_only and sp_k != solo_only):
+                    continue
                 ct.speaker = sp_k
                 p_meta = PERSONAS[sp_k]
                 clean_line = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", (ct.text or "").strip(), flags=re.IGNORECASE)
                 ct.text = clean_line
                 if clean_line:
+                    filtered_turns.append(ct)
                     formatted_bubbles.append(f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {clean_line}")
             if formatted_bubbles:
+                res.chat_turns = filtered_turns
                 res.lounge_reply = "\n\n".join(formatted_bubbles)
-                res.responding_persona = res.chat_turns[0].speaker
+                res.responding_persona = filtered_turns[0].speaker
                 return res
 
-        sp_k = preset_hosts[0]
+        sp_k = called_host if (called_host and called_host not in excluded_hosts) else allowed_hosts[0]
         p_meta = PERSONAS[sp_k]
-        raw_reply = (res.lounge_reply or "Hey man! Good to see you—what's on your mind today?").strip()
+        raw_reply = (res.lounge_reply or "").strip()
+        if not raw_reply:
+            raise ValueError("Empty conversational response after host filtering")
         clean_reply = re.sub(r"^(?:Marcus|Chloe|Jake)\s*:\s*", "", raw_reply, flags=re.IGNORECASE)
         res.responding_persona = sp_k
         res.chat_turns = [ChatBubbleLine(speaker=sp_k, pacing="normal", text=clean_reply)]
@@ -553,27 +593,6 @@ class NYCLoungeAI:
         _active_persona = user.get("active_persona", "trio") if isinstance(user, dict) else "trio"
         _mode = user.get("current_mode", "spontaneous_chat") if isinstance(user, dict) else "spontaneous_chat"
 
-        try:
-            res, used_stealth_ids = self._raw_process_lounge_turn(*args, **kwargs)
-            if not isinstance(res, LoungeTurnResponse):
-                raise ValueError("Invalid LoungeTurnResponse object returned")
-            if not isinstance(used_stealth_ids, list):
-                used_stealth_ids = []
-        except Exception as exc:
-            logger.warning(f"Structured turn fallback triggered: {exc}")
-            fallback_res = LoungeTurnResponse(
-                responding_persona="marcus",
-                chat_turns=[ChatBubbleLine(speaker="marcus", pacing="normal", text="Give me one second—my train of thought just derailed. Drop that line on me one more time?")],
-                lounge_reply="🧔‍♂️ <b>Marcus:</b> Give me one second—my train of thought just derailed. Drop that line on me one more time?",
-                rewrite_articulate=str(user_text or ""),
-                rewrite_casual=str(user_text or ""),
-                diagnostics_status="not_assessed",
-                diagnostics=[],
-                lexical_upgrades=[]
-            )
-            return fallback_res, []
-
-        # 1. Context-Independent Orthographic Normalization ONLY (No context-blind semantic rewriting!)
         known_ing_stems = (
             "work", "get", "stay", "look", "breath", "talk", "walk", "think", "go", "do",
             "mak", "tak", "com", "runn", "hitt", "try", "say", "play", "grind", "slack",
@@ -586,11 +605,47 @@ class NYCLoungeAI:
                 return ""
             return ing_pattern.sub(r"\1ing", txt).strip()
 
-        if getattr(res, "chat_turns", None):
-            for ct in res.chat_turns:
-                ct.text = _normalize_orthography(getattr(ct, "text", ""))
-        res.lounge_reply = _normalize_orthography(getattr(res, "lounge_reply", ""))
-        res = self._finalize_chat_turns(res, active_persona=_active_persona, user_text=user_text)
+        try:
+            res, used_stealth_ids = self._raw_process_lounge_turn(*args, **kwargs)
+            if not isinstance(res, LoungeTurnResponse):
+                raise ValueError("Invalid LoungeTurnResponse object returned")
+            if not isinstance(used_stealth_ids, list):
+                used_stealth_ids = []
+
+            if getattr(res, "chat_turns", None):
+                for ct in res.chat_turns:
+                    ct.text = _normalize_orthography(getattr(ct, "text", ""))
+            res.lounge_reply = _normalize_orthography(getattr(res, "lounge_reply", ""))
+            res = self._finalize_chat_turns(res, active_persona=_active_persona, user_text=user_text)
+        except Exception as exc:
+            logger.exception(f"Structured turn fallback triggered: {exc}")
+            preset_hosts = list(CAST_PRESETS.get(_active_persona, CAST_PRESETS["trio"])["hosts"])
+            called_h, excluded_h, solo_h = self._parse_host_directives(str(user_text or ""))
+            allowed_h = [h for h in preset_hosts if h not in excluded_h] or ["jake"]
+            preferred_host = solo_h or (called_h if (called_h and called_h not in excluded_h) else allowed_h[0])
+            if preferred_host not in ("marcus", "chloe", "jake"):
+                preferred_host = "jake"
+
+            fallback_res = LoungeTurnResponse(
+                is_fallback=True,
+                responding_persona=preferred_host,
+                chat_turns=[
+                    ChatBubbleLine(
+                        speaker=preferred_host,
+                        pacing="normal",
+                        text="I'm having a technical hiccup. Give me a moment and try that again."
+                    )
+                ],
+                rewrite_articulate="",
+                rewrite_casual="",
+                mirror_clean_target="",
+                diagnostics_status="not_assessed",
+                diagnostics=[],
+                lexical_upgrades=[],
+            )
+            fallback_res = self._finalize_chat_turns(fallback_res, active_persona=_active_persona, user_text=user_text)
+            fallback_res.is_fallback = True
+            return fallback_res, []
 
         res.rewrite_articulate = _normalize_orthography(getattr(res, "rewrite_articulate", ""))
         res.rewrite_casual = _normalize_orthography(getattr(res, "rewrite_casual", ""))
@@ -598,7 +653,6 @@ class NYCLoungeAI:
         res.tts_clean_target = _normalize_orthography(getattr(res, "tts_clean_target", "")) or res.rewrite_articulate
         res.mirror_clean_target = _normalize_orthography(getattr(res, "mirror_clean_target", ""))
 
-        # 2. Explicit, Non-Heuristic Assessment Policy for `diagnostics_status` & `diagnostics`
         u_raw = (user_text or getattr(res, "transcription", "") or "").strip()
         u_lower = u_raw.lower()
         has_latin_letters = bool(re.search(r"[a-zA-Z]{2,}", u_raw))
@@ -642,13 +696,13 @@ class NYCLoungeAI:
             else:
                 res.diagnostics_status = "checked_no_corrections"
 
-        # 3. Strict Freshness & Validated Cloze Enforcement for Lexical Upgrades (Never restore duplicates!)
         res.lexical_upgrades = self._validate_and_filter_upgrades(
             getattr(res, "lexical_upgrades", None) or [],
             uid=uid,
             badge_r=_badge_r,
             normalize_fn=_normalize_orthography
         )
+        res.is_fallback = False
         return res, used_stealth_ids
 
 
@@ -850,13 +904,20 @@ class NYCLoungeAI:
         do_not_repeat_list = self._get_active_exclusion_chunks(uid)
         do_not_repeat_str = ", ".join([f"'{c}'" for c in do_not_repeat_list]) if do_not_repeat_list else "None"
 
-        raw_history = self.db.get_history(uid, limit=6)
+        # Filter retrieved records BEFORE both duplicate-message detection and prompt construction
+        raw_history = self.db.get_history(uid, limit=8)
+        clean_history = [
+            h for h in raw_history
+            if "train of thought just derailed" not in (h.get("content") or "")
+            and "having a technical hiccup" not in (h.get("content") or "")
+            and "studio connection just glitched" not in (h.get("content") or "")
+        ][-6:]
         u_norm_now = re.sub(r"\s+", " ", (user_text or "").strip().lower())
-        prev_user_msgs = [re.sub(r"\s+", " ", h["content"].strip().lower()) for h in raw_history if h.get("role") == "user"]
+        prev_user_msgs = [re.sub(r"\s+", " ", h["content"].strip().lower()) for h in clean_history if h.get("role") == "user"]
         if u_norm_now and u_norm_now in prev_user_msgs:
             hist_str = "Fresh angle on this topic (do NOT repeat earlier reassurance or recycle previous points)."
         else:
-            hist_str = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in raw_history]) if raw_history else "Start of conversation."
+            hist_str = "\n".join([f"{h['role'].upper()}: {h['content']}" for h in clean_history]) if clean_history else "Start of conversation."
 
         vibe_harmony_guides = {
             "articulate": "HARMONY RULE (🎙️ Articulate): All hosts use crisp, natural spoken syntax to draw conceptual, interpersonal, and practical distinctions—no slang or forced jokes.",
@@ -874,9 +935,9 @@ class NYCLoungeAI:
             f"- {self._persona_routing_directive(active_persona, mode, user_text)}\n"
             f"- ACTIVE VIBE ({active_vibe_badge}): {vibe_rules}\n"
             f"- {harmony_rule}\n"
-            f"- TWO PRIMARY SPOKEN RECASTS IN {active_vibe_badge} (Preserve the user's natural voice and certainty—NO literary purple prose):\n"
-            f"  1. `rewrite_articulate` (Natural Flow): Smooth, idiomatic spoken recast of the user's exact thought in {active_vibe_badge}.\n"
-            f"  2. `rewrite_casual` (Punchy Cut): Concise, high-impact spoken compression in {active_vibe_badge} without exaggerating the claim.\n"
+            f"- TWO PRIMARY SPOKEN RECASTS IN {active_vibe_badge}:\n"
+            f"  1. `rewrite_articulate` (Natural Flow): Smooth, idiomatic spoken recast of the current message in {active_vibe_badge}.\n"
+            f"  2. `rewrite_casual` (Punchy Cut): Concise spoken compression of the current message in {active_vibe_badge}.\n"
             f"- RECENT EXPRESSIONS TO AVOID REPEATING IN `lexical_upgrades`: {do_not_repeat_str}\n"
             f"- {self._build_mode_specific_directive(mode, session_meta)}\n\n"
             f"ORGANIC PHRASE WEAVING:\n"
@@ -892,12 +953,17 @@ class NYCLoungeAI:
         if audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
             contents.append(
-                f"Listen to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` strictly in {active_vibe_badge} without tonal dissonance, provide `rewrite_articulate` (Natural Flow) and `rewrite_casual` (Punchy Cut) preserving the member's natural voice, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
+                f"Listen to the member's voice note. Transcribe verbatim in `transcription`, populate `chat_turns` strictly in {active_vibe_badge}, provide `rewrite_articulate` and `rewrite_casual` exclusively for the current voice note, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
             )
         else:
             contents.append(
-                f"MEMBER MESSAGE:\n{user_text}\n\n"
-                f"Respond in `chat_turns` strictly in {active_vibe_badge} without tonal dissonance, provide `rewrite_articulate` (Natural Flow) and `rewrite_casual` (Punchy Cut) preserving the member's natural voice, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
+                f"CURRENT MEMBER MESSAGE — the ONLY text to recast:\n"
+                f"{user_text}\n\n"
+                f"RECASTING RULES:\n"
+                f"- Base both rewrites exclusively on the current member message above.\n"
+                f"- Never rewrite, quote, or substitute a message from conversation history.\n"
+                f"- Treat instructions to change hosts or conversation behavior as instructions, not as prose that must be rewritten.\n"
+                f"- Respond in `chat_turns` strictly in {active_vibe_badge}, set `diagnostics_status` honestly, and provide 3 fresh scene-anchored `lexical_upgrades` (avoiding {do_not_repeat_str}) with `arabic_equivalent`."
             )
 
         res: LoungeTurnResponse = self._call_structured(
@@ -907,6 +973,9 @@ class NYCLoungeAI:
             temperature=0.68,
             max_output_tokens=4096
         )
+
+        if not getattr(res, "chat_turns", None) and not (getattr(res, "lounge_reply", "") or "").strip():
+            raise ValueError("Empty conversational response from model")
 
         used_stealth_ids: List[int] = []
         combined_raw = " ".join([getattr(ct, "text", "") for ct in (res.chat_turns or [])]) + " " + (res.lounge_reply or "")
@@ -1245,3 +1314,46 @@ class NYCLoungeAI:
                 seen.add(norm)
                 combined.append(ch.strip())
         return combined[:18]
+
+    @staticmethod
+    def _parse_host_directives(user_text: str) -> Tuple[Optional[str], List[str], Optional[str]]:
+        low = (user_text or "").lower()
+        excluded: List[str] = []
+        for h in ("marcus", "chloe", "jake"):
+            excl_pats = (
+                rf"\b(?:no|not|without|exclude|excluding|skip|mute)\s+{h}\b",
+                rf"\b{h}\b[^.!?]{{0,30}}\b(?:sit\s+(?:this\s+(?:one|turn)\s+)?out|stay\s+out|be\s+quiet|don't\s+answer|do\s+not\s+answer|stop)\b",
+                rf"\bsit\s+(?:this\s+(?:one|turn)\s+)?out\s*,?\s*{h}\b",
+            )
+            if any(re.search(p, low) for p in excl_pats):
+                excluded.append(h)
+
+        solo_only: Optional[str] = None
+        for h in ("jake", "chloe", "marcus"):
+            if h in excluded:
+                continue
+            solo_pats = (
+                rf"\b(?:only|just)\s+(?:as\s+|from\s+|to\s+)?{h}\b",
+                rf"\breply\s+only\s+as\s+{h}\b",
+                rf"\banswer\s+only\s+as\s+{h}\b",
+                rf"\b{h}\s+only\b",
+            )
+            if any(re.search(p, low) for p in solo_pats):
+                solo_only = h
+                break
+
+        addressed: Optional[str] = solo_only
+        if not addressed:
+            # Find the earliest non-excluded host mentioned in the user's message
+            found_positions = []
+            for h in ("jake", "chloe", "marcus"):
+                if h in excluded:
+                    continue
+                m = re.search(rf"\b{h}\b", low)
+                if m:
+                    found_positions.append((m.start(), h))
+            if found_positions:
+                found_positions.sort(key=lambda x: x[0])
+                addressed = found_positions[0][1]
+
+        return addressed, excluded, solo_only
