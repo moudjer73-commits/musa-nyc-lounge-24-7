@@ -1095,47 +1095,88 @@ class LoungeDatabase:
     def atomic_turn_transaction(self):
         """
         Establishes an explicit outer ACID transaction for all turn persistence operations.
-        - Owns the real connection's commit, rollback, and close lifecycle.
-        - Supports nested calls safely via SQLite SAVEPOINTs so an inner block never terminates the outer transaction.
-        - Yields the `_SharedTxProxy` so callers using `with db.atomic_turn_transaction() as tx:` cannot prematurely commit or close the raw connection.
+        - Uses re-entrant `self._lock` (`threading.RLock`).
+        - Manages nested transactions via SQLite SAVEPOINTs with isolated cleanup and exception preservation.
+        - Marks the outer transaction as poisoned (`self._tx_poisoned = True`) if any savepoint creation,
+          rollback, or release fails, forcing a full outer ROLLBACK rather than committing uncertain state.
         """
         with self._lock:
             if getattr(self, "_active_tx_conn", None) is not None:
-                depth = getattr(self, "_tx_depth", 1) + 1
-                self._tx_depth = depth
+                prev_depth = getattr(self, "_tx_depth", 1)
+                depth = prev_depth + 1
                 sp_name = f"sp_nested_{depth}"
                 raw_nested = self._active_tx_conn
-                raw_nested.execute(f"SAVEPOINT {sp_name};")
+                sp_created = False
+                self._tx_depth = depth
                 try:
-                    yield self._conn()
-                    raw_nested.execute(f"RELEASE SAVEPOINT {sp_name};")
-                except Exception:
-                    raw_nested.execute(f"ROLLBACK TO SAVEPOINT {sp_name};")
-                    raw_nested.execute(f"RELEASE SAVEPOINT {sp_name};")
-                    raise
+                    try:
+                        self._exec_tx_sql(raw_nested, f"SAVEPOINT {sp_name};")
+                        sp_created = True
+                    except BaseException as sp_err:
+                        self._tx_poisoned = True
+                        logger.error(f"SAVEPOINT creation failed ({sp_name}); outer transaction poisoned: {sp_err}")
+                        raise
+
+                    try:
+                        yield self._conn()
+                    except BaseException as body_exc:
+                        if sp_created:
+                            try:
+                                self._exec_tx_sql(raw_nested, f"ROLLBACK TO SAVEPOINT {sp_name};")
+                            except BaseException as rb_err:
+                                self._tx_poisoned = True
+                                logger.error(
+                                    f"ROLLBACK TO SAVEPOINT {sp_name} failed (preserving original exception): {rb_err}"
+                                )
+                            try:
+                                self._exec_tx_sql(raw_nested, f"RELEASE SAVEPOINT {sp_name};")
+                            except BaseException as rel_err:
+                                self._tx_poisoned = True
+                                logger.error(
+                                    f"RELEASE SAVEPOINT {sp_name} after rollback failed (preserving original exception): {rel_err}"
+                                )
+                        else:
+                            self._tx_poisoned = True
+                        raise body_exc
+
+                    try:
+                        self._exec_tx_sql(raw_nested, f"RELEASE SAVEPOINT {sp_name};")
+                    except BaseException as rel_err:
+                        self._tx_poisoned = True
+                        logger.error(f"RELEASE SAVEPOINT {sp_name} failed on normal exit; outer transaction poisoned: {rel_err}")
+                        raise
                 finally:
-                    self._tx_depth = depth - 1
+                    self._tx_depth = prev_depth
                 return
 
             target_db = getattr(self, "user_db_path", getattr(self, "db_path", None))
-            # isolation_level=None lets us manage BEGIN IMMEDIATE / COMMIT / ROLLBACK explicitly
             raw_conn = sqlite3.connect(str(target_db), timeout=30.0, check_same_thread=False, isolation_level=None)
             raw_conn.row_factory = sqlite3.Row
             raw_conn.execute("PRAGMA journal_mode=WAL;")
             raw_conn.execute("PRAGMA synchronous=NORMAL;")
-            raw_conn.execute("BEGIN IMMEDIATE;")
+            self._exec_tx_sql(raw_conn, "BEGIN IMMEDIATE;")
             self._active_tx_conn = raw_conn
             self._tx_depth = 1
+            self._tx_poisoned = False
             try:
                 yield self._conn()
-                raw_conn.execute("COMMIT;")
-            except Exception:
+                if getattr(self, "_tx_poisoned", False):
+                    raise sqlite3.OperationalError(
+                        "Outer transaction aborted: nested savepoint entered an inconsistent state."
+                    )
+                self._exec_tx_sql(raw_conn, "COMMIT;")
+            except BaseException:
                 try:
-                    raw_conn.execute("ROLLBACK;")
-                except Exception:
-                    pass
+                    self._exec_tx_sql(raw_conn, "ROLLBACK;")
+                except BaseException as outer_rb_err:
+                    logger.error(f"Outer ROLLBACK failed: {outer_rb_err}")
                 raise
             finally:
                 self._tx_depth = 0
+                self._tx_poisoned = False
                 self._active_tx_conn = None
                 raw_conn.close()
+
+    @staticmethod
+    def _exec_tx_sql(conn: sqlite3.Connection, sql: str):
+        return conn.execute(sql)
