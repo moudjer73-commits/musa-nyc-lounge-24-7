@@ -618,24 +618,45 @@ class NYCLoungeAI:
             res.lounge_reply = _normalize_orthography(getattr(res, "lounge_reply", ""))
             res = self._finalize_chat_turns(res, active_persona=_active_persona, user_text=user_text)
         except Exception as exc:
-            logger.exception(f"Structured turn fallback triggered: {exc}")
+            import traceback as _tb
+            raw_log_payload = f"Structured turn fallback triggered: {exc}\n{_tb.format_exc()}"
+            safe_log_payload = re.sub(r"AIza[0-9A-Za-z\-_]{20,}", "[REDACTED_KEY]", raw_log_payload)
+            safe_log_payload = re.sub(r"ghp_[0-9A-Za-z]{20,}", "[REDACTED_TOKEN]", safe_log_payload)
+            logger.error(safe_log_payload)
+
             preset_hosts = list(CAST_PRESETS.get(_active_persona, CAST_PRESETS["trio"])["hosts"])
             called_h, excluded_h, solo_h = self._parse_host_directives(str(user_text or ""))
-            allowed_h = [h for h in preset_hosts if h not in excluded_h] or ["jake"]
-            preferred_host = solo_h or (called_h if (called_h and called_h not in excluded_h) else allowed_h[0])
-            if preferred_host not in ("marcus", "chloe", "jake"):
-                preferred_host = "jake"
+            allowed_h = [h for h in preset_hosts if h not in excluded_h]
+
+            if solo_h and solo_h not in excluded_h:
+                preferred_host = solo_h
+            elif called_h and called_h not in excluded_h:
+                preferred_host = called_h
+            elif allowed_h:
+                preferred_host = allowed_h[0]
+            else:
+                preferred_host = None
+
+            fb_msg = "I'm having a technical hiccup. Give me a moment and try that again."
+            if preferred_host in ("marcus", "chloe", "jake"):
+                p_meta = PERSONAS[preferred_host]
+                fb_speaker = preferred_host
+                fb_formatted = f"{p_meta.get('icon', '🗽')} <b>{p_meta['name']}:</b> {fb_msg}"
+            else:
+                fb_speaker = "jake"
+                fb_formatted = f"🗽 <b>The Lounge:</b> {fb_msg}"
 
             fallback_res = LoungeTurnResponse(
                 is_fallback=True,
-                responding_persona=preferred_host,
+                responding_persona=fb_speaker,
                 chat_turns=[
                     ChatBubbleLine(
-                        speaker=preferred_host,
+                        speaker=fb_speaker,
                         pacing="normal",
-                        text="I'm having a technical hiccup. Give me a moment and try that again."
+                        text=fb_msg
                     )
                 ],
+                lounge_reply=fb_formatted,
                 rewrite_articulate="",
                 rewrite_casual="",
                 mirror_clean_target="",
@@ -643,8 +664,6 @@ class NYCLoungeAI:
                 diagnostics=[],
                 lexical_upgrades=[],
             )
-            fallback_res = self._finalize_chat_turns(fallback_res, active_persona=_active_persona, user_text=user_text)
-            fallback_res.is_fallback = True
             return fallback_res, []
 
         res.rewrite_articulate = _normalize_orthography(getattr(res, "rewrite_articulate", ""))
