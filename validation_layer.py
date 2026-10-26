@@ -177,7 +177,6 @@ class LoungeTurnResponse(StrictBaseModel):
 
     @model_validator(mode="after")
     def enforce_all_invariants(self, info: ValidationInfo) -> "LoungeTurnResponse":
-        # Mandatory Trusted Runtime Context Enforcement (Note 5)
         if not isinstance(info.context, dict):
             raise ValueError("Trusted ValidationInfo.context dict is required for LoungeTurnResponse validation.")
         ctx: Dict[str, Any] = info.context
@@ -279,12 +278,12 @@ class LoungeTurnResponse(StrictBaseModel):
 
         return self
 
-    # Compatibility properties for Telegram UI buttons & voice synthesis
+    # Full compatibility properties for app.py handlers, TTS, and DB logging
     @property
-    def best_line(self) -> str:
-        if self.strategy_playbook and self.strategy_playbook.strategic_options:
-            return self.strategy_playbook.strategic_options[0].spoken_line
-        return self.host_turns[0].text if self.host_turns else ""
+    def situation_summary(self) -> str:
+        if self.strategy_playbook:
+            return self.strategy_playbook.situation_objective
+        return ""
 
     @property
     def responding_persona(self) -> str:
@@ -295,15 +294,59 @@ class LoungeTurnResponse(StrictBaseModel):
         return " ".join(t.text for t in self.host_turns)
 
     @property
+    def best_line(self) -> str:
+        if self.strategy_playbook and len(self.strategy_playbook.strategic_options) >= 1:
+            return self.strategy_playbook.strategic_options[0].spoken_line
+        return self.host_turns[0].text if self.host_turns else ""
+
+    @property
+    def softer_alternative(self) -> str:
+        if self.strategy_playbook and len(self.strategy_playbook.strategic_options) >= 2:
+            return self.strategy_playbook.strategic_options[1].spoken_line
+        return ""
+
+    @property
+    def firmer_alternative(self) -> str:
+        if self.strategy_playbook and len(self.strategy_playbook.strategic_options) >= 3:
+            return self.strategy_playbook.strategic_options[2].spoken_line
+        return ""
+
+    @property
+    def arabic_equivalent(self) -> str:
+        if self.strategy_playbook and self.strategy_playbook.strategic_options:
+            return self.strategy_playbook.strategic_options[0].arabic_equivalent
+        return ""
+
+    @property
+    def why_it_works(self) -> str:
+        if self.strategy_playbook and self.strategy_playbook.strategic_options:
+            o1 = self.strategy_playbook.strategic_options[0]
+            return f"{o1.makes_explicit} Best fit when: {o1.best_fit_when}"
+        return ""
+
+    @property
+    def follow_up_line(self) -> str:
+        if self.strategy_playbook and self.strategy_playbook.follow_up_branches:
+            return self.strategy_playbook.follow_up_branches[0].your_follow_up_line
+        return ""
+
+    @property
     def lexical_upgrades(self) -> List[Any]:
+        class LegacyLexicalUpgrade(BaseModel):
+            chunk: str
+            b2_foil: str = ""
+            arabic_equivalent: str = ""
+            explanation: str = ""
+            example: str = ""
+
         out = []
         for it in self.lexical_items:
-            out.append(SimpleNamespace(
+            out.append(LegacyLexicalUpgrade(
                 chunk=it.expression,
-                b2_foil="",
+                b2_foil=it.register_and_usage,
                 arabic_equivalent=it.arabic_equivalent,
-                explanation=f"{it.core_lexical_meaning} ({it.contextual_function})",
-                example=it.full_sentence_citation or it.contrastive_note or ""
+                explanation=f"{it.core_lexical_meaning} — {it.contextual_function}",
+                example=it.full_sentence_citation or it.contrastive_note or it.expression
             ))
         return out
 

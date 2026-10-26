@@ -1025,7 +1025,7 @@ class NYCLoungeAI:
         audio_bytes: Optional[bytes] = None,
         audio_mime: str = "audio/ogg"
     ) -> Any:
-        from validation_layer import LoungeTurnResponse, count_spoken_words
+        from validation_layer import LoungeTurnResponse
         pref_reg = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
         if pref_reg not in REGISTERS_MAP:
             pref_reg = "articulate"
@@ -1040,46 +1040,144 @@ class NYCLoungeAI:
             "runtime_has_audio_bytes": has_audio,
         }
 
+        json_template_example = {
+            "active_mode": "situation_strategy",
+            "learner_input_text": clean_user_text,
+            "input_intent_type": "request_for_new_phrasing",
+            "learner_diagnosis": "already_natural",
+            "show_diagnostic_mirror": False,
+            "diagnostic_mirror": None,
+            "subtext_analysis": None,
+            "pronunciation_guide": None,
+            "host_turns": [
+                {"turn_id": "turn_1", "speaker": "marcus", "text": "..."},
+                {"turn_id": "turn_2", "speaker": "chloe", "text": "..."}
+            ],
+            "strategy_playbook": {
+                "situation_objective": "...",
+                "relationship_constraints": "...",
+                "strategic_options": [
+                    {
+                        "option_id": "option_1",
+                        "archetype": "Diplomatic",
+                        "spoken_line": "12 to 22 words ending with . or ?",
+                        "arabic_equivalent": "...",
+                        "makes_explicit": "...",
+                        "leaves_implicit": "...",
+                        "remaining_risk": "...",
+                        "best_fit_when": "..."
+                    },
+                    {
+                        "option_id": "option_2",
+                        "archetype": "Assertive",
+                        "spoken_line": "12 to 22 words ending with . or ?",
+                        "arabic_equivalent": "...",
+                        "makes_explicit": "...",
+                        "leaves_implicit": "...",
+                        "remaining_risk": "...",
+                        "best_fit_when": "..."
+                    },
+                    {
+                        "option_id": "option_3",
+                        "archetype": "Concise",
+                        "spoken_line": "12 to 22 words ending with . or ?",
+                        "arabic_equivalent": "...",
+                        "makes_explicit": "...",
+                        "leaves_implicit": "...",
+                        "remaining_risk": "...",
+                        "best_fit_when": "..."
+                    }
+                ],
+                "follow_up_branches": [
+                    {
+                        "reaction_type": "Deflection or Minimization",
+                        "their_likely_reply": "...",
+                        "your_follow_up_line": "...",
+                        "tactical_note": "..."
+                    },
+                    {
+                        "reaction_type": "Pushback or Defensiveness",
+                        "their_likely_reply": "...",
+                        "your_follow_up_line": "...",
+                        "tactical_note": "..."
+                    },
+                    {
+                        "reaction_type": "Agreement or Cooperation",
+                        "their_likely_reply": "...",
+                        "your_follow_up_line": "...",
+                        "tactical_note": "..."
+                    }
+                ],
+                "when_to_let_it_go": "..."
+            },
+            "lexical_items": [
+                {
+                    "expression": "exact contiguous phrase from option_1",
+                    "source_type": "from_recommended_option",
+                    "source_ref_id": "option_1",
+                    "source_speaker": None,
+                    "full_sentence_citation": "EXACT full spoken_line of option_1 copied character-for-character.",
+                    "usage_status_label": "Used in Strategic Option 1 (Diplomatic)",
+                    "core_lexical_meaning": "...",
+                    "contextual_function": "...",
+                    "register_and_usage": "...",
+                    "arabic_equivalent": "...",
+                    "contrastive_note": None
+                },
+                {
+                    "expression": "exact contiguous phrase from option_3",
+                    "source_type": "from_recommended_option",
+                    "source_ref_id": "option_3",
+                    "source_speaker": None,
+                    "full_sentence_citation": "EXACT full spoken_line of option_3 copied character-for-character.",
+                    "usage_status_label": "Used in Strategic Option 3 (Concise)",
+                    "core_lexical_meaning": "...",
+                    "contextual_function": "...",
+                    "register_and_usage": "...",
+                    "arabic_equivalent": "...",
+                    "contrastive_note": None
+                },
+                {
+                    "expression": "related contrasting expression",
+                    "source_type": "related_extension",
+                    "source_ref_id": None,
+                    "source_speaker": None,
+                    "full_sentence_citation": None,
+                    "usage_status_label": "Related extension — not used in the cited response",
+                    "core_lexical_meaning": "...",
+                    "contextual_function": "...",
+                    "register_and_usage": "...",
+                    "arabic_equivalent": "...",
+                    "contrastive_note": "Explain how this differs from the expression in option_1 or option_3."
+                }
+            ]
+        }
+
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
             f"ACTIVE ENGINE: CONVERSATION STRATEGIES & WORKPLACE SOFT SKILLS (`situation_strategy`)\n"
             f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
+            "Return ONLY a valid JSON object matching this exact structure (no extra keys allowed):\n"
+            f"{json.dumps(json_template_example, ensure_ascii=False, indent=2)}\n\n"
             "MANDATORY SCHEMA & EPISTEMIC RULES (ENFORCED BY PYDANTIC v2 VALIDATOR):\n"
-            f"1. EXACT ECHO OF CONTEXT:\n"
-            f"   - Set `active_mode` = \"situation_strategy\".\n"
-            f"   - Set `learner_input_text` = {json.dumps(clean_user_text)} (must match character-for-character).\n"
-            "   - Set `input_intent_type` = \"request_for_new_phrasing\" (unless the user explicitly asked to evaluate a draft they wrote).\n"
-            "   - If the user's question is already natural English, set `learner_diagnosis` = \"already_natural\", `show_diagnostic_mirror` = false, and `diagnostic_mirror` = null.\n"
-            "   - Leave `subtext_analysis` = null and `pronunciation_guide` = null.\n\n"
-            "2. ZERO FABRICATION OF UNSTATED FACTS (CRITICAL):\n"
-            "   - NEVER invent unverified technical components (do NOT mention payment flows, APIs, databases, or specific tools like 'custom export tool' unless the user mentioned them).\n"
-            "   - NEVER invent unverified time estimates or release names (do NOT invent 'two weeks', 'Phase 2', or 'week-two update' unless the user stated them).\n"
-            "   - NEVER open a boundary-setting line with an unconditional promise (avoid starting with 'We can add all three features...'); instead, tie any scope addition conditionally to deferring existing work, narrowing scope, or adjusting the timeline.\n"
-            "   - NEVER guarantee that deferring one item will automatically free up enough capacity before engineering reviews the effort.\n\n"
-            "3. HOST TURNS (`host_turns` — 2 TO 3 TURNS):\n"
-            "   - Sequential `turn_id`: \"turn_1\", \"turn_2\" (and optional \"turn_3\").\n"
-            "   - Marcus and Chloe react to each other naturally, explaining the strategic principle without lecturing or inventing facts.\n\n"
-            "4. THREE STRATEGIC OPTIONS (`strategy_playbook.strategic_options`):\n"
-            "   - Must be 3 items mapped strictly in this exact order:\n"
-            "     * `option_1` -> `archetype`: \"Diplomatic\" (prioritizes rapport and collaborative prioritization)\n"
-            "     * `option_2` -> `archetype`: \"Assertive\" (states the scope/time/resource constraint explicitly without an upfront unconditional promise)\n"
-            "     * `option_3` -> `archetype`: \"Concise\" (crisp, conditional trade-off for a fast-moving meeting)\n"
-            "   - HARD WORD-COUNT RULE: Each `spoken_line` MUST be between 12 and 22 words (`12 <= words <= 22`) and end with `.` or `?`.\n"
-            "   - Populate `makes_explicit`, `leaves_implicit`, `remaining_risk`, `best_fit_when`, and accurate `arabic_equivalent`.\n\n"
-            "5. THREE FOLLOW-UP BRANCHES (`strategy_playbook.follow_up_branches`):\n"
-            "   - Must include all 3 `reaction_type` values: \"Deflection or Minimization\", \"Pushback or Defensiveness\", and \"Agreement or Cooperation\".\n"
-            "   - Every `your_follow_up_line` must respond directly to the client's reaction WITHOUT inventing technical modules, specific feature names, or unverified dates.\n\n"
-            "6. STRICT LEXICAL CITATIONS (`lexical_items` — 2 TO 3 ITEMS):\n"
-            "   - For `from_recommended_option`: set `source_ref_id` to \"option_1\", \"option_2\", or \"option_3\", set `source_speaker` = null, and copy the ENTIRE `spoken_line` of that option verbatim (character-for-character, including final `.` or `?`) into `full_sentence_citation`. The `expression` must appear as an unbroken contiguous phrase inside that sentence.\n"
-            "   - For `verbatim_from_host_dialogue`: set `source_ref_id` to \"turn_1\" or \"turn_2\", set `source_speaker` to that turn's speaker, and copy a complete sentence ending in `.!?` from that turn into `full_sentence_citation`.\n"
-            "   - For `related_extension`: set `source_ref_id` = null, `source_speaker` = null, `full_sentence_citation` = null, include the exact words \"not used\" inside `usage_status_label` (e.g., \"Related extension — not used in the cited response\"), and provide a clear `contrastive_note`."
+            f"1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}\n"
+            "2. ZERO FABRICATION OF UNSTATED FACTS:\n"
+            "   - Do NOT invent unverified technical components (no payment flows, APIs, or specific feature names like 'custom export tool').\n"
+            "   - Do NOT invent unverified durations or release names (no 'two weeks', 'Phase 2', or 'week-two update').\n"
+            "   - Do NOT open a boundary-setting line with an unconditional commitment; tie any scope addition conditionally to deferring existing items or adjusting the timeline.\n"
+            "   - Do NOT promise that deferring one item will automatically free up enough capacity before engineering checks it.\n"
+            "3. WORD COUNT: Each `spoken_line` in `strategic_options` MUST be a single sentence of 12 to 22 words (`12 <= words <= 22`) ending in `.` or `?`.\n"
+            "4. CITATIONS: For `from_recommended_option`, `full_sentence_citation` MUST be the exact, complete `spoken_line` of that `option_id`, and `expression` must appear inside it as an unbroken contiguous phrase."
         )
 
         last_err = None
+        models_to_try = [self.primary_model] + [m for m in self.fallback_models if m != self.primary_model]
+
         for attempt in range(3):
+            model_name = models_to_try[min(attempt, len(models_to_try) - 1)]
             prompt_suffix = ""
             if last_err:
-                prompt_suffix = f"\n\nPREVIOUS ATTEMPT FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error while keeping all zero-fabrication rules."
+                prompt_suffix = f"\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately."
 
             contents: List[Any] = []
             if audio_bytes:
@@ -1089,24 +1187,31 @@ class NYCLoungeAI:
                 contents.append(f"LEARNER SCENARIO:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}")
 
             try:
-                raw_obj: LoungeTurnResponse = self._call_structured(
+                resp = self.client.models.generate_content(
+                    model=model_name,
                     contents=contents,
-                    schema_cls=LoungeTurnResponse,
-                    system_instruction=system_prompt,
-                    temperature=0.35 if attempt == 0 else 0.2,
-                    max_output_tokens=4096
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=0.3 if attempt == 0 else 0.15,
+                        response_mime_type="application/json",
+                        max_output_tokens=4096,
+                    ),
                 )
-                payload_dict = raw_obj.model_dump() if hasattr(raw_obj, "model_dump") else dict(raw_obj)
+                raw_text = (resp.text or "").strip()
+                if raw_text.startswith("```"):
+                    raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
+                payload_dict = json.loads(raw_text)
                 # Enforce strict validation with trusted out-of-band Telegram context!
                 validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
                     payload_dict,
                     context=trusted_context
                 )
-                logger.info(f"✅ LoungeTurnResponse Pydantic Validation PASSED on attempt {attempt+1}!")
+                validated._validation_meta = f"PASSED on live Gemini call (model={model_name}, attempt={attempt+1})"
+                logger.info(f"✅ LoungeTurnResponse Pydantic Validation PASSED on attempt {attempt+1} ({model_name})!")
                 return validated
             except Exception as e:
                 last_err = str(e)
-                logger.warning(f"LoungeTurnResponse validation attempt {attempt+1} failed: {last_err}")
+                logger.warning(f"LoungeTurnResponse live attempt {attempt+1} ({model_name}) failed: {last_err}")
 
         # Deterministic fallback that still runs through LoungeTurnResponse.model_validate(..., context=trusted_context)
         fallback_payload = {
@@ -1116,6 +1221,8 @@ class NYCLoungeAI:
             "learner_diagnosis": "already_natural",
             "show_diagnostic_mirror": False,
             "diagnostic_mirror": None,
+            "subtext_analysis": None,
+            "pronunciation_guide": None,
             "host_turns": [
                 {"turn_id": "turn_1", "speaker": "marcus", "text": "The cleanest move is to frame this as a scope-versus-schedule trade-off rather than a refusal."},
                 {"turn_id": "turn_2", "speaker": "chloe", "text": "Right—when you ask them how they want to prioritize the current scope, you stay helpful while protecting Friday's deadline."}
@@ -1130,7 +1237,7 @@ class NYCLoungeAI:
                         "spoken_line": "To keep our launch date intact, which existing items should we defer so we can prioritize these by Friday?",
                         "arabic_equivalent": "للحفاظ على موعد الإطلاق كما هو، ما العناصر الحالية التي ينبغي تأجيلها لكي نمنح الأولوية لهذه الميزات بحلول الجمعة؟",
                         "makes_explicit": "Adding new work by Friday requires deferring existing items if the launch date cannot move.",
-                        "leaves_implicit": "How much existing work must be deferred until engineering estimates the तीन features.",
+                        "leaves_implicit": "How much existing work must be deferred until engineering estimates the three features.",
                         "remaining_risk": "The client may insist that all current items and the three new features are equally urgent.",
                         "best_fit_when": "You want to sound collaborative and invite the client to co-own the prioritization trade-off."
                     },
@@ -1141,7 +1248,7 @@ class NYCLoungeAI:
                         "arabic_equivalent": "سيتطلب تسليم ثلاث ميزات إضافية بحلول الجمعة إما تعديل نطاق العمل الحالي أو تحريك موعد الإطلاق.",
                         "makes_explicit": "The operational constraint that three additional features cannot be absorbed into Friday's schedule without a trade-off.",
                         "leaves_implicit": "Internal staffing details—it focuses strictly on delivery options.",
-                        "remaining_risk": "More direct; a pressured client may ask why the team cannot work overtime.",
+                        "remaining_risk": "More direct; a pressured client may ask why the team cannot absorb the extra work.",
                         "best_fit_when": "You need to state a firm, unmistakable boundary without sounding defensive."
                     },
                     {
@@ -1165,17 +1272,17 @@ class NYCLoungeAI:
                     {
                         "reaction_type": "Pushback or Defensiveness",
                         "their_likely_reply": "We really need all three features by Friday and the launch date cannot move.",
-                        "your_follow_up_line": "We can protect the launch date for the core release and consider scheduling these three features for a follow-up release once we confirm the plan.",
-                        "tactical_note": "Protect the core launch date while proposing a follow-up release conditionally."
+                        "your_follow_up_line": "We can protect the launch date for the core release and consider moving these three features to a later release, subject to confirming the plan and timeline.",
+                        "tactical_note": "Protect the core launch date while proposing a later release conditionally."
                     },
                     {
                         "reaction_type": "Agreement or Cooperation",
                         "their_likely_reply": "Fair enough—what if we defer part of the current list?",
-                        "your_follow_up_line": "Let's identify which current items can wait, then confirm with the team how much of the new work fits by Friday.",
-                        "tactical_note": "Avoid promising all three features fit by Friday before checking capacity with the team."
+                        "your_follow_up_line": "Let's identify which current items can wait, then confirm with engineering whether that frees up enough capacity by Friday.",
+                        "tactical_note": "Avoid promising all three features fit by Friday before checking capacity with engineering."
                     }
                 ],
-                "when_to_let_it_go": "If the client refuses both trade-offs, do not commit on the spot; offer to review capacity with the team and follow up in writing."
+                "when_to_let_it_go": "If the client refuses both trade-offs, do not commit on the spot; offer to review capacity with engineering and follow up in writing."
             },
             "lexical_items": [
                 {
@@ -1217,7 +1324,9 @@ class NYCLoungeAI:
                 }
             ]
         }
-        return LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
+        val_fb = LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
+        val_fb._validation_meta = f"PASSED via deterministic fallback (live err: {last_err})"
+        return val_fb
 
     def _raw_process_lounge_turn(
         self,
