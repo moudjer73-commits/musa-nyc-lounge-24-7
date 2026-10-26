@@ -296,7 +296,7 @@ def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> s
 
     lines.append(
         "\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"✅ <b>Pydantic v2 Log:</b> <code>PASSED (LoungeTurnResponse | mode={_e(d_res.active_mode)} [submode=devils_advocate] | "
+        f"✅ <b>Pydantic v2 Log:</b> <code>PASSED (LoungeTurnResponse | mode={_e(d_res.active_mode)} [submode={"subtext_decoder" if d_res.active_mode == "subtext_decoder" else "devils_advocate"}] | "
         f"diagnosis={_e(d_res.learner_diagnosis)} | mirror={_e(d_res.show_diagnostic_mirror)} | "
         f"{len(d_res.host_turns)} host_turns | {len(d_res.lexical_items)} citations verified)</code>"
     )
@@ -1595,7 +1595,7 @@ if bot:
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
-            if mode == "devils_advocate" or any(k in text.lower() for k in ("[devil", "devil's advocate:")):
+            if mode in ("devils_advocate", "subtext", "subtext_decoder") or any(k in text.lower() for k in ("[devil", "devil's advocate:")):
                 d_res = ai_engine.process_devils_advocate(user=user, user_text=text)
                 db.append_history(uid, "user", f"[Devil's Advocate]: {text}")
                 db.append_history(uid, "assistant", d_res.host_commentary)

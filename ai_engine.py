@@ -1351,6 +1351,205 @@ class NYCLoungeAI:
         }
         return LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
 
+    def process_subtext_decoder(
+        self,
+        user: Dict[str, Any],
+        user_text: str = '',
+        audio_bytes: Optional[bytes] = None,
+        audio_mime: str = 'audio/ogg'
+    ) -> Any:
+        from validation_layer import LoungeTurnResponse
+        try:
+            pref_reg = user['preferred_register'] if (user and 'preferred_register' in user and user['preferred_register']) else 'articulate'
+        except Exception:
+            pref_reg = 'articulate'
+        if pref_reg not in REGISTERS_MAP:
+            pref_reg = 'articulate'
+        vibe_badge = REGISTERS_MAP[pref_reg]
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, '')
+
+        clean_user_text = (user_text or '').strip() or 'Utterance submitted.'
+        has_audio = bool(audio_bytes)
+        trusted_context = {
+            'active_mode': 'subtext_decoder',
+            'learner_input_text': clean_user_text,
+            'runtime_has_audio_bytes': has_audio,
+        }
+
+        json_template_example = {
+            'active_mode': 'subtext_decoder',
+            'learner_input_text': clean_user_text,
+            'input_intent_type': 'general_conversation_or_question',
+            'learner_diagnosis': 'already_natural',
+            'show_diagnostic_mirror': False,
+            'diagnostic_mirror': None,
+            'subtext_analysis': {
+                'target_utterance': clean_user_text,
+                'literal_surface_meaning': 'Clear explanation of what the words mean on the surface.',
+                'actual_pragmatic_intent': 'Calibrated breakdown of the distinct implied meanings this utterance can carry depending on context and relationship (using probabilistic phrasing like may, can, often signals when context is open).',
+                'tone_and_social_signal': 'How vocal delivery (pitch, stress, warmth vs. flatness) and situational context shift the interpretation across scenarios.',
+                'arabic_pragmatic_explanation': 'Natural Arabic explanation of the literal meaning vs. the shifting pragmatic subtexts across contexts.',
+                'escalation_ladder': [
+                    {
+                        'escalation_id': 'level_1',
+                        'intensity_label': 'Context 1 — Sincere / Warm / Neutral Reading',
+                        'spoken_line': 'Natural American mini-exchange or line (4 to 28 words) where the utterance carries a genuine, warm, or neutral meaning.',
+                        'social_effect': 'How it lands socially in this sincere/neutral context.',
+                        'arabic_nuance': 'المعنى المقصود والنبرة في هذا السياق الأول'
+                    },
+                    {
+                        'escalation_id': 'level_2',
+                        'intensity_label': 'Context 2 — Wistful / Hedged / Mildly Envious or Skeptical Reading',
+                        'spoken_line': 'Natural American mini-exchange or line (4 to 28 words) showing a wistful, envious, or politely skeptical meaning.',
+                        'social_effect': 'How it lands socially in this second context.',
+                        'arabic_nuance': 'المعنى الضمني والنبرة في هذا السياق الثاني'
+                    },
+                    {
+                        'escalation_id': 'level_3',
+                        'intensity_label': 'Context 3 — Dry / Pointed / Sarcastic or Passive-Aggressive Reading',
+                        'spoken_line': 'Natural American mini-exchange or line (4 to 28 words) showing a dry, sarcastic, or resentful meaning.',
+                        'social_effect': 'How it lands socially in this third context.',
+                        'arabic_nuance': 'المعنى المبطن والنبرة في هذا السياق الثالث'
+                    }
+                ]
+            },
+            'strategy_playbook': None,
+            'pronunciation_guide': None,
+            'host_turns': [
+                {
+                    'turn_id': 'turn_1',
+                    'speaker': 'marcus',
+                    'text': '2 natural spoken American sentences explaining how Americans actually hear this phrase and what vocal cues tip you off to the speaker real intent.'
+                },
+                {
+                    'turn_id': 'turn_2',
+                    'speaker': 'chloe',
+                    'text': '2 natural spoken American sentences showing how to reply smoothly when someone drops this line on you, plus a quick situational question for the learner.'
+                }
+            ],
+            'lexical_items': [
+                {
+                    'expression': 'reusable canonical base pattern from turn_1 (replace context nouns with [something] or [someone])',
+                    'source_type': 'verbatim_from_host_dialogue',
+                    'source_ref_id': 'turn_1',
+                    'source_speaker': 'marcus',
+                    'full_sentence_citation': 'EXACT single complete sentence from turn_1 ending in .!? containing expression.',
+                    'usage_status_label': 'Verbatim from Marcus (turn_1)',
+                    'core_lexical_meaning': 'Accurate, calibrated definition.',
+                    'contextual_function': 'Pragmatic function: what the speaker is doing socially with this expression.',
+                    'register_and_usage': 'Register & constraints: when it sounds natural vs. out of place.',
+                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent conveying intent.',
+                    'contrastive_note': None
+                },
+                {
+                    'expression': 'reusable canonical base pattern from turn_2 (replace context nouns with [something] or [someone])',
+                    'source_type': 'verbatim_from_host_dialogue',
+                    'source_ref_id': 'turn_2',
+                    'source_speaker': 'chloe',
+                    'full_sentence_citation': 'EXACT single complete sentence from turn_2 ending in .!? containing expression.',
+                    'usage_status_label': 'Verbatim from Chloe (turn_2)',
+                    'core_lexical_meaning': 'Accurate, calibrated definition.',
+                    'contextual_function': 'Pragmatic function in context.',
+                    'register_and_usage': 'Register & constraints.',
+                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent conveying intent.',
+                    'contrastive_note': None
+                },
+                {
+                    'expression': 'related expression NOT used anywhere in turn_1 or turn_2',
+                    'source_type': 'related_extension',
+                    'source_ref_id': None,
+                    'source_speaker': None,
+                    'full_sentence_citation': None,
+                    'usage_status_label': 'Related extension — not used in the cited response',
+                    'core_lexical_meaning': 'Accurate definition.',
+                    'contextual_function': 'How it relates to decoding tone, subtext, or indirect speech.',
+                    'register_and_usage': 'Register & constraints.',
+                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent ONLY.',
+                    'contrastive_note': 'Precise contrast with expression 1 or 2.'
+                }
+            ]
+        }
+
+        rules_list = [
+            f'{CORE_NYC_PERSONA_PROMPT}',
+            'ACTIVE ENGINE: SUBTEXT & NUANCE DECODER (`active_mode=subtext_decoder`)',
+            f'TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}',
+            'Return ONLY a valid JSON object matching this exact structure (no extra keys allowed):',
+            json.dumps(json_template_example, ensure_ascii=False, indent=2),
+            'GENERAL SUBTEXT & PRAGMATIC ANALYSIS RULES (ZERO BIAS):',
+            f'1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}',
+            '2. DECODE THE PHRASE — DO NOT ROLEPLAY AS IF THE LEARNER IS ATTACKING YOU: The learner is submitting an English phrase or scenario to have its subtext decoded. Do NOT react as if the learner is insulting you personally.',
+            '3. LITERAL VS. IMPLIED MEANING & CONTEXT SENSITIVITY:',
+            '   - Clearly state the literal surface meaning first.',
+            '   - When the phrase is submitted without a narrow context, do NOT force a single interpretation! Explain the full spectrum of implied meanings it can carry across different situations and relationships (e.g., sincere admiration/approval vs. wistful envy/reservation vs. dry sarcasm/resentment).',
+            '   - If the learner supplies a specific context, analyze that exact context first and explain how the meaning would shift in a contrasting context.',
+            '4. EPISTEMIC CALIBRATION: Use calibrated probabilistic language ("can mean", "often signals", "depending on delivery, it may express...") rather than claiming certainty about a speaker\'s hidden intent.',
+            '5. ESCALATION LADDER (`level_1`, `level_2`, `level_3`): Show 3 natural American spoken examples (each `spoken_line` MUST be 4 to 28 words) demonstrating how the exact phrase lands in 3 distinct contexts/tones, with accurate Arabic pragmatic explanations.',
+            '6. NATURAL SPOKEN DIALOGUE & LEXICAL FRAMES: Marcus and Chloe must sound like natural Americans talking in person (avoid clichés like "Let us unpack" or "shots fired"). Extract reusable canonical patterns (`[something]`/`[someone]`) from `turn_1` and `turn_2`.',
+        ]
+        system_prompt = '\n\n'.join(rules_list)
+
+        last_err = None
+        now = time.time()
+        dead_keys = getattr(self, '_dead_keys_until', {})
+        if not hasattr(self, '_dead_key_models_until'):
+            self._dead_key_models_until = {}
+        healthy_key_indices = [i for i in range(len(self.keys_pool)) if dead_keys.get(i, 0) < now]
+        if not healthy_key_indices and self.keys_pool:
+            healthy_key_indices = list(range(len(self.keys_pool)))
+
+        tries_done = 0
+        for k_idx in healthy_key_indices[:3]:
+            key = self.keys_pool[k_idx]
+            client = genai.Client(api_key=key, http_options={'timeout': 25000})
+            models_to_try = self._get_active_models(client, k_idx=k_idx)
+            for model_name in models_to_try:
+                if self._dead_models_until.get(model_name, 0) >= time.time():
+                    continue
+                if self._dead_key_models_until.get((k_idx, model_name), 0) >= time.time():
+                    continue
+                tries_done += 1
+                prompt_suffix = ''
+                if last_err:
+                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately.'
+                contents: List[Any] = [
+                    f'UTTERANCE OR SCENARIO TO DECODE FOR SUBTEXT & NUANCE:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}'
+                ]
+                try:
+                    resp = client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            temperature=0.25 if tries_done == 1 else 0.15,
+                            response_mime_type='application/json',
+                            max_output_tokens=4096,
+                        ),
+                    )
+                    raw_text = (getattr(resp, 'text', '') or '').strip()
+                    if raw_text.startswith('```'):
+                        raw_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_text, flags=re.DOTALL).strip()
+                    payload_dict = json.loads(raw_text)
+                    validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
+                        payload_dict,
+                        context=trusted_context
+                    )
+                    logger.info(f'✅ Subtext Decoder LIVE Validation PASSED on try {tries_done} ({model_name})!')
+                    return validated
+                except Exception as e:
+                    err_str = str(e)
+                    last_err = err_str
+                    logger.warning(f'Subtext Decoder live try {tries_done} ({model_name}) failed: {err_str[:220]}')
+                    if '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
+                        self._dead_key_models_until[(k_idx, model_name)] = time.time() + 65
+                    elif '404' in err_str or 'NOT_FOUND' in err_str:
+                        self._dead_models_until[model_name] = time.time() + 86400
+                if tries_done >= 6:
+                    break
+            if tries_done >= 6:
+                break
+        raise RuntimeError(f'Subtext Decoder live generation failed after {tries_done} tries: {last_err}')
+
     def process_devils_advocate(
         self,
         user: Dict[str, Any],
