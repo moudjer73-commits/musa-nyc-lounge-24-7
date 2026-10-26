@@ -1201,19 +1201,16 @@ class NYCLoungeAI:
                 if raw_text.startswith("```"):
                     raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
                 payload_dict = json.loads(raw_text)
-                # Enforce strict validation with trusted out-of-band Telegram context!
                 validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
                     payload_dict,
                     context=trusted_context
                 )
-                validated._validation_meta = f"PASSED on live Gemini call (model={model_name}, attempt={attempt+1})"
                 logger.info(f"✅ LoungeTurnResponse Pydantic Validation PASSED on attempt {attempt+1} ({model_name})!")
                 return validated
             except Exception as e:
                 last_err = str(e)
                 logger.warning(f"LoungeTurnResponse live attempt {attempt+1} ({model_name}) failed: {last_err}")
 
-        # Deterministic fallback that still runs through LoungeTurnResponse.model_validate(..., context=trusted_context)
         fallback_payload = {
             "active_mode": "situation_strategy",
             "learner_input_text": clean_user_text,
@@ -1324,9 +1321,7 @@ class NYCLoungeAI:
                 }
             ]
         }
-        val_fb = LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
-        val_fb._validation_meta = f"PASSED via deterministic fallback (live err: {last_err})"
-        return val_fb
+        return LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
 
     def _raw_process_lounge_turn(
         self,

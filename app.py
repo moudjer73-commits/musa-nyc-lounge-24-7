@@ -239,7 +239,6 @@ def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> 
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
 
-    # إذا كان المخرج من طبقة التحقق الجديدة LoungeTurnResponse
     if hasattr(g_res, "strategy_playbook") and g_res.strategy_playbook is not None:
         pb = g_res.strategy_playbook
         lines = [
@@ -308,7 +307,6 @@ def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> 
         )
         return "\n".join(lines)
 
-    # Fallback compatibility
     return f"⚡ <b>What to Say When...</b>\n{_e(getattr(g_res, 'best_line', ''))}"
 
 

@@ -1,6 +1,5 @@
 import re
 import unittest
-from types import SimpleNamespace
 from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, model_validator
 
@@ -45,6 +44,13 @@ def verify_contiguous_expression_in_sentence(expression: str, sentence: str) -> 
 
 class StrictBaseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+class LegacyLexicalUpgrade(BaseModel):
+    chunk: str
+    b2_foil: str = ""
+    arabic_equivalent: str = ""
+    explanation: str = ""
+    example: str = ""
 
 ActiveModeType = Literal["banter", "subtext_decoder", "situation_strategy", "pronunciation_guide"]
 InputIntentType = Literal["request_for_new_phrasing", "submitted_draft_for_evaluation", "general_conversation_or_question"]
@@ -278,12 +284,9 @@ class LoungeTurnResponse(StrictBaseModel):
 
         return self
 
-    # Full compatibility properties for app.py handlers, TTS, and DB logging
     @property
     def situation_summary(self) -> str:
-        if self.strategy_playbook:
-            return self.strategy_playbook.situation_objective
-        return ""
+        return self.strategy_playbook.situation_objective if self.strategy_playbook else ""
 
     @property
     def responding_persona(self) -> str:
@@ -331,14 +334,7 @@ class LoungeTurnResponse(StrictBaseModel):
         return ""
 
     @property
-    def lexical_upgrades(self) -> List[Any]:
-        class LegacyLexicalUpgrade(BaseModel):
-            chunk: str
-            b2_foil: str = ""
-            arabic_equivalent: str = ""
-            explanation: str = ""
-            example: str = ""
-
+    def lexical_upgrades(self) -> List[LegacyLexicalUpgrade]:
         out = []
         for it in self.lexical_items:
             out.append(LegacyLexicalUpgrade(
@@ -350,10 +346,6 @@ class LoungeTurnResponse(StrictBaseModel):
             ))
         return out
 
-
-# =====================================================================
-# 2. COMPLETE 25-TEST SUITE (WITH MANDATORY TRUSTED CONTEXT)
-# =====================================================================
 
 DEFAULT_LEARNER_TEXT = "Our client wants to add two new features to the app, but they don't want to adjust the launch date. What do I say in tomorrow's check-in to push back without sounding uncooperative?"
 
@@ -474,22 +466,19 @@ class TestLoungeValidationLayer(unittest.TestCase):
     def test_02_valid_submitted_draft_with_mirror_passes(self):
         txt = "Before we commit to this vendor, let's check their maintenance costs."
         payload = {
-            "active_mode": "banter",
-            "learner_input_text": txt,
-            "input_intent_type": "submitted_draft_for_evaluation",
-            "learner_diagnosis": "already_natural",
+            "active_mode": "banter", "learner_input_text": txt,
+            "input_intent_type": "submitted_draft_for_evaluation", "learner_diagnosis": "already_natural",
             "show_diagnostic_mirror": True,
             "diagnostic_mirror": {"primary_issue_label": "already_natural", "explanation": "Natural.", "revised_version": None},
             "host_turns": [{"turn_id": "turn_1", "speaker": "marcus", "text": "That sounds completely natural for a vendor review."}],
             "lexical_items": [{
                 "expression": "commit to [something]", "source_type": "from_learner_input", "source_ref_id": "learner_input",
-                "full_sentence_citation": txt,
-                "usage_status_label": "From your draft", "core_lexical_meaning": "Bind oneself to an agreement.",
-                "contextual_function": "Locking in the contract.", "register_and_usage": "Professional.", "arabic_equivalent": "يلتزم بـ"
+                "full_sentence_citation": txt, "usage_status_label": "From your draft",
+                "core_lexical_meaning": "Bind oneself to an agreement.", "contextual_function": "Locking in the contract.",
+                "register_and_usage": "Professional.", "arabic_equivalent": "يلتزم بـ"
             }]
         }
-        model = LoungeTurnResponse.model_validate(payload, context=make_trusted_ctx("banter", txt, False))
-        self.assertTrue(model.show_diagnostic_mirror)
+        self.assertTrue(LoungeTurnResponse.model_validate(payload, context=make_trusted_ctx("banter", txt, False)).show_diagnostic_mirror)
 
     def test_03_invalid_submitted_draft_missing_mirror_fails(self):
         payload = make_valid_strategy_payload()
@@ -684,7 +673,6 @@ class TestLoungeValidationLayer(unittest.TestCase):
         self.assertIn("must strictly map", str(ctx.exception))
 
     def test_24_new_pronunciation_audio_provided_true_when_trusted_context_has_audio_passes(self):
-        """ChatGPT Pre-Test Note 3: Positive test proving audio_provided=True succeeds when runtime_has_audio_bytes=True."""
         txt = "How do I pronounce itinerary?"
         payload = {
             "active_mode": "pronunciation_guide", "learner_input_text": txt,
@@ -701,7 +689,6 @@ class TestLoungeValidationLayer(unittest.TestCase):
         self.assertTrue(model.pronunciation_guide.audio_provided)
 
     def test_25_new_missing_trusted_context_keys_fails(self):
-        """ChatGPT Pre-Test Note 5: Validation without complete trusted context dict must fail."""
         payload = make_valid_strategy_payload()
         with self.assertRaises(ValidationError) as ctx:
             LoungeTurnResponse.model_validate(payload, context={"runtime_has_audio_bytes": False})
