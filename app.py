@@ -233,8 +233,22 @@ def format_lounge_turn_html(
 
 
 def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> str:
-    def _e(v: Any) -> str:
-        return html.escape(str(v or ""), quote=False)
+    def _clean_meta(text: Any) -> str:
+        s = str(text or "")
+        replacements = [
+            (r"\bbest_line\b", "Option 1"),
+            (r"\bbest_instinctive_line\b", "Option 1"),
+            (r"\bsofter_alternative\b", "Option 2"),
+            (r"\bsofter_option\b", "Option 2"),
+            (r"\bfirmer_alternative\b", "Option 3"),
+            (r"\bfirmer_option\b", "Option 3"),
+            (r"\bsituation_summary\b", "the diagnosis"),
+            (r"\bfollow_up_line\b", "the follow-up line"),
+        ]
+        for pat, rep in replacements:
+            s = re.sub(pat, rep, s, flags=re.IGNORECASE)
+        return html.escape(s, quote=False)
+
     LRM = "\u200e"
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     sit_sum = getattr(g_res, "situation_summary", "") or getattr(g_res, "situation_read", "")
@@ -249,28 +263,28 @@ def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> 
     lines = [
         f"⚡ <b>What to Say When... ({vibe_label})</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"🎯 <b>Situation Diagnosis:</b> {_e(sit_sum)}\n",
-        f"👩🏼‍💼 <b>Chloe:</b> {_e(host_comm)}\n",
-        f"1️⃣ <b>Diplomatic & Natural (Best Default):</b>\n<code>{_e(best_l)}</code>\n",
-        f"2️⃣ <b>Assertive & Ownership-First:</b>\n<code>{_e(softer_l)}</code>\n",
-        f"3️⃣ <b>Concise & Direct (Fast-Moving Room):</b>\n<code>{_e(firmer_l)}</code>\n",
-        f"• 🇸🇦 <b>Arabic Meaning (Option 1):</b> {_e(ar_eq)}",
-        f"• 💡 <b>Why It Works & Tactical Trade-Off:</b> {_e(why_w)}",
-        f"• 🔄 <b>If They Push Back:</b> <i>\"{_e(f_up)}\"</i>",
+        f"🎯 <b>Situation Diagnosis:</b> {_clean_meta(sit_sum)}\n",
+        f"👩🏼‍💼 <b>Chloe:</b> {_clean_meta(host_comm)}\n",
+        f"1️⃣ <b>Diplomatic & Natural (Best Default):</b>\n<code>{_clean_meta(best_l)}</code>\n",
+        f"2️⃣ <b>Strategic & Collaborative:</b>\n<code>{_clean_meta(softer_l)}</code>\n",
+        f"3️⃣ <b>Concise & Direct (Fast-Moving Room):</b>\n<code>{_clean_meta(firmer_l)}</code>\n",
+        f"• 🇸🇦 <b>Arabic Meaning (Option 1):</b> {_clean_meta(ar_eq)}",
+        f"• 💡 <b>Why It Works & Tactical Trade-Off:</b> {_clean_meta(why_w)}",
+        f"• 🔄 <b>If They Push Back:</b> <i>\"{_clean_meta(f_up)}\"</i>",
     ]
     upgrades = getattr(g_res, "lexical_upgrades", None) or []
     if upgrades:
         lines.append("\n💎 <b>Steal These Expressions (Tap ⭐ Save 1/2/3):</b>")
         for idx, up in enumerate(upgrades[:3], start=1):
             foil = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
-            foil_part = f" (instead of: <i>{_e(foil)}</i>)" if foil else ""
-            up_ar = getattr(up, "arabic_equivalent", "").strip()
-            expl = getattr(up, "explanation", "").strip()
+            foil_part = f" (instead of: <i>{_clean_meta(foil)}</i>)" if foil else ""
+            up_ar = _clean_meta(getattr(up, "arabic_equivalent", "").strip())
+            expl = _clean_meta(getattr(up, "explanation", "").strip())
             note_txt = f"{up_ar}{LRM} — {LRM}{expl}" if (up_ar and expl and up_ar not in expl) else (up_ar or expl)
-            expl_part = f"\n{LRM}  └ 💡 {_e(note_txt)}" if note_txt else ""
+            expl_part = f"\n{LRM}  └ 💡 {note_txt}" if note_txt else ""
             lines.append(
-                f"{LRM}<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
-                f"{LRM}  └ 🗽 <i>\"{_e(up.example)}\"</i>"
+                f"{LRM}<b>({idx})</b> <code>{_clean_meta(up.chunk)}</code>{foil_part}{expl_part}\n"
+                f"{LRM}  └ 🗽 <i>\"{_clean_meta(up.example)}\"</i>"
             )
     return "\n".join(lines)
 

@@ -699,22 +699,23 @@ class NYCLoungeAI:
             )
         if mode in ("subtext_decoder", "subtext", "cultural_decode"):
             return (
-                "CURRENT ROOM: 🕵️‍♂️ SUBTEXT & NUANCE DECODER (PROBABILISTIC PRAGMATIC CALIBRATION).\n"
-                "- CRITICAL PRAGMATIC RULE: NEVER replace ambiguity with cynical certainty! Do NOT state as established fact that an idea is 'dead on arrival' or that someone is 'lying' or 'hoping you let it fade away' without evidence.\n"
-                "- Instead, distinguish clearly between:\n"
-                "  1) What the utterance explicitly communicates on the surface.\n"
-                "  2) What it plausibly implicates (weighing the probability of a polite corporate brush-off / soft 'no' VS. a genuine capacity/timing constraint or caution about risk).\n"
-                "  3) What concrete evidence or diagnostic follow-up question will reveal their true stance.\n"
-                "- HOW THE 3 HOSTS RESPOND IN `chat_turns`:\n"
-                "  * Marcus lays out the realistic spectrum: he notes that phrases like 'bold direction' and 'put a pin in that' often function as a soft deferral or polite distance, while acknowledging it can also reflect genuine bandwidth or risk caution depending on tone and track record.\n"
-                "  * Chloe unpacks the exact linguistic softeners and gives a crisp, natural C1/C2 diagnostic reply Musa can use to test whether the hesitation is about timing or substance—without sounding pushy.\n"
-                "  * Jake gives grounded, realistic advice on how to follow up (without overclaiming that a follow-up 'forces' the manager to confess) and asks Musa a specific question about the room dynamics or how he wants to play his next move.\n"
-                "- VOCABULARY NOTES: Avoid categorical claims like 'always preferred over X'; explain register nuance and when an idiom sounds natural vs. overused."
+                "CURRENT ROOM: 🕵️‍♂️ SUBTEXT & NUANCE DECODER (HIGH-PRECISION PRAGMATIC CALIBRATION).\n"
+                "1. PROBABILISTIC INTERPRETATION (NO CYNICAL CERTAINTY OR OVERCONFIDENT PROMISES):\n"
+                "   - Distinguish clearly between: (a) literal surface meaning, (b) plausible subtext (polite deferral / hedging vs. genuine constraint), and (c) what follow-up evidence is needed.\n"
+                "   - NEVER overstate outcomes: if someone agrees to revisit a topic, call it 'an opening to revisit it'—NEVER call a polite 'sure' a 'green light' or guaranteed approval.\n"
+                "   - NATURAL LEXICON: Use natural pragmatic terms (polite deferral, soft brush-off, hedging); avoid contrived metaphors like 'corporate soft-shoe'.\n"
+                "2. HOW THE 3 HOSTS RESPOND IN `chat_turns`:\n"
+                "   - Marcus maps out the realistic interpretations (weighing polite distance vs. genuine practical constraints based on context and track record).\n"
+                "   - Chloe unpacks the exact softening phrases and offers a composed, natural C1/C2 diagnostic reply that tests their true obstacle without sounding pushy.\n"
+                "   - Jake explains how to read their reaction to that follow-up (distinguishing a concrete next step from repeated postponement) and asks Musa how he wants to play his next move.\n"
+                "3. VOCABULARY SEMANTIC PRECISION (`lexical_upgrades`):\n"
+                "   - Extract 3 multi-word expressions verbatim from the hosts' turns.\n"
+                "   - SEPARATE LEXICAL MEANING FROM CONTEXTUAL INFERENCE: In `explanation`, first state what the expression conventionally means in English as a general phrase, and only then note how the host used it in this specific scenario. Never define a neutral phrase (like 'bold direction' or 'flag for later') as inherently negative or as guaranteeing an outcome."
             )
         if mode in ("situation_gambit", "say_it_right"):
             return (
                 "CURRENT ROOM: ⚡ WHAT TO SAY WHEN... (HIGH-STAKES PRAGMATICS & REAL-WORLD SITUATIONS).\n"
-                "- Deliver concise, natural lines optimized for live spoken delivery, not rehearsed coaching copy."
+                "- Deliver concise, natural lines optimized for live spoken delivery, with strict separation between conventional phrase meaning and contextual effect."
             )
         return (
             "CURRENT ROOM: 🗣️ NYC SPONTANEOUS BANTER.\n"
@@ -1033,25 +1034,22 @@ class NYCLoungeAI:
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
             f"ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... (Dedicated C1/C2 Situational Gambit Engine)\n"
             f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
-            "STRICT PRAGMATIC & SPOKEN-DELIVERY RULES (DO NOT VIOLATE):\n"
-            "1. NEUTRAL, PRECISE SITUATION DIAGNOSIS (`situation_summary`):\n"
-            "   - Describe the workplace/social dynamic accurately WITHOUT assuming malicious intent or misusing buzzwords.\n"
-            "   - BANNED WORDS/CONCEPTS: Never use 'micro-aggression', 'credit-theft', 'parenting the colleague', or 'signal you were the architect all along'.\n"
-            "   - GOOD EXAMPLE: \"You're dealing with a credit-taking situation—or at least a failure to acknowledge your earlier point. The goal is to establish the timeline and reclaim ownership without turning the meeting into a personal confrontation.\"\n\n"
-            "2. OPTIMIZE LINES FOR LIVE SPOKEN DELIVERY, NOT LITERARY POLISH:\n"
-            "   - Keep every spoken line concise (15–24 words max), natural, and easy to deliver in a fast-moving room.\n"
-            "   - NO FAKE ENTHUSIASM OR PASSIVE-AGGRESSIVE SNARK: Never use 'I'm thrilled', 'I'm delighted', or subtly sarcastic openers like 'I'm glad you circled back to that'.\n"
-            "   - THE WINNING MECHANISM: Explicitly anchor prior ownership in plain, natural English, then immediately pivot to advancing the next step.\n\n"
-            "3. REQUIRE TACTICAL DIFFERENTIATION ACROSS THE 3 LINES:\n"
-            "   - `best_line` (1️⃣ Diplomatic & Natural — Best Default): Explicitly establishes prior ownership, briefly aligns, and redirects attention to your next step (e.g., \"Right, that's the point I raised a few minutes ago. Glad we're aligned—I'd suggest we take it a step further by mapping out the rollout.\").\n"
-            "   - `softer_alternative` (2️⃣ Assertive & Ownership-First): Claims the earlier idea unmistakably and drives the agenda forward without accusing the colleague (e.g., \"Exactly—that builds on the idea I brought up earlier. The next step is figuring out how this impacts our Q3 timeline.\").\n"
-            "   - `firmer_alternative` (3️⃣ Concise & Direct — Fast-Moving Meeting Cut): Short, crisp, zero-fluff intervention for a fast room (e.g., \"Yes, that's what I was suggesting earlier. To move this forward, I think we should focus next on the execution phases.\").\n\n"
-            "4. DIRECT COACHING & TRADE-OFFS (`host_commentary` & `why_it_works`):\n"
-            "   - In `host_commentary`, have Chloe speak like a real, grounded American colleague (no 'architect all along' metaphors). State the tactical principle simply: put your earlier contribution back on the record and immediately advance the idea.\n"
-            "   - In `why_it_works`, explain the pragmatic trade-off between the 3 options (when to use the Diplomatic default vs. the Assertive pivot vs. the Direct cut) without claiming any line 'guarantees' credit.\n\n"
-            "5. STRICT CONTEXTUAL VOCABULARY ANCHORING (`lexical_upgrades`):\n"
-            "   - Extract 3 high-value multi-word expressions/phrasal verbs that literally appear verbatim inside `best_line`, `softer_alternative`, or `firmer_alternative` (e.g., `take it a step further`, `builds on`, `brought up earlier`).\n"
-            "   - In `explanation`, mention which option used it and explain its pragmatic nuance in plain English (no categorical claims). In `example`, quote the exact recommended line where it appeared."
+            "STRICT PRAGMATIC & SPOKEN-DELIVERY RULES (APPLY ACROSS ALL SCENARIOS):\n"
+            "1. NEUTRAL, OBSERVABLE SITUATION DIAGNOSIS (`situation_summary`):\n"
+            "   - Describe the observable interpersonal/workplace dynamic and the exact pragmatic goal without assuming malice or using buzzwords like 'micro-aggression'.\n\n"
+            "2. THREE GENUINELY DISTINCT TACTICAL LINES (15–22 WORDS MAX EACH, LIVE SPOKEN CADENCE):\n"
+            "   - Optimize for real-time spoken delivery: no fake enthusiasm ('thrilled'), no rehearsed literary metaphors, and no premature assumptions about unapproved plans (use adaptable endings like 'looking at the practical implications' or 'deciding our next step').\n"
+            "   - `best_line` (Option 1 — Diplomatic & Natural [Best Default]): Achieves the core interpersonal goal clearly while keeping the tone composed, constructive, and easy to accept.\n"
+            "   - `softer_alternative` (Option 2 — Strategic & Collaborative): Frames the move around shared goals, practical next steps, or mutual alignment while protecting your boundary or interest.\n"
+            "   - `firmer_alternative` (Option 3 — Concise & Direct [Fast-Moving Room]): Crisp, unmistakable, zero-fluff boundary or claim of ownership for high-pressure moments.\n\n"
+            "3. TRUE PUSHBACK RECOVERY (`follow_up_line`):\n"
+            "   - Do NOT write a generic follow-up question! Write a calm, firm second-turn line specifically for when the other person pushes back, deflects, ignores your boundary, or doubles down.\n\n"
+            "4. ZERO METADATA LEAKAGE IN EXPLANATIONS (`why_it_works` & `lexical_upgrades`):\n"
+            "   - NEVER use internal variable names like `best_line`, `softer_alternative`, or `firmer_alternative` anywhere in your text! Always refer to them as 'Option 1', 'Option 2', and 'Option 3'.\n"
+            "   - In `why_it_works`, explain the realistic trade-off between Option 1, Option 2, and Option 3 without claiming any phrasing 'guarantees' an outcome.\n\n"
+            "5. LEXICAL VS. CONTEXTUAL MEANING IN `lexical_upgrades`:\n"
+            "   - Extract 3 multi-word expressions verbatim from Option 1, Option 2, or Option 3.\n"
+            "   - In `explanation`, state the expression's conventional English meaning FIRST, then briefly state how it functions in Option 1/2/3. Never attribute the rhetorical effect of the whole sentence to a single phrasal verb."
         )
 
         contents: List[Any] = []
@@ -1079,15 +1077,15 @@ class NYCLoungeAI:
                 logger.warning(f"SituationGambit attempt {attempt+1} error: {e}")
 
         return SituationGambitResponse(
-            situation_summary="You're dealing with a credit-taking situation—or at least a failure to acknowledge your contribution. The goal is to establish the timeline without turning the meeting into a personal confrontation.",
+            situation_summary="Navigating a delicate workplace boundary while keeping the conversation constructive and professional.",
             responding_persona="chloe",
-            host_commentary="The cleanest move here is to briefly put your earlier contribution back on the record and immediately advance the idea to the next step:",
-            best_line="Right, that's the point I raised a few minutes ago. Glad we're aligned—I'd suggest we take it a step further by mapping out the rollout.",
-            softer_alternative="Exactly—that builds on the idea I brought up earlier. The next step would be to look at how this impacts our Q3 timeline.",
-            firmer_alternative="Yes, that's what I was suggesting earlier. I think we should focus next on how we prioritize the execution steps.",
-            why_it_works="Each option puts your prior contribution on the record without sounding defensive, then immediately shifts the room's focus to your next substantive point. Use #1 for a collaborative room, #2 to assert clear ownership, or #3 when the conversation is moving fast.",
-            arabic_equivalent="صحيح، هذه هي النقطة التي طرحتها قبل دقائق. يسعدني أننا متفقون—وأقترح أن نأخذها خطوة إلى الأمام من خلال وضع خطة التنفيذ.",
-            follow_up_line="Since we're aligned on the core approach I outlined earlier, I'm happy to lead the next step on the rollout.",
+            host_commentary="The cleanest move here is to state your position plainly and immediately anchor the conversation to practical next steps:",
+            best_line="I'd love to give this the attention it deserves—let's look at the current priorities and see what we can realistically shift.",
+            softer_alternative="To make sure we do this justice, could we align on which current deliverable should take a back seat first?",
+            firmer_alternative="I won't be able to take this on right now without pushing back our current deadline—let me know which one takes priority.",
+            why_it_works="Option 1 is the best default because it pairs willingness with a realistic capacity check. Option 2 invites collaborative trade-offs, while Option 3 sets a crisp, direct boundary under time pressure.",
+            arabic_equivalent="أود أن أمنح هذا الأمر الاهتمام الذي يستحقه—دعنا نراجع الأولويات الحالية لنرى ما الذي يمكننا تعديله واقعياً.",
+            follow_up_line="I understand the urgency, which is why I want to be upfront now about what can realistically get done before the deadline.",
             lexical_upgrades=[]
         )
 
