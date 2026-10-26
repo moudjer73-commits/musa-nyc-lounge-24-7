@@ -281,11 +281,10 @@ def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> s
                 src_line = f"📍 <b>Source (<code>related_extension</code>):</b> <i>{_e(it.usage_status_label)}</i>"
             else:
                 src_line = (
-                    f"📍 <b>Source (<code>{_e(it.source_type)}</code> | <code>{_e(it.source_ref_id)}</code> | "
-                    f"speaker=<code>{_e(it.source_speaker)}</code>):</b> \"{_e(it.full_sentence_citation)}\""
+                    f"💬 <b>In the Dialogue (<code>{_e(it.source_ref_id)}</code> | speaker=<code>{_e(it.source_speaker)}</code>):</b> \"{_e(it.full_sentence_citation)}\""
                 )
             lines.extend([
-                f"\n<b>({idx}) <code>{_e(it.expression)}</code></b>",
+                f"\n<b>({idx}) 🧩 Base Pattern: <code>{_e(it.expression)}</code></b>",
                 f"  └ {src_line}",
                 f"  └ 📖 <b>Core Meaning:</b> {_e(it.core_lexical_meaning)}",
                 f"  └ 🎯 <b>In This Context:</b> {_e(it.contextual_function)}",

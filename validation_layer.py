@@ -22,28 +22,169 @@ def verify_is_complete_sentence_in_source(citation: str, source_text: str) -> bo
         return False
     return bool(re.search(r"(?:^|[.!?]\s+)" + re.escape(c_norm), s_norm))
 
+_IRREGULAR_FAMILIES = [
+    {'be', 'am', 'is', 'are', 'was', 'were', 'been', 'being'},
+    {'have', 'has', 'had', 'having'},
+    {'do', 'does', 'did', 'done', 'doing'},
+    {'make', 'makes', 'made', 'making'},
+    {'take', 'takes', 'took', 'taken', 'taking'},
+    {'run', 'runs', 'ran', 'running'},
+    {'go', 'goes', 'went', 'gone', 'going'},
+    {'come', 'comes', 'came', 'coming'},
+    {'set', 'sets', 'setting'},
+    {'put', 'puts', 'putting'},
+    {'cut', 'cuts', 'cutting'},
+    {'keep', 'keeps', 'kept', 'keeping'},
+    {'leave', 'leaves', 'left', 'leaving'},
+    {'drive', 'drives', 'drove', 'driven', 'driving'},
+    {'throw', 'throws', 'threw', 'thrown', 'throwing'},
+    {'build', 'builds', 'built', 'building'},
+    {'spend', 'spends', 'spent', 'spending'},
+    {'lose', 'loses', 'lost', 'losing'},
+    {'find', 'finds', 'found', 'finding'},
+    {'lead', 'leads', 'led', 'leading'},
+    {'hold', 'holds', 'held', 'holding'},
+    {'stand', 'stands', 'stood', 'standing'},
+    {'fall', 'falls', 'fell', 'fallen', 'falling'},
+    {'grow', 'grows', 'grew', 'grown', 'growing'},
+    {'know', 'knows', 'knew', 'known', 'knowing'},
+    {'see', 'sees', 'saw', 'seen', 'seeing'},
+    {'think', 'thinks', 'thought', 'thinking'},
+    {'bring', 'brings', 'brought', 'bringing'},
+    {'buy', 'buys', 'bought', 'buying'},
+    {'catch', 'catches', 'caught', 'catching'},
+    {'teach', 'teaches', 'taught', 'teaching'},
+    {'feel', 'feels', 'felt', 'feeling'},
+    {'mean', 'means', 'meant', 'meaning'},
+    {'meet', 'meets', 'met', 'meeting'},
+    {'pay', 'pays', 'paid', 'paying'},
+    {'say', 'says', 'said', 'saying'},
+    {'sell', 'sells', 'sold', 'selling'},
+    {'send', 'sends', 'sent', 'sending'},
+    {'sit', 'sits', 'sat', 'sitting'},
+    {'tell', 'tells', 'told', 'telling'},
+    {'win', 'wins', 'won', 'winning'},
+    {'wear', 'wears', 'wore', 'worn', 'wearing'},
+    {'tear', 'tears', 'tore', 'torn', 'tearing'},
+    {'sweep', 'sweeps', 'swept', 'sweeping'},
+    {'deal', 'deals', 'dealt', 'dealing'},
+    {'stick', 'sticks', 'stuck', 'sticking'},
+    {'strike', 'strikes', 'struck', 'striking'},
+    {'speak', 'speaks', 'spoke', 'spoken', 'speaking'},
+    {'break', 'breaks', 'broke', 'broken', 'breaking'},
+    {'write', 'writes', 'wrote', 'written', 'writing'},
+    {'give', 'gives', 'gave', 'given', 'giving'},
+]
+_REFLEXIVE_SET = {'oneself', 'myself', 'yourself', 'himself', 'herself', 'itself', 'ourselves', 'yourselves', 'themselves'}
+_SLOT_WORDS = {'something', 'someone', 'somebody'}
+
+def _expand_regular_lemma(lemma: str) -> set:
+    forms = {lemma}
+    if len(lemma) < 3 or not lemma.isalpha():
+        return forms
+    vowels = 'aeiou'
+    if lemma.endswith('y') and len(lemma) >= 3 and lemma[-2] not in vowels:
+        forms.add(lemma[:-1] + 'ies')
+        forms.add(lemma[:-1] + 'ied')
+        forms.add(lemma + 'ing')
+        return forms
+    if lemma.endswith(('s', 'sh', 'ch', 'x', 'z', 'o')):
+        forms.add(lemma + 'es')
+    else:
+        forms.add(lemma + 's')
+    if lemma.endswith('e') and not lemma.endswith(('ee', 'oe', 'ye')):
+        forms.add(lemma + 'd')
+        forms.add(lemma[:-1] + 'ing')
+        return forms
+    forms.add(lemma + 'ed')
+    forms.add(lemma + 'ing')
+    if len(lemma) >= 3 and lemma[-1] not in 'aeiouwxy' and lemma[-2] in vowels and lemma[-3] not in vowels:
+        doubled = lemma + lemma[-1]
+        forms.add(doubled + 'ed')
+        forms.add(doubled + 'ing')
+    return forms
+
+def _candidate_lemmas(word: str) -> set:
+    cands = {word}
+    if len(word) < 4 or not word.isalpha():
+        return cands
+    if word.endswith('ing') and len(word) >= 5:
+        stem = word[:-3]
+        if len(stem) >= 3:
+            cands.add(stem)
+        if len(stem) >= 2:
+            cands.add(stem + 'e')
+        if len(stem) >= 3 and stem[-1] == stem[-2]:
+            cands.add(stem[:-1])
+    if word.endswith(('ied', 'ies')) and len(word) >= 5:
+        cands.add(word[:-3] + 'y')
+    if word.endswith('ed') and len(word) >= 4:
+        stem = word[:-2]
+        if len(stem) >= 3:
+            cands.add(stem)
+        if len(stem) >= 2:
+            cands.add(stem + 'e')
+        if len(stem) >= 3 and stem[-1] == stem[-2]:
+            cands.add(stem[:-1])
+        if word.endswith('d') and len(word) >= 4:
+            cands.add(word[:-1])
+    if word.endswith('es') and len(word) >= 4:
+        if len(word[:-2]) >= 3:
+            cands.add(word[:-2])
+        if len(word[:-1]) >= 3:
+            cands.add(word[:-1])
+    elif word.endswith('s') and not word.endswith('ss') and len(word) >= 4:
+        cands.add(word[:-1])
+    return {c for c in cands if len(c) >= 3}
+
+def _build_token_regex(w: str) -> str:
+    wl = w.lower()
+    if wl in _REFLEXIVE_SET:
+        return '(?:' + '|'.join(sorted(_REFLEXIVE_SET)) + ')'
+    forms = {wl}
+    for fam in _IRREGULAR_FAMILIES:
+        if wl in fam:
+            forms |= fam
+    if len(wl) >= 3 and wl.isalpha():
+        for cand in _candidate_lemmas(wl):
+            expanded = _expand_regular_lemma(cand)
+            if wl in expanded:
+                forms |= expanded
+            for fam in _IRREGULAR_FAMILIES:
+                if cand in fam:
+                    forms |= fam
+    escaped_forms = sorted((re.escape(f) for f in forms), key=len, reverse=True)
+    return '(?:' + '|'.join(escaped_forms) + ')' if len(escaped_forms) > 1 else escaped_forms[0]
+
 def verify_contiguous_expression_in_sentence(expression: str, sentence: str) -> bool:
-    """
-    Verify that `expression` occurs as an unbroken phrase inside `sentence`.
-    Preserves internal hyphens (e.g., `heads-down`, `one-on-one`) and blocks `[...]` from crossing (.,;!?—–).
-    """
-    norm_sent = normalize_for_citation(sentence)
-    expr_clean = normalize_for_citation(expression)
+    norm_expr = normalize_for_citation(expression).lower()
+    norm_sent = normalize_for_citation(sentence).lower()
+    norm_expr = re.sub(r'^to\s+', '', norm_expr).strip()
+    if not norm_expr or not norm_sent:
+        return False
+    parts = re.split(r'(\[[^\]]+\])', norm_expr)
     seq_patterns: List[str] = []
-    for part in re.split(r"(\[[^\]]+\])", expr_clean):
-        part = part.strip()
+    slot_pat = r'(?:[a-z0-9]+(?:[\'-][a-z0-9]+)*\s*){1,7}'
+    for part in parts:
         if not part:
             continue
-        if part.startswith("[") and part.endswith("]"):
-            seq_patterns.append(r"[^\s.,;!?—–()\"']+(?:\s+[^\s.,;!?—–()\"']+){0,6}")
+        if part.startswith('[') and part.endswith(']'):
+            inner = part[1:-1].strip().lower()
+            if inner in _REFLEXIVE_SET:
+                seq_patterns.append(_build_token_regex(inner))
+            else:
+                seq_patterns.append(slot_pat)
         else:
             for w in re.findall(r"[a-z0-9]+(?:['-][a-z0-9]+)*", part):
-                if len(w) >= 4 and "-" not in w and "'" not in w:
-                    stem = w[:-1] if w.endswith("e") else w
-                    seq_patterns.append(r"(?:" + re.escape(w) + r"|" + re.escape(stem) + r"(?:s|es|ed|d|ing)?)" )
+                if w in _SLOT_WORDS:
+                    seq_patterns.append(slot_pat)
                 else:
-                    seq_patterns.append(re.escape(w))
-    return bool(seq_patterns) and bool(re.search(r"\b" + r"\s+".join(seq_patterns) + r"\b", norm_sent))
+                    seq_patterns.append(_build_token_regex(w))
+    if not seq_patterns:
+        return False
+    combined = r'\b' + r'\s+'.join(seq_patterns) + r'\b'
+    combined = combined.replace(slot_pat + r'\s+', slot_pat)
+    return bool(re.search(combined, norm_sent))
 
 
 class StrictBaseModel(BaseModel):
@@ -250,7 +391,12 @@ class LoungeTurnResponse(StrictBaseModel):
                 option_text_map[e.option_id] = e.exact_wording
 
         all_dialogue_norm = normalize_for_citation(" ".join(t.text for t in self.host_turns))
+        all_dialogue_norm = normalize_for_citation(" ".join(t.text for t in self.host_turns))
         for item in self.lexical_items:
+            if item.source_type == "related_extension":
+                for turn_obj in self.host_turns:
+                    if verify_contiguous_expression_in_sentence(item.expression, turn_obj.text):
+                        raise ValueError(f"Expression '{item.expression}' is already used in {turn_obj.turn_id} and cannot be marked as not used under related_extension.")
             if item.source_type == "related_extension":
                 cleaned_ext = re.sub(r"^to\\s+", "", item.expression.lower().strip())
                 if "[" not in cleaned_ext and verify_contiguous_expression_in_sentence(cleaned_ext, all_dialogue_norm):
@@ -723,3 +869,98 @@ class TestLoungeValidationLayer(unittest.TestCase):
         with self.assertRaises(ValidationError) as ctx:
             LoungeTurnResponse.model_validate(payload, context={"runtime_has_audio_bytes": False})
         self.assertIn("missing required keys", str(ctx.exception))
+
+    def _ctx(self, active_mode: str = 'banter', learner_input_text: str = 'Remote work is always better.', has_audio: bool = False):
+        return {
+            'active_mode': active_mode,
+            'learner_input_text': learner_input_text,
+            'runtime_has_audio_bytes': has_audio,
+        }
+
+    def _base_banter_payload(self):
+        sent1 = "You're conflating individual task execution with team cohesion."
+        sent2 = "Wait until you see how isolation affects junior mentorship over time."
+        return {
+            'active_mode': 'banter',
+            'learner_input_text': 'Remote work is always better.',
+            'input_intent_type': 'general_conversation_or_question',
+            'learner_diagnosis': 'already_natural',
+            'show_diagnostic_mirror': False,
+            'diagnostic_mirror': None,
+            'subtext_analysis': None,
+            'strategy_playbook': None,
+            'pronunciation_guide': None,
+            'host_turns': [
+                {'turn_id': 'turn_1', 'speaker': 'marcus', 'text': sent1},
+                {'turn_id': 'turn_2', 'speaker': 'chloe', 'text': sent2},
+            ],
+            'lexical_items': [
+                {
+                    'expression': 'conflate [something] with [something]',
+                    'source_type': 'verbatim_from_host_dialogue',
+                    'source_ref_id': 'turn_1',
+                    'source_speaker': 'marcus',
+                    'full_sentence_citation': sent1,
+                    'usage_status_label': 'Verbatim from Marcus (turn_1)',
+                    'core_lexical_meaning': 'Treat two distinct concepts as if they were the same.',
+                    'contextual_function': 'Challenges false equivalence.',
+                    'register_and_usage': 'Analytical American English.',
+                    'arabic_equivalent': 'يخلط بين شيئين مختلفين',
+                    'contrastive_note': None,
+                }
+            ],
+        }
+
+    def test_26_regression_case_a_inflected_dialogue_base_expression(self):
+        p = self._base_banter_payload()
+        sent = "You're conflating individual task execution with team cohesion."
+        p['host_turns'][0]['text'] = sent
+        p['lexical_items'][0]['expression'] = 'conflate [something] with [something]'
+        p['lexical_items'][0]['full_sentence_citation'] = sent
+        res = LoungeTurnResponse.model_validate(p, context=self._ctx('banter', p['learner_input_text']))
+        self.assertEqual(res.lexical_items[0].expression, 'conflate [something] with [something]')
+
+    def test_27_regression_case_b_reject_inflected_duplicate_in_related_extension(self):
+        p = self._base_banter_payload()
+        p['host_turns'][0]['text'] = "You're glossing over a major drawback. " + p['host_turns'][0]['text']
+        p['lexical_items'].append({
+            'expression': 'gloss over something',
+            'source_type': 'related_extension',
+            'source_ref_id': None,
+            'source_speaker': None,
+            'full_sentence_citation': None,
+            'usage_status_label': 'Related extension — not used in the cited response',
+            'core_lexical_meaning': 'Treat a problem too briefly or ignore its difficulty.',
+            'contextual_function': 'Highlights ignoring a drawback.',
+            'register_and_usage': 'Common analytical and workplace English.',
+            'arabic_equivalent': 'يمرّ مرور الكرام على شيء أو يتغاضى عنه',
+            'contrastive_note': 'Contrasts with addressing the root issue directly.'
+        })
+        with self.assertRaises(ValidationError):
+            LoungeTurnResponse.model_validate(p, context=self._ctx('banter', p['learner_input_text']))
+
+    def test_28_regression_case_c_accept_genuine_related_extension(self):
+        p = self._base_banter_payload()
+        p['host_turns'][0]['text'] = "You're glossing over a major drawback. " + p['host_turns'][0]['text']
+        p['lexical_items'].append({
+            'expression': 'a double-edged sword',
+            'source_type': 'related_extension',
+            'source_ref_id': None,
+            'source_speaker': None,
+            'full_sentence_citation': None,
+            'usage_status_label': 'Related extension — not used in the cited response',
+            'core_lexical_meaning': 'Something that has both favorable and unfavorable consequences.',
+            'contextual_function': 'Frames remote work as carrying both benefits and trade-offs.',
+            'register_and_usage': 'Common professional and general English idiom.',
+            'arabic_equivalent': 'سلاح ذو حدين',
+            'contrastive_note': 'Acknowledges both pros and cons rather than focusing on a single drawback.'
+        })
+        res = LoungeTurnResponse.model_validate(p, context=self._ctx('banter', p['learner_input_text']))
+        self.assertEqual(res.lexical_items[-1].expression, 'a double-edged sword')
+
+    def test_29_orthographic_inflections_and_false_positive_protection(self):
+        self.assertTrue(verify_contiguous_expression_in_sentence('make [something] clear', 'She is making her priorities clear.'))
+        self.assertTrue(verify_contiguous_expression_in_sentence('run into [something]', 'We keep running into the same bottleneck.'))
+        self.assertTrue(verify_contiguous_expression_in_sentence('erode something', 'You have inadvertently eroded the social capital.'))
+        self.assertFalse(verify_contiguous_expression_in_sentence('make [something] clear', 'The market is marking its territory clear.'))
+        self.assertFalse(verify_contiguous_expression_in_sentence('run into [something]', 'They were ruining into the schedule.'))
