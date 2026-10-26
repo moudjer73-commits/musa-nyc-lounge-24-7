@@ -29,11 +29,7 @@ jobs:
 
       - name: Verify System Dependencies (Instant Non-Blocking Check)
         run: |
-          if command -v ffmpeg >/dev/null 2>&1; then
-            echo "✅ ffmpeg is pre-installed and ready!"
-          else
-            sudo DEBIAN_FRONTEND=noninteractive apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg
-          fi
+          which ffmpeg || true
 
       - name: Install Python Packages
         run: |

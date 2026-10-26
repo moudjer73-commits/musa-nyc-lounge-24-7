@@ -1174,47 +1174,49 @@ class NYCLoungeAI:
         )
 
         last_err = None
-        models_to_try = list(getattr(self, "models", None) or getattr(self, "model_chain", None) or ["gemini-2.5-flash", "gemini-2.0-flash"])
+        models_to_try = list(getattr(self, "_discovered_models", None) or ["gemini-2.5-flash", "gemini-2.0-flash"])
+        keys_list = list(getattr(self, "keys_pool", None) or [])
 
-        for attempt in range(3):
-            model_name = models_to_try[min(attempt, len(models_to_try) - 1)]
-            prompt_suffix = ""
-            if last_err:
-                prompt_suffix = f"\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately."
+        if keys_list:
+            for attempt in range(3):
+                api_k = keys_list[attempt % len(keys_list)]
+                model_name = models_to_try[min(attempt, len(models_to_try) - 1)]
+                prompt_suffix = ""
+                if last_err:
+                    prompt_suffix = f"\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately."
 
-            contents: List[Any] = []
-            if audio_bytes:
-                contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
-                contents.append(f"Listen to the scenario and return valid JSON matching LoungeTurnResponse.{prompt_suffix}")
-            else:
-                contents.append(f"LEARNER SCENARIO:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}")
+                contents: List[Any] = []
+                if audio_bytes:
+                    contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+                    contents.append(f"Listen to the scenario and return valid JSON matching LoungeTurnResponse.{prompt_suffix}")
+                else:
+                    contents.append(f"LEARNER SCENARIO:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}")
 
-            try:
-                if not getattr(self, "client", None):
-                    raise RuntimeError("Gemini client is not initialized.")
-                resp = self.client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        temperature=0.3 if attempt == 0 else 0.15,
-                        response_mime_type="application/json",
-                        max_output_tokens=4096,
-                    ),
-                )
-                raw_text = (resp.text or "").strip()
-                if raw_text.startswith("```"):
-                    raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
-                payload_dict = json.loads(raw_text)
-                validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
-                    payload_dict,
-                    context=trusted_context
-                )
-                logger.info(f"✅ LoungeTurnResponse Pydantic Validation PASSED on attempt {attempt+1} ({model_name})!")
-                return validated
-            except Exception as e:
-                last_err = str(e)
-                logger.warning(f"LoungeTurnResponse live attempt {attempt+1} ({model_name}) failed: {last_err}")
+                try:
+                    client = genai.Client(api_key=api_k)
+                    resp = client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            temperature=0.25 if attempt == 0 else 0.15,
+                            response_mime_type="application/json",
+                            max_output_tokens=4096,
+                        ),
+                    )
+                    raw_text = (resp.text or "").strip()
+                    if raw_text.startswith("```"):
+                        raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
+                    payload_dict = json.loads(raw_text)
+                    validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
+                        payload_dict,
+                        context=trusted_context
+                    )
+                    logger.info(f"✅ LoungeTurnResponse Pydantic Validation PASSED on attempt {attempt+1} ({model_name})!")
+                    return validated
+                except Exception as e:
+                    last_err = str(e)
+                    logger.warning(f"LoungeTurnResponse live attempt {attempt+1} ({model_name}) failed: {last_err}")
 
         fallback_payload = {
             "active_mode": "situation_strategy",
