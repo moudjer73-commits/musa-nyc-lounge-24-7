@@ -164,7 +164,7 @@ def verify_contiguous_expression_in_sentence(expression: str, sentence: str) -> 
         return False
     parts = re.split(r'(\[[^\]]+\])', norm_expr)
     seq_patterns: List[str] = []
-    slot_pat = r'(?:[a-z0-9]+(?:[\'-][a-z0-9]+)*\s*){1,7}'
+    slot_pat = r'[a-z0-9]+(?:[\'-][a-z0-9]+)*(?:\s+[a-z0-9]+(?:[\'-][a-z0-9]+)*){0,11}'
     for part in parts:
         if not part:
             continue
@@ -183,7 +183,6 @@ def verify_contiguous_expression_in_sentence(expression: str, sentence: str) -> 
     if not seq_patterns:
         return False
     combined = r'\b' + r'\s+'.join(seq_patterns) + r'\b'
-    combined = combined.replace(slot_pat + r'\s+', slot_pat)
     return bool(re.search(combined, norm_sent))
 
 

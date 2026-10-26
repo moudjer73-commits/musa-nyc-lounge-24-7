@@ -1535,53 +1535,53 @@ class NYCLoungeAI:
                 {
                     "turn_id": "turn_1",
                     "speaker": "marcus",
-                    "text": "Saying remote work is always better tends to paint with a broad brush because it treats solo task execution and complex team coordination as if they had the exact same demands. While eliminating the commute saves time, unstructured problem-solving and rapid cross-team alignment are much harder to sustain through scheduled video calls alone."
+                    "text": "Nobody is denying that starting circumstances matter, but writing off success as mostly luck ignores how preparation determines who can actually capitalize on a lucky break when it shows up. Plenty of people get handed the exact same opportunity, and the ones who put in the reps are usually the ones who turn a fortunate break into lasting success."
                 },
                 {
                     "turn_id": "turn_2",
                     "speaker": "chloe",
-                    "text": "Right, and banning in-person requirements altogether can trade short-term convenience for slower cross-functional trust and weaker informal mentorship over time. Too often, remote-only advocates conflate individual task output with long-term organizational cohesion instead of tailoring attendance policies to the actual collaboration a role requires."
+                    "text": "Plus, convincing yourself that effort barely moves the needle can easily become a self-fulfilling prophecy that keeps you from taking calculated risks. You cannot control the hand you are dealt at birth, but discounting personal agency altogether leaves you on the sidelines even when doors do open."
                 }
             ],
             "lexical_items": [
                 {
-                    "expression": "paint with a broad brush",
+                    "expression": "capitalize on [something]",
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_1",
                     "source_speaker": "marcus",
-                    "full_sentence_citation": "Saying remote work is always better tends to paint with a broad brush because it treats solo task execution and complex team coordination as if they had the exact same demands.",
+                    "full_sentence_citation": "Nobody is denying that starting circumstances matter, but writing off success as mostly luck ignores how preparation determines who can actually capitalize on a lucky break when it shows up.",
                     "usage_status_label": "Verbatim from Marcus (turn_1)",
-                    "core_lexical_meaning": "Describe or categorize a complex issue using sweeping generalizations while ignoring important differences across cases.",
-                    "contextual_function": "Directly challenges the universal claim that remote work is always better by showing that solo execution and team coordination have different needs.",
+                    "core_lexical_meaning": "Take advantage of or turn a favorable situation, chance, or resource into a practical gain.",
+                    "contextual_function": "Explains why luck alone is rarely enough without the skill and readiness required to make use of an opportunity.",
                     "register_and_usage": "Idiomatic professional and educated general American English.",
-                    "arabic_equivalent": "يُعمّم على نحوٍ واسع دون مراعاة الفروق الدقيقة بين الحالات",
+                    "arabic_equivalent": "يستثمر فرصةً أو يستفيد من ظرف مواتٍ",
                     "contrastive_note": None
                 },
                 {
-                    "expression": "conflate [something] with [something]",
+                    "expression": "move the needle",
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_2",
                     "source_speaker": "chloe",
-                    "full_sentence_citation": "Too often, remote-only advocates conflate individual task output with long-term organizational cohesion instead of tailoring attendance policies to the actual collaboration a role requires.",
+                    "full_sentence_citation": "Plus, convincing yourself that effort barely moves the needle can easily become a self-fulfilling prophecy that keeps you from taking calculated risks.",
                     "usage_status_label": "Verbatim from Chloe (turn_2)",
-                    "core_lexical_meaning": "Fuse or confuse two distinct concepts into one, overlooking critical differences between them.",
-                    "contextual_function": "Pinpoints the analytical flaw of treating individual task output at home as if it were equivalent to long-term organizational cohesion.",
+                    "core_lexical_meaning": "Make a noticeable, measurable difference in changing a situation or outcome.",
+                    "contextual_function": "Captures the learner's skeptical claim that hard work does not noticeably change one's life trajectory.",
                     "register_and_usage": "Analytical, executive, and persuasive American English.",
-                    "arabic_equivalent": "يخلط بين مفهومين مختلفين أو يدمجهما خطأً باعتبارهما شيئاً واحداً",
+                    "arabic_equivalent": "يُحدث فرقاً ملموساً أو تغييراً ملحوظاً في النتيجة",
                     "contrastive_note": None
                 },
                 {
-                    "expression": "equate [something] with [something]",
+                    "expression": "play the hand you are dealt",
                     "source_type": "related_extension",
                     "source_ref_id": None,
                     "source_speaker": None,
                     "full_sentence_citation": None,
                     "usage_status_label": "Related extension — not used in the cited response",
-                    "core_lexical_meaning": "Consider or explicitly state that one thing is equal or equivalent to another.",
-                    "contextual_function": "Provides a contrasting analytical verb for debating flawed workplace assumptions.",
+                    "core_lexical_meaning": "Do the best you can with the circumstances, resources, or starting conditions life gives you.",
+                    "contextual_function": "Balances the debate by acknowledging unequal starting circumstances while emphasizing strategic action.",
                     "register_and_usage": "Neutral to formal analytical English.",
-                    "arabic_equivalent": "يساوي بين شيئين أو يعتبرهما متكافئين",
-                    "contrastive_note": "While 'equate A with B' means explicitly treating A and B as equal, 'conflate A with B' (used by Chloe in turn_2) implies blurring the boundary between two distinct concepts that should be kept separate."
+                    "arabic_equivalent": "يتعامل بذكاء مع الظروف والإمكانات المتاحة له",
+                    "contrastive_note": "While 'capitalize on [something]' focuses on seizing a specific external break, 'play the hand you are dealt' focuses on making the most of your starting circumstances, whether lucky or difficult."
                 }
             ]
         }
