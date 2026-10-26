@@ -1,3 +1,10 @@
+def _universal_null_sanitizer(val):
+    if isinstance(val, dict):
+        return {k: ([] if any(k.endswith(s) for s in ('turns','diagnostics','upgrades','items','lines','options','gambits','examples','points','cards')) else (False if k.startswith(('is_','has_')) else '')) if v is None else _universal_null_sanitizer(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_universal_null_sanitizer(x) for x in val if x is not None]
+    return val
+
 import uuid
 import random
 import traceback
@@ -482,7 +489,7 @@ class NYCLoungeAI:
                         if raw_txt:
                             if raw_txt.startswith("```"):
                                 raw_txt = raw_txt.strip("`").removeprefix("json").strip()
-                            parsed_obj = schema_cls.model_validate_json(raw_txt)
+                            parsed_obj = schema_cls.model_validate(_universal_null_sanitizer(json.loads(raw_txt)))
                             logger.info(
                                 f"TELEMETRY req_id={req_id} key_idx={k_idx} model={model_name} attempt={attempt} "
                                 f"stage=complete latency_ms={latency_ms} status=ok_json"
