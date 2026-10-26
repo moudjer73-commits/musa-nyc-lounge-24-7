@@ -38,7 +38,11 @@ def verify_contiguous_expression_in_sentence(expression: str, sentence: str) -> 
             seq_patterns.append(r"[^\s.,;!?—–()\"']+(?:\s+[^\s.,;!?—–()\"']+){0,4}")
         else:
             for w in re.findall(r"[a-z0-9]+(?:['-][a-z0-9]+)*", part):
-                seq_patterns.append(re.escape(w))
+                if len(w) >= 4 and "-" not in w and "'" not in w:
+                    stem = w[:-1] if w.endswith("e") else w
+                    seq_patterns.append(r"(?:" + re.escape(w) + r"|" + re.escape(stem) + r"(?:s|es|ed|d|ing)?)" )
+                else:
+                    seq_patterns.append(re.escape(w))
     return bool(seq_patterns) and bool(re.search(r"\b" + r"\s+".join(seq_patterns) + r"\b", norm_sent))
 
 
@@ -245,6 +249,17 @@ class LoungeTurnResponse(StrictBaseModel):
             for e in self.subtext_analysis.escalation_options:
                 option_text_map[e.option_id] = e.exact_wording
 
+        all_dialogue_norm = normalize_for_citation(" ".join(t.text for t in self.host_turns))
+        for item in self.lexical_items:
+            expr_l = item.expression.lower().strip()
+            if any(v in expr_l for v in ("conflate", "conflating", "equate", "equating")) and " with " not in expr_l:
+                raise ValueError(f"Expression '{item.expression}' is truncated; must include full frame with '[something] with [something]'.")
+            if any(v in expr_l for v in ("tailor", "tailoring")) and " to " not in expr_l:
+                raise ValueError(f"Expression '{item.expression}' is truncated; must include full frame with '[something] to [something]'.")
+            if item.source_type == "related_extension":
+                cleaned_ext = re.sub(r"^to\s+", "", expr_l)
+                if verify_contiguous_expression_in_sentence(cleaned_ext, all_dialogue_norm):
+                    raise ValueError(f"Expression '{item.expression}' already appears in host_turns; cannot be marked as 'not used' under related_extension.")
         for item in self.lexical_items:
             if item.source_type == "verbatim_from_host_dialogue":
                 if not item.source_ref_id or item.source_ref_id not in turn_map:

@@ -1400,7 +1400,7 @@ class NYCLoungeAI:
             ],
             "lexical_items": [
                 {
-                    "expression": "exact contiguous phrase from turn_1",
+                    "expression": "complete canonical frame from turn_1 (e.g. conflate [something] with [something] or paint with a broad brush)",
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_1",
                     "source_speaker": "marcus",
@@ -1413,7 +1413,7 @@ class NYCLoungeAI:
                     "contrastive_note": None
                 },
                 {
-                    "expression": "exact contiguous phrase from turn_2",
+                    "expression": "complete canonical frame from turn_2 (e.g. tailor [something] to [something] or erode [something] over time)",
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_2",
                     "source_speaker": "chloe",
@@ -1453,7 +1453,7 @@ class NYCLoungeAI:
             "   - Do NOT agree with the learner or merely restate their opinion politely.\n"
             "   - In `turn_1` (Marcus), dismantle the unexamined causal assumption in the learner's claim (e.g., showing why two things the learner treats as equivalent are actually distinct).\n"
             "   - In `turn_2` (Chloe), expose the second-order operational cost or how the learner's policy could backfire in practice.\n"
-            "3. ZERO FABRICATION: Do NOT invent fake statistics, fake studies, or unstated facts about the learner's workplace.\n"
+            "3. ZERO FABRICATION & CALIBRATED CLAIMS: Never make sweeping unsupported claims like 'zero loyalty' (use conditional phrasing: 'can weaken', 'often erodes'); for `related_extension`, pick an idiom NOT used anywhere in `turn_1` or `turn_2`; and Do NOT invent fake statistics, fake studies, or unstated facts about the learner's workplace.\n"
             "4. DIAGNOSTIC MIRROR: If the learner's English is already natural, set `learner_diagnosis='already_natural'`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`. Only set `show_diagnostic_mirror=True` if there is a genuine grammatical, collocation, or register error.\n"
             "5. VERBATIM CITATIONS: For `verbatim_from_host_dialogue`, `full_sentence_citation` MUST be a single complete sentence copied character-for-character from that speaker's `text`, and `expression` must appear inside it as an unbroken contiguous phrase."
         )
