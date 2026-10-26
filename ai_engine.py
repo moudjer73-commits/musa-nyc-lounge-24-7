@@ -1400,7 +1400,7 @@ class NYCLoungeAI:
             ],
             "lexical_items": [
                 {
-                    "expression": "complete canonical frame from turn_1 (e.g. conflate [something] with [something] or paint with a broad brush)",
+                    "expression": "complete canonical frame from turn_1 (use base verb + preposition + [something] for general frames, or a standalone natural idiom)",
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_1",
                     "source_speaker": "marcus",
@@ -1413,7 +1413,7 @@ class NYCLoungeAI:
                     "contrastive_note": None
                 },
                 {
-                    "expression": "complete canonical frame from turn_2 (e.g. tailor [something] to [something] or erode [something] over time)",
+                    "expression": "complete canonical frame from turn_2 (keep topic-specific nouns out of Base Pattern by replacing them with [something])",
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_2",
                     "source_speaker": "chloe",
@@ -1454,7 +1454,7 @@ class NYCLoungeAI:
             "   - In `turn_1` (Marcus), dismantle the unexamined causal assumption in the learner's claim (e.g., showing why two things the learner treats as equivalent are actually distinct).\n"
             "   - In `turn_2` (Chloe), expose the second-order operational cost or how the learner's policy could backfire in practice.\n"
             "3. ZERO FABRICATION & CALIBRATED CLAIMS: Never make sweeping unsupported claims like 'zero loyalty' (use conditional phrasing: 'can weaken', 'often erodes'); for `related_extension`, pick an idiom NOT used anywhere in `turn_1` or `turn_2`; and Do NOT invent fake statistics, fake studies, or unstated facts about the learner's workplace.\n"
-            "4. COMPLETE FRAMES & DIAGNOSTIC MIRROR: Always extract complete reusable frames (like `conflate [something] with [something]` or `paint with a broad brush`), never partial fragments; frame trade-offs conditionally ('can', 'often') without sweeping unsupported claims; and for `related_extension`, pick an expression NOT used in `turn_1` or `turn_2`. If the learner's English is already natural, set `learner_diagnosis='already_natural'`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`. Only set `show_diagnostic_mirror=True` if there is a genuine grammatical, collocation, or register error.\n"
+            "4. COMPLETE FRAMES & DIAGNOSTIC MIRROR: Always extract complete reusable frames (separate the reusable verb/idiom pattern from topic-specific nouns using `[something]`), never partial fragments; frame trade-offs conditionally ('can', 'often') without sweeping unsupported claims; and for `related_extension`, pick an expression NOT used in `turn_1` or `turn_2`. If the learner's English is already natural, set `learner_diagnosis='already_natural'`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`. Only set `show_diagnostic_mirror=True` if there is a genuine grammatical, collocation, or register error. 5. EPISTEMIC CALIBRATION, NATURAL VOICE & LEXICAL FRESHNESS: (a) Challenge the learner's sweeping claim without falling into the opposite extreme (e.g., acknowledge that starting circumstances matter while showing why effort and preparation determine who capitalizes on lucky breaks). (b) Avoid deterministic overclaims like 'uniquely', 'always', or 'What really happens is...'; use calibrated phrasing ('can', 'often', 'tends to', 'may'). (c) Speak like sharp, natural Americans in a real conversation—avoid heavy academic jargon like 'systemic structural shifts'. (d) Do NOT default to overused debate clichés like 'conflate' or 'paint with a broad brush'; select fresh, topic-fitting American expressions and replace context-specific object nouns with `[something]` in `expression`.\n"
             "5. VERBATIM CITATIONS: For `verbatim_from_host_dialogue`, `full_sentence_citation` MUST be a single complete sentence copied character-for-character from that speaker's `text`, and `expression` must appear inside it as an unbroken contiguous phrase."
         )
 

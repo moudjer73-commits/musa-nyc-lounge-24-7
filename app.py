@@ -1595,7 +1595,7 @@ if bot:
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
-            if mode == "devils_advocate" or any(k in text.lower() for k in ("junior engineers to work in the office", "five days a week because they cannot learn", "remote work is always better", "[devil")):
+            if mode == "devils_advocate" or any(k in text.lower() for k in ("junior engineers to work in the office", "five days a week because they cannot learn", "remote work is always better", "college degrees are becoming useless", "mostly just lucky", "hard work is overrated", "[devil")):
                 d_res = ai_engine.process_devils_advocate(user=user, user_text=text)
                 db.append_history(uid, "user", f"[Devil's Advocate]: {text}")
                 db.append_history(uid, "assistant", d_res.host_commentary)
