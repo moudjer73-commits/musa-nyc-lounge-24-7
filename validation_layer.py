@@ -76,6 +76,7 @@ _IRREGULAR_FAMILIES = [
     {'give', 'gives', 'gave', 'given', 'giving'},
 ]
 _REFLEXIVE_SET = {'oneself', 'myself', 'yourself', 'himself', 'herself', 'itself', 'ourselves', 'yourselves', 'themselves'}
+_POSSESSIVE_SET = {'ones', "one's", 'my', 'your', 'his', 'her', 'its', 'our', 'their'}
 _SLOT_WORDS = {'something', 'someone', 'somebody'}
 
 def _expand_regular_lemma(lemma: str) -> set:
@@ -141,6 +142,8 @@ def _build_token_regex(w: str) -> str:
     wl = w.lower()
     if wl in _REFLEXIVE_SET:
         return '(?:' + '|'.join(sorted(_REFLEXIVE_SET)) + ')'
+    if wl in _POSSESSIVE_SET:
+        return '(?:' + '|'.join(sorted(_POSSESSIVE_SET)) + ')'
     forms = {wl}
     for fam in _IRREGULAR_FAMILIES:
         if wl in fam:

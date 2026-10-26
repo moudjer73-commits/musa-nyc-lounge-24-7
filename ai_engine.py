@@ -1354,116 +1354,117 @@ class NYCLoungeAI:
     def process_devils_advocate(
         self,
         user: Dict[str, Any],
-        user_text: str = "",
+        user_text: str = '',
         audio_bytes: Optional[bytes] = None,
-        audio_mime: str = "audio/ogg"
+        audio_mime: str = 'audio/ogg'
     ) -> Any:
         from validation_layer import LoungeTurnResponse
         try:
-            pref_reg = user["preferred_register"] if (user and "preferred_register" in user and user["preferred_register"]) else "articulate"
+            pref_reg = user['preferred_register'] if (user and 'preferred_register' in user and user['preferred_register']) else 'articulate'
         except Exception:
-            pref_reg = "articulate"
+            pref_reg = 'articulate'
         if pref_reg not in REGISTERS_MAP:
-            pref_reg = "articulate"
+            pref_reg = 'articulate'
         vibe_badge = REGISTERS_MAP[pref_reg]
-        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, '')
 
-        clean_user_text = (user_text or "").strip() or "Voice opinion submitted."
+        clean_user_text = (user_text or '').strip() or 'Voice opinion submitted.'
         has_audio = bool(audio_bytes)
         trusted_context = {
-            "active_mode": "banter",
-            "learner_input_text": clean_user_text,
-            "runtime_has_audio_bytes": has_audio,
+            'active_mode': 'banter',
+            'learner_input_text': clean_user_text,
+            'runtime_has_audio_bytes': has_audio,
         }
 
         json_template_example = {
-            "active_mode": "banter",
-            "learner_input_text": clean_user_text,
-            "input_intent_type": "general_conversation_or_question",
-            "learner_diagnosis": "already_natural",
-            "show_diagnostic_mirror": False,
-            "diagnostic_mirror": None,
-            "subtext_analysis": None,
-            "strategy_playbook": None,
-            "pronunciation_guide": None,
-            "host_turns": [
+            'active_mode': 'banter',
+            'learner_input_text': clean_user_text,
+            'input_intent_type': 'general_conversation_or_question',
+            'learner_diagnosis': 'already_natural',
+            'show_diagnostic_mirror': False,
+            'diagnostic_mirror': None,
+            'subtext_analysis': None,
+            'strategy_playbook': None,
+            'pronunciation_guide': None,
+            'host_turns': [
                 {
-                    "turn_id": "turn_1",
-                    "speaker": "marcus",
-                    "text": "2 complete sentences challenging the hidden premise in the user's argument without inventing fake statistics."
+                    'turn_id': 'turn_1',
+                    'speaker': 'marcus',
+                    'text': '2 natural spoken American sentences acknowledging where the premise has a point before challenging its core causal assumption without inventing statistics.'
                 },
                 {
-                    "turn_id": "turn_2",
-                    "speaker": "chloe",
-                    "text": "2 complete sentences exposing the second-order operational trade-off or unintended backfire of the user's stance."
+                    'turn_id': 'turn_2',
+                    'speaker': 'chloe',
+                    'text': '2 natural spoken American sentences exposing a practical second-order trade-off or alternative explanation using everyday idiomatic English instead of consultant jargon.'
                 }
             ],
-            "lexical_items": [
+            'lexical_items': [
                 {
-                    "expression": "complete canonical frame from turn_1 (use base verb + preposition + [something] for general frames, or a standalone natural idiom)",
-                    "source_type": "verbatim_from_host_dialogue",
-                    "source_ref_id": "turn_1",
-                    "source_speaker": "marcus",
-                    "full_sentence_citation": "EXACT single complete sentence from turn_1 ending in .!? containing expression.",
-                    "usage_status_label": "Verbatim from Marcus (turn_1)",
-                    "core_lexical_meaning": "...",
-                    "contextual_function": "...",
-                    "register_and_usage": "...",
-                    "arabic_equivalent": "...",
-                    "contrastive_note": None
+                    'expression': 'reusable canonical frame from turn_1 (replace topic nouns with [something] or [someone])',
+                    'source_type': 'verbatim_from_host_dialogue',
+                    'source_ref_id': 'turn_1',
+                    'source_speaker': 'marcus',
+                    'full_sentence_citation': 'EXACT single complete sentence from turn_1 ending in .!? containing expression.',
+                    'usage_status_label': 'Verbatim from Marcus (turn_1)',
+                    'core_lexical_meaning': 'Precise, calibrated definition matching the sense used in turn_1.',
+                    'contextual_function': 'How this expression sharpens Marcus counter-argument.',
+                    'register_and_usage': 'Register and social tone note.',
+                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent (NO literal word-for-word calques).',
+                    'contrastive_note': None
                 },
                 {
-                    "expression": "complete canonical frame from turn_2 (keep topic-specific nouns out of Base Pattern by replacing them with [something])",
-                    "source_type": "verbatim_from_host_dialogue",
-                    "source_ref_id": "turn_2",
-                    "source_speaker": "chloe",
-                    "full_sentence_citation": "EXACT single complete sentence from turn_2 ending in .!? containing expression.",
-                    "usage_status_label": "Verbatim from Chloe (turn_2)",
-                    "core_lexical_meaning": "...",
-                    "contextual_function": "...",
-                    "register_and_usage": "...",
-                    "arabic_equivalent": "...",
-                    "contrastive_note": None
+                    'expression': 'reusable canonical frame from turn_2 (replace topic nouns with [something] or [someone])',
+                    'source_type': 'verbatim_from_host_dialogue',
+                    'source_ref_id': 'turn_2',
+                    'source_speaker': 'chloe',
+                    'full_sentence_citation': 'EXACT single complete sentence from turn_2 ending in .!? containing expression.',
+                    'usage_status_label': 'Verbatim from Chloe (turn_2)',
+                    'core_lexical_meaning': 'Precise, calibrated definition matching the sense used in turn_2.',
+                    'contextual_function': 'How this expression supports Chloe perspective.',
+                    'register_and_usage': 'Register and social tone note.',
+                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent (NO literal word-for-word calques).',
+                    'contrastive_note': None
                 },
                 {
-                    "expression": "related contrasting expression",
-                    "source_type": "related_extension",
-                    "source_ref_id": None,
-                    "source_speaker": None,
-                    "full_sentence_citation": None,
-                    "usage_status_label": "Related extension — not used in the cited response",
-                    "core_lexical_meaning": "...",
-                    "contextual_function": "...",
-                    "register_and_usage": "...",
-                    "arabic_equivalent": "...",
-                    "contrastive_note": "Explain the semantic distinction between this expression and the one used in turn_1 or turn_2."
+                    'expression': 'topic-relevant idiom NOT used in turn_1 or turn_2',
+                    'source_type': 'related_extension',
+                    'source_ref_id': None,
+                    'source_speaker': None,
+                    'full_sentence_citation': None,
+                    'usage_status_label': 'Related extension — not used in the cited response',
+                    'core_lexical_meaning': 'Accurate definition.',
+                    'contextual_function': 'Directly relevant to the exact topic under discussion.',
+                    'register_and_usage': 'Register note.',
+                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent ONLY (never write literal calques).',
+                    'contrastive_note': 'Clear semantic contrast with expression 1 or 2.'
                 }
             ]
         }
 
-        system_prompt = (
-            f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"ACTIVE ENGINE: DEVIL'S ADVOCATE INTELLECTUAL CHALLENGE (`active_mode='banter'`)\n"
-            f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
-            "Return ONLY a valid JSON object matching this exact structure (no extra keys allowed):\n"
-            f"{json.dumps(json_template_example, ensure_ascii=False, indent=2)}\n\n"
-            "MANDATORY DEVIL'S ADVOCATE & PYDANTIC v2 RULES:\n"
-            f"1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}\n"
-            "2. RIGOROUS COUNTER-ARGUMENT (NOT A POLITE PARAPHRASE):\n"
-            "   - Do NOT agree with the learner or merely restate their opinion politely.\n"
-            "   - In `turn_1` (Marcus), dismantle the unexamined causal assumption in the learner's claim (e.g., showing why two things the learner treats as equivalent are actually distinct).\n"
-            "   - In `turn_2` (Chloe), expose the second-order operational cost or how the learner's policy could backfire in practice.\n"
-            "3. ZERO FABRICATION & CALIBRATED CLAIMS: Never make sweeping unsupported claims like 'zero loyalty' (use conditional phrasing: 'can weaken', 'often erodes'); for `related_extension`, pick an idiom NOT used anywhere in `turn_1` or `turn_2`; and Do NOT invent fake statistics, fake studies, or unstated facts about the learner's workplace.\n"
-            "4. COMPLETE FRAMES & DIAGNOSTIC MIRROR: Always extract complete reusable frames (separate the reusable verb/idiom pattern from topic-specific nouns using `[something]`), never partial fragments; frame trade-offs conditionally ('can', 'often') without sweeping unsupported claims; and for `related_extension`, pick an expression NOT used in `turn_1` or `turn_2`. If the learner's English is already natural, set `learner_diagnosis='already_natural'`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`. Only set `show_diagnostic_mirror=True` if there is a genuine grammatical, collocation, or register error. 5. FAIRNESS, EPISTEMIC CALIBRATION & MODERATE COUNTER-ARGUMENTS: (a) Acknowledge the valid kernel of truth in the learner's premise first (e.g., that starting circumstances or structural inequality exist) rather than flatly denying reality. Then challenge the overgeneralization without swinging to the opposite extreme of claiming effort guarantees success. (b) Avoid rigid, deterministic overclaims like 'dictates the outcome' or 'always'; use calibrated, nuanced phrasing ('shapes your trajectory', 'influences outcomes', 'can help'). (c) Speak like natural, articulate Americans without heavy academic jargon. (d) For `related_extension`, choose an idiom tightly coupled to the learner's specific topic (e.g., `stack the deck against [something]` when discussing social conditions or starting lines).\n"
-            "5. VERBATIM CITATIONS: For `verbatim_from_host_dialogue`, `full_sentence_citation` MUST be a single complete sentence copied character-for-character from that speaker's `text`, and `expression` must appear inside it as an unbroken contiguous phrase."
-        )
+        rules_list = [
+            f'{CORE_NYC_PERSONA_PROMPT}',
+            f'ACTIVE ENGINE: DEVIL\'S ADVOCATE INTELLECTUAL CHALLENGE (`active_mode=banter`)',
+            f'TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}',
+            'Return ONLY a valid JSON object matching this exact structure (no extra keys allowed):',
+            json.dumps(json_template_example, ensure_ascii=False, indent=2),
+            'MANDATORY DEVIL\'S ADVOCATE & PEDAGOGICAL RULES:',
+            f'1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}',
+            '2. NATURAL SPOKEN AMERICAN DIALOGUE (NO CONSULTANT JARGON): Marcus and Chloe must sound like sharp, natural Americans talking in person. Do NOT stack abstract business or sociological buzzwords (avoid phrases like "operational trade-off", "distributed networks", "impediment", "false dichotomy", or "democratize"). Prefer crisp, idiomatic spoken English.',
+            '3. TARGET THE LEARNER\'S ACTUAL PREMISE (NO STRAW-MANNING & ZERO FAKE STATS):',
+            '   - Acknowledge where the learner has a fair point (e.g., putting in extra hours during a real crunch can help), then challenge the specific overgeneralizations in their message.',
+            '   - If the learner claims longer hours equal higher value and leaving on time means low commitment, challenge both assumptions: point out how logging marathon hours often hits diminishing returns or rewards performative face time over actual impact, and how leaving on time can reflect strong prioritization and boundaries rather than a lack of drive.',
+            '   - Frame consequences conditionally ("can", "often", "tends to", "may") and NEVER invent fake statistics or studies.',
+            '4. REUSABLE CANONICAL LEXICAL FRAMES: Use base verb forms in `expression` and replace context-specific object nouns with `[something]` or `[someone]`. Avoid repeating overused debate verbs like `conflate` or `paint with a broad brush`.',
+            '5. TOPIC-SPECIFIC RELATED EXTENSION & PURE IDIOMATIC ARABIC: In item (3) (`related_extension`), choose an expression tightly tied to the topic itself (e.g., `burn the candle at both ends` or `spin one\'s wheels` for overwork/efficiency, NOT generic idioms like `open a can of worms`). In `arabic_equivalent`, provide ONLY natural idiomatic Arabic—never include literal word-for-word translations.',
+            '6. DIAGNOSTIC MIRROR: If the learner\'s English is already natural, set `learner_diagnosis="already_natural"`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`.'
+        ]
+        system_prompt = '\n\n'.join(rules_list)
 
         last_err = None
         now = time.time()
-        dead_keys = getattr(self, "_dead_keys_until", {})
-        if not hasattr(self, "_dead_key_models_until"):
+        dead_keys = getattr(self, '_dead_keys_until', {})
+        if not hasattr(self, '_dead_key_models_until'):
             self._dead_key_models_until = {}
-
         healthy_key_indices = [i for i in range(len(self.keys_pool)) if dead_keys.get(i, 0) < now]
         if not healthy_key_indices and self.keys_pool:
             healthy_key_indices = list(range(len(self.keys_pool)))
@@ -1471,7 +1472,7 @@ class NYCLoungeAI:
         tries_done = 0
         for k_idx in healthy_key_indices[:2]:
             key = self.keys_pool[k_idx]
-            client = genai.Client(api_key=key, http_options={"timeout": 25000})
+            client = genai.Client(api_key=key, http_options={'timeout': 25000})
             models_to_try = self._get_active_models(client, k_idx=k_idx)
             for model_name in models_to_try:
                 if self._dead_models_until.get(model_name, 0) >= time.time():
@@ -1479,12 +1480,11 @@ class NYCLoungeAI:
                 if self._dead_key_models_until.get((k_idx, model_name), 0) >= time.time():
                     continue
                 tries_done += 1
-                prompt_suffix = ""
+                prompt_suffix = ''
                 if last_err:
-                    prompt_suffix = f"\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately."
-
+                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately.'
                 contents: List[Any] = [
-                    f"LEARNER OPINION TO CHALLENGE AS DEVIL'S ADVOCATE:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}"
+                    f'LEARNER OPINION TO CHALLENGE AS DEVIL\'S ADVOCATE:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}'
                 ]
                 try:
                     resp = client.models.generate_content(
@@ -1492,96 +1492,89 @@ class NYCLoungeAI:
                         contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt,
-                            temperature=0.3 if tries_done == 1 else 0.15,
-                            response_mime_type="application/json",
+                            temperature=0.25 if tries_done == 1 else 0.15,
+                            response_mime_type='application/json',
                             max_output_tokens=4096,
                         ),
                     )
-                    raw_text = (getattr(resp, "text", "") or "").strip()
-                    if raw_text.startswith("```"):
-                        raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
+                    raw_text = (getattr(resp, 'text', '') or '').strip()
+                    if raw_text.startswith('```'):
+                        raw_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_text, flags=re.DOTALL).strip()
                     payload_dict = json.loads(raw_text)
                     validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
                         payload_dict,
                         context=trusted_context
                     )
-                    logger.info(f"✅ Devil's Advocate LIVE Validation PASSED on try {tries_done} ({model_name})!")
+                    logger.info(f'✅ Devil\'s Advocate LIVE Validation PASSED on try {tries_done} ({model_name})!')
                     return validated
                 except Exception as e:
                     err_str = str(e)
                     last_err = err_str
-                    logger.warning(f"Devil's Advocate live try {tries_done} ({model_name}) failed: {err_str[:220]}")
-                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    logger.warning(f'Devil\'s Advocate live try {tries_done} ({model_name}) failed: {err_str[:220]}')
+                    if '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
                         self._dead_key_models_until[(k_idx, model_name)] = time.time() + 65
-                    elif "404" in err_str or "NOT_FOUND" in err_str:
+                    elif '404' in err_str or 'NOT_FOUND' in err_str:
                         self._dead_models_until[model_name] = time.time() + 86400
                 if tries_done >= 4:
                     break
             if tries_done >= 4:
                 break
 
-        # Deterministic fallback verified by LoungeTurnResponse (active_mode='banter')
+        fb_s1 = 'Putting in extra hours during a real crunch can help, but assuming more time at your desk automatically makes you more valuable ignores how quickly people hit a wall after a full day. In a lot of workplaces, staying late just rewards people who drag their feet during normal hours rather than the ones delivering real results.'
+        fb_s2 = 'And judging people who leave on time as less committed can really backfire on a team. Often, the employees who log off at five are simply better at managing their workload, whereas constant late nights can lead to burnout and sloppy mistakes down the road.'
         fallback_payload = {
-            "active_mode": "banter",
-            "learner_input_text": clean_user_text,
-            "input_intent_type": "general_conversation_or_question",
-            "learner_diagnosis": "already_natural",
-            "show_diagnostic_mirror": False,
-            "diagnostic_mirror": None,
-            "subtext_analysis": None,
-            "strategy_playbook": None,
-            "pronunciation_guide": None,
-            "host_turns": [
-                {
-                    "turn_id": "turn_1",
-                    "speaker": "marcus",
-                    "text": "Nobody is denying that starting circumstances matter, but writing off success as mostly luck ignores how preparation determines who can actually capitalize on a lucky break when it shows up. Plenty of people get handed the exact same opportunity, and the ones who put in the reps are usually the ones who turn a fortunate break into lasting success."
-                },
-                {
-                    "turn_id": "turn_2",
-                    "speaker": "chloe",
-                    "text": "Plus, convincing yourself that effort barely moves the needle can easily become a self-fulfilling prophecy that keeps you from taking calculated risks. You cannot control the hand you are dealt at birth, but discounting personal agency altogether leaves you on the sidelines even when doors do open."
-                }
+            'active_mode': 'banter',
+            'learner_input_text': clean_user_text,
+            'input_intent_type': 'general_conversation_or_question',
+            'learner_diagnosis': 'already_natural',
+            'show_diagnostic_mirror': False,
+            'diagnostic_mirror': None,
+            'subtext_analysis': None,
+            'strategy_playbook': None,
+            'pronunciation_guide': None,
+            'host_turns': [
+                {'turn_id': 'turn_1', 'speaker': 'marcus', 'text': fb_s1},
+                {'turn_id': 'turn_2', 'speaker': 'chloe', 'text': fb_s2},
             ],
-            "lexical_items": [
+            'lexical_items': [
                 {
-                    "expression": "capitalize on [something]",
-                    "source_type": "verbatim_from_host_dialogue",
-                    "source_ref_id": "turn_1",
-                    "source_speaker": "marcus",
-                    "full_sentence_citation": "Nobody is denying that starting circumstances matter, but writing off success as mostly luck ignores how preparation determines who can actually capitalize on a lucky break when it shows up.",
-                    "usage_status_label": "Verbatim from Marcus (turn_1)",
-                    "core_lexical_meaning": "Take advantage of or turn a favorable situation, chance, or resource into a practical gain.",
-                    "contextual_function": "Explains why luck alone is rarely enough without the skill and readiness required to make use of an opportunity.",
-                    "register_and_usage": "Idiomatic professional and educated general American English.",
-                    "arabic_equivalent": "يستثمر فرصةً أو يستفيد من ظرف مواتٍ",
-                    "contrastive_note": None
+                    'expression': 'hit a wall',
+                    'source_type': 'verbatim_from_host_dialogue',
+                    'source_ref_id': 'turn_1',
+                    'source_speaker': 'marcus',
+                    'full_sentence_citation': fb_s1.split('. ')[0] + '.',
+                    'usage_status_label': 'Verbatim from Marcus (turn_1)',
+                    'core_lexical_meaning': 'Reach a point of mental or physical exhaustion where productivity and focus drop sharply.',
+                    'contextual_function': 'Challenges the assumption that extra hours linearly produce more value by pointing out mental fatigue.',
+                    'register_and_usage': 'Natural everyday and professional spoken American English.',
+                    'arabic_equivalent': 'يصل إلىمرحلة الإنهاك الذهني أو الجسدي التي يتوقف عندها العطاء',
+                    'contrastive_note': None
                 },
                 {
-                    "expression": "move the needle",
-                    "source_type": "verbatim_from_host_dialogue",
-                    "source_ref_id": "turn_2",
-                    "source_speaker": "chloe",
-                    "full_sentence_citation": "Plus, convincing yourself that effort barely moves the needle can easily become a self-fulfilling prophecy that keeps you from taking calculated risks.",
-                    "usage_status_label": "Verbatim from Chloe (turn_2)",
-                    "core_lexical_meaning": "Make a noticeable, measurable difference in changing a situation or outcome.",
-                    "contextual_function": "Captures the learner's skeptical claim that hard work does not noticeably change one's life trajectory.",
-                    "register_and_usage": "Analytical, executive, and persuasive American English.",
-                    "arabic_equivalent": "يُحدث فرقاً ملموساً أو تغييراً ملحوظاً في النتيجة",
-                    "contrastive_note": None
+                    'expression': 'backfire on [someone]',
+                    'source_type': 'verbatim_from_host_dialogue',
+                    'source_ref_id': 'turn_2',
+                    'source_speaker': 'chloe',
+                    'full_sentence_citation': fb_s2.split('. ')[0] + '.',
+                    'usage_status_label': 'Verbatim from Chloe (turn_2)',
+                    'core_lexical_meaning': 'Produce an undesirable, opposite result from the one intended.',
+                    'contextual_function': 'Warns that penalizing efficient employees who leave on time can hurt team morale and retention.',
+                    'register_and_usage': 'Common conversational and professional American English.',
+                    'arabic_equivalent': 'ينقلب سلباً على صاحبه أو يأتي بنتيجة عكسية',
+                    'contrastive_note': None
                 },
                 {
-                    "expression": "play the hand you are dealt",
-                    "source_type": "related_extension",
-                    "source_ref_id": None,
-                    "source_speaker": None,
-                    "full_sentence_citation": None,
-                    "usage_status_label": "Related extension — not used in the cited response",
-                    "core_lexical_meaning": "Do the best you can with the circumstances, resources, or starting conditions life gives you.",
-                    "contextual_function": "Balances the debate by acknowledging unequal starting circumstances while emphasizing strategic action.",
-                    "register_and_usage": "Neutral to formal analytical English.",
-                    "arabic_equivalent": "يتعامل بذكاء مع الظروف والإمكانات المتاحة له",
-                    "contrastive_note": "While 'capitalize on [something]' focuses on seizing a specific external break, 'play the hand you are dealt' focuses on making the most of your starting circumstances, whether lucky or difficult."
+                    'expression': 'burn the candle at both ends',
+                    'source_type': 'related_extension',
+                    'source_ref_id': None,
+                    'source_speaker': None,
+                    'full_sentence_citation': None,
+                    'usage_status_label': 'Related extension — not used in the cited response',
+                    'core_lexical_meaning': 'Overwork oneself by working very early and very late without adequate rest.',
+                    'contextual_function': 'Directly describes the unsustainable habit of constantly working late hours to get ahead.',
+                    'register_and_usage': 'Well-known American and general English idiom.',
+                    'arabic_equivalent': 'يُجهد نفسه فوق طاقته بالعمل المتواصل دون راحة',
+                    'contrastive_note': 'While "hit a wall" describes the moment focus runs out on a given task, "burn the candle at both ends" describes a prolonged lifestyle of overwork and insufficient rest.'
                 }
             ]
         }
