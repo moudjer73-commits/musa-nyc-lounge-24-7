@@ -1375,7 +1375,7 @@ class NYCLoungeAI:
             'learner_input_text': clean_user_text,
             'runtime_has_audio_bytes': has_audio,
         }
-
+        sub_template = json.loads('{"literal_meaning": "Clear explanation of the literal surface meaning of the words (with accurate Arabic translation).", "observable_facts": "What is explicitly stated in the utterance and what situational context is known vs. unknown.", "plausible_implicatures": ["1. [Warm / Sincere Context]: Explanation of the genuine, supportive, or neutral implied meaning + natural American example + المقابل العربي الدقيق للمقصود.", "2. [Wistful / Guarded / Mildly Envious or Skeptical Context]: Explanation of the subtle or hedged implied meaning + natural American example + المقابل العربي الدقيق للمقصود.", "3. [Dry / Pointed / Sarcastic or Passive-Aggressive Context]: Explanation of the critical or ironic implied meaning + natural American example + المقابل العربي الدقيق للمقصود."], "behavior_confidence": "Moderate", "motive_confidence": "Low", "evidence_to_watch": "Vocal delivery cues (which word gets stressed, falling flat pitch vs. warm rising tone, pacing) and situational relationship that tell you which reading applies.", "escalation_options": [{"option_id": "escalation_1", "label": "Light & Deflective (Assuming Good Faith)", "objective": "Respond smoothly as if the remark was warm or playful without creating tension.", "exact_wording": "Yeah, I definitely got lucky with the timing on this one.", "makes_explicit": "Acknowledges the benefit lightly while staying humble.", "interpersonal_tradeoff": "Keeps the mood easygoing, though it does not address hidden resentment if the speaker was being sarcastic.", "when_not_to_use": "Avoid if the speaker is repeatedly making passive-aggressive digs that need a firm boundary."}, {"option_id": "escalation_2", "label": "Grounded & Clarifying (Adding Context)", "objective": "Gently correct a misconception that something came effortlessly without sounding defensive.", "exact_wording": "It has been great, though it definitely took a lot of late nights to set up.", "makes_explicit": "Signals that real effort went into the outcome while keeping a friendly tone.", "interpersonal_tradeoff": "Balances warmth with self-respect, though over-explaining can sound slightly defensive.", "when_not_to_use": "Skip when the speaker is genuinely happy for you and just making casual small talk."}, {"option_id": "escalation_3", "label": "Direct & Curious Check-In (Surfacing Subtext)", "objective": "Address a dry or pointed tone directly but calmly to see what is actually bothering the speaker.", "exact_wording": "I cannot tell if you are teasing me or if something about this feels unfair.", "makes_explicit": "Brings the unspoken tension into the open cleanly without attacking the other person.", "interpersonal_tradeoff": "Clears the air quickly, but can feel intense if the remark was only a throwaway joke.", "when_not_to_use": "Do not use in fleeting small talk where you have no stake in a deeper conversation."}]}')
         json_template_example = {
             'active_mode': 'subtext_decoder',
             'learner_input_text': clean_user_text,
@@ -1383,53 +1383,24 @@ class NYCLoungeAI:
             'learner_diagnosis': 'already_natural',
             'show_diagnostic_mirror': False,
             'diagnostic_mirror': None,
-            'subtext_analysis': {
-                'target_utterance': clean_user_text,
-                'literal_surface_meaning': 'Clear explanation of what the words mean on the surface.',
-                'actual_pragmatic_intent': 'Calibrated breakdown of the distinct implied meanings this utterance can carry depending on context and relationship (using probabilistic phrasing like may, can, often signals when context is open).',
-                'tone_and_social_signal': 'How vocal delivery (pitch, stress, warmth vs. flatness) and situational context shift the interpretation across scenarios.',
-                'arabic_pragmatic_explanation': 'Natural Arabic explanation of the literal meaning vs. the shifting pragmatic subtexts across contexts.',
-                'escalation_ladder': [
-                    {
-                        'escalation_id': 'level_1',
-                        'intensity_label': 'Context 1 — Sincere / Warm / Neutral Reading',
-                        'spoken_line': 'Natural American mini-exchange or line (4 to 28 words) where the utterance carries a genuine, warm, or neutral meaning.',
-                        'social_effect': 'How it lands socially in this sincere/neutral context.',
-                        'arabic_nuance': 'المعنى المقصود والنبرة في هذا السياق الأول'
-                    },
-                    {
-                        'escalation_id': 'level_2',
-                        'intensity_label': 'Context 2 — Wistful / Hedged / Mildly Envious or Skeptical Reading',
-                        'spoken_line': 'Natural American mini-exchange or line (4 to 28 words) showing a wistful, envious, or politely skeptical meaning.',
-                        'social_effect': 'How it lands socially in this second context.',
-                        'arabic_nuance': 'المعنى الضمني والنبرة في هذا السياق الثاني'
-                    },
-                    {
-                        'escalation_id': 'level_3',
-                        'intensity_label': 'Context 3 — Dry / Pointed / Sarcastic or Passive-Aggressive Reading',
-                        'spoken_line': 'Natural American mini-exchange or line (4 to 28 words) showing a dry, sarcastic, or resentful meaning.',
-                        'social_effect': 'How it lands socially in this third context.',
-                        'arabic_nuance': 'المعنى المبطن والنبرة في هذا السياق الثالث'
-                    }
-                ]
-            },
+            'subtext_analysis': sub_template,
             'strategy_playbook': None,
             'pronunciation_guide': None,
             'host_turns': [
                 {
                     'turn_id': 'turn_1',
                     'speaker': 'marcus',
-                    'text': '2 natural spoken American sentences explaining how Americans actually hear this phrase and what vocal cues tip you off to the speaker real intent.'
+                    'text': '2 natural spoken American sentences unpacking how Americans use and interpret this utterance across different contexts and vocal tones.'
                 },
                 {
                     'turn_id': 'turn_2',
                     'speaker': 'chloe',
-                    'text': '2 natural spoken American sentences showing how to reply smoothly when someone drops this line on you, plus a quick situational question for the learner.'
+                    'text': '2 natural spoken American sentences contrasting how a shift in situation changes the subtext, ending with a brief active-use question for the learner.'
                 }
             ],
             'lexical_items': [
                 {
-                    'expression': 'reusable canonical base pattern from turn_1 (replace context nouns with [something] or [someone])',
+                    'expression': 'reusable canonical base pattern from turn_1 (use base verb; replace context nouns with [something] or [someone])',
                     'source_type': 'verbatim_from_host_dialogue',
                     'source_ref_id': 'turn_1',
                     'source_speaker': 'marcus',
@@ -1442,7 +1413,7 @@ class NYCLoungeAI:
                     'contrastive_note': None
                 },
                 {
-                    'expression': 'reusable canonical base pattern from turn_2 (replace context nouns with [something] or [someone])',
+                    'expression': 'reusable canonical base pattern from turn_2 (use base verb; replace context nouns with [something] or [someone])',
                     'source_type': 'verbatim_from_host_dialogue',
                     'source_ref_id': 'turn_2',
                     'source_speaker': 'chloe',
@@ -1455,7 +1426,7 @@ class NYCLoungeAI:
                     'contrastive_note': None
                 },
                 {
-                    'expression': 'related expression NOT used anywhere in turn_1 or turn_2',
+                    'expression': 'related expression NOT used anywhere in turn_1, turn_2, or exact_wording',
                     'source_type': 'related_extension',
                     'source_ref_id': None,
                     'source_speaker': None,
@@ -1478,14 +1449,13 @@ class NYCLoungeAI:
             json.dumps(json_template_example, ensure_ascii=False, indent=2),
             'GENERAL SUBTEXT & PRAGMATIC ANALYSIS RULES (ZERO BIAS):',
             f'1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}',
-            '2. DECODE THE PHRASE — DO NOT ROLEPLAY AS IF THE LEARNER IS ATTACKING YOU: The learner is submitting an English phrase or scenario to have its subtext decoded. Do NOT react as if the learner is insulting you personally.',
-            '3. LITERAL VS. IMPLIED MEANING & CONTEXT SENSITIVITY:',
-            '   - Clearly state the literal surface meaning first.',
-            '   - When the phrase is submitted without a narrow context, do NOT force a single interpretation! Explain the full spectrum of implied meanings it can carry across different situations and relationships (e.g., sincere admiration/approval vs. wistful envy/reservation vs. dry sarcasm/resentment).',
-            '   - If the learner supplies a specific context, analyze that exact context first and explain how the meaning would shift in a contrasting context.',
-            '4. EPISTEMIC CALIBRATION: Use calibrated probabilistic language ("can mean", "often signals", "depending on delivery, it may express...") rather than claiming certainty about a speaker\'s hidden intent.',
-            '5. ESCALATION LADDER (`level_1`, `level_2`, `level_3`): Show 3 natural American spoken examples (each `spoken_line` MUST be 4 to 28 words) demonstrating how the exact phrase lands in 3 distinct contexts/tones, with accurate Arabic pragmatic explanations.',
-            '6. NATURAL SPOKEN DIALOGUE & LEXICAL FRAMES: Marcus and Chloe must sound like natural Americans talking in person (avoid clichés like "Let us unpack" or "shots fired"). Extract reusable canonical patterns (`[something]`/`[someone]`) from `turn_1` and `turn_2`.',
+            '2. LITERAL MEANING (`literal_meaning`): Clearly explain the literal surface meaning of the phrase and include its accurate Arabic literal meaning.',
+            '3. CONTEXT SENSITIVITY & IMPLIED MEANINGS (`plausible_implicatures`): Provide 3 distinct items in the `plausible_implicatures` list showing how the implied meaning shifts across contexts and tones (e.g., 1. Sincere/warm/neutral reading, 2. Wistful/guarded/mildly envious or skeptical reading, 3. Dry/pointed/sarcastic or passive-aggressive reading). Include a natural American mini-example and an idiomatic Arabic explanation of the intended subtext in each item.',
+            '4. EPISTEMIC CALIBRATION (`behavior_confidence`, `motive_confidence`, `observable_facts`, `evidence_to_watch`):',
+            '   - `behavior_confidence` and `motive_confidence` MUST be exactly one of: "Low", "Moderate", or "Higher". When a phrase is submitted without detailed context, set `motive_confidence` to "Low" or "Moderate" and use probabilistic language ("may", "can signal", "often means") instead of claiming certainty about hidden motives.',
+            '   - In `evidence_to_watch`, specify the exact vocal delivery cues (which word gets stressed, pitch contour, pacing, facial expression) and situational factors that disambiguate the meaning.',
+            '5. ESCALATION OPTIONS (`escalation_options`): Provide 3 calibrated response options with `option_id` set to `"escalation_1"`, `"escalation_2"`, and `"escalation_3"` in exact order. Every `exact_wording` MUST be a natural spoken American sentence between 5 and 22 words.',
+            '6. NATURAL SPOKEN DIALOGUE & LEXICAL FRAMES: Keep Marcus and Chloe conversational and concise (2 sentences each). Extract reusable canonical patterns (`[something]`/`[someone]`) that appear contiguously in `turn_1` and `turn_2`.',
         ]
         system_prompt = '\n\n'.join(rules_list)
 
@@ -1501,7 +1471,7 @@ class NYCLoungeAI:
         tries_done = 0
         for k_idx in healthy_key_indices[:3]:
             key = self.keys_pool[k_idx]
-            client = genai.Client(api_key=key, http_options={'timeout': 25000})
+            client = genai.Client(api_key=key, http_options={'timeout': 30000})
             models_to_try = self._get_active_models(client, k_idx=k_idx)
             for model_name in models_to_try:
                 if self._dead_models_until.get(model_name, 0) >= time.time():
@@ -1511,7 +1481,7 @@ class NYCLoungeAI:
                 tries_done += 1
                 prompt_suffix = ''
                 if last_err:
-                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately.'
+                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED VALIDATION WITH ERROR:\n{last_err}\nFix this error and keep strings concise so JSON is complete.'
                 contents: List[Any] = [
                     f'UTTERANCE OR SCENARIO TO DECODE FOR SUBTEXT & NUANCE:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}'
                 ]
@@ -1523,7 +1493,7 @@ class NYCLoungeAI:
                             system_instruction=system_prompt,
                             temperature=0.25 if tries_done == 1 else 0.15,
                             response_mime_type='application/json',
-                            max_output_tokens=4096,
+                            max_output_tokens=8192,
                         ),
                     )
                     raw_text = (getattr(resp, 'text', '') or '').strip()
@@ -1544,9 +1514,9 @@ class NYCLoungeAI:
                         self._dead_key_models_until[(k_idx, model_name)] = time.time() + 65
                     elif '404' in err_str or 'NOT_FOUND' in err_str:
                         self._dead_models_until[model_name] = time.time() + 86400
-                if tries_done >= 6:
+                if tries_done >= 8:
                     break
-            if tries_done >= 6:
+            if tries_done >= 8:
                 break
         raise RuntimeError(f'Subtext Decoder live generation failed after {tries_done} tries: {last_err}')
 

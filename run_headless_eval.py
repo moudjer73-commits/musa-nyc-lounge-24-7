@@ -1,29 +1,35 @@
-import os, sys, json, base64
+import os, sys, json, base64, traceback
 import config, database, ai_engine
 
 def render_subtext_telegram_message(res, vibe_label='🎙️ Articulate') -> str:
-    sub = res.subtext_analysis
+    sa = res.subtext_analysis
     lines = [
         f'🎭 Subtext & Nuance Decoder ({vibe_label})',
         '━━━━━━━━━━━━━━━━━━━━',
-        f'🗣️ Target Utterance: "{sub.target_utterance}"',
+        f'🗣️ Target Utterance: "{res.learner_input_text}"',
         '',
         f'🪞 Diagnostic Mirror: Suppressed (learner_diagnosis={res.learner_diagnosis} | show_diagnostic_mirror={res.show_diagnostic_mirror})',
         '',
         '🔍 Pragmatic & Subtext Breakdown',
-        f'• Literal Meaning: {sub.literal_surface_meaning}',
-        f'• Implied Meaning Spectrum: {sub.actual_pragmatic_intent}',
-        f'• Tone & Context Cues: {sub.tone_and_social_signal}',
-        f'• الشرح التداولي بالعربية: {sub.arabic_pragmatic_explanation}',
+        f'• Literal Meaning: {sa.literal_meaning}',
+        f'• Observable Facts: {sa.observable_facts}',
+        f'• Epistemic Calibration: Behavior Confidence={sa.behavior_confidence} | Motive Confidence={sa.motive_confidence}',
+        f'• Vocal & Context Cues to Watch: {sa.evidence_to_watch}',
         '',
-        '🎚️ Context & Tone Spectrum (How Meaning Shifts)',
+        '🎭 Plausible Implied Meanings Across Contexts:',
     ]
-    for step in sub.escalation_ladder:
+    for imp in sa.plausible_implicatures:
+        lines.append(f'  • {imp}')
+    lines.append('')
+    lines.append('🎚️ Calibrated Response & Escalation Options')
+    for opt in sa.escalation_options:
         lines.extend([
-            f'\n[{step.escalation_id}] {step.intensity_label}',
-            f'  └ 💬 Spoken Example: "{step.spoken_line}"',
-            f'  └ 🎯 Social Effect: {step.social_effect}',
-            f'  └ 🇸🇦 المقصود والنبرة: {step.arabic_nuance}',
+            f'\n[{opt.option_id}] {opt.label}',
+            f'  └ 💬 Spoken Line: "{opt.exact_wording}"',
+            f'  └ 🎯 Objective: {opt.objective}',
+            f'  └ 🔎 Makes Explicit: {opt.makes_explicit}',
+            f'  └ ⚖️ Trade-Off: {opt.interpersonal_tradeoff}',
+            f'  └ 🚫 When Not to Use: {opt.when_not_to_use}',
         ])
     lines.extend(['', '🎙️ Lounge Hosts Take (Spoken Context & Active Prompt)'])
     for t in res.host_turns:
@@ -50,11 +56,14 @@ def render_subtext_telegram_message(res, vibe_label='🎙️ Articulate') -> str
     return '\n'.join(lines)
 
 if __name__ == '__main__':
-    req = json.load(open('eval_request.json', encoding='utf-8'))
-    utt = req.get('utterance', '')
-    db = database.LoungeDatabase(user_db_path='/tmp/eval_u.db', corpus_db_path='/tmp/eval_c.db')
-    ai = ai_engine.NYCLoungeAI(api_key=config.GEMINI_API_KEY, db=db)
-    res = ai.process_subtext_decoder(user={'preferred_register': 'articulate'}, user_text=utt)
-    rendered = render_subtext_telegram_message(res)
+    try:
+        req = json.load(open('eval_request.json', encoding='utf-8'))
+        utt = req.get('utterance', 'Must be nice.')
+        db = database.LoungeDatabase(user_db_path='/tmp/eval_u.db', corpus_db_path='/tmp/eval_c.db')
+        ai = ai_engine.NYCLoungeAI(api_key=config.GEMINI_API_KEY, db=db)
+        res = ai.process_subtext_decoder(user={'preferred_register': 'articulate'}, user_text=utt)
+        rendered = render_subtext_telegram_message(res)
+    except Exception:
+        rendered = '❌ EVAL_ERROR:\n' + traceback.format_exc()
     b64 = base64.b64encode(rendered.encode('utf-8')).decode('ascii')
     print('B64_EVAL_START:' + b64 + ':B64_EVAL_END', flush=True)
