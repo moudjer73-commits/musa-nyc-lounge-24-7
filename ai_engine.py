@@ -1407,8 +1407,8 @@ class NYCLoungeAI:
                     'full_sentence_citation': 'EXACT single complete sentence from turn_1 ending in .!? containing expression.',
                     'usage_status_label': 'Verbatim from Marcus (turn_1)',
                     'core_lexical_meaning': 'Precise, calibrated definition matching the exact sense used in turn_1.',
-                    'contextual_function': 'How this expression sharpens Marcus argument.',
-                    'register_and_usage': 'Register and social tone note.',
+                    'contextual_function': 'Pragmatic function: what the speaker is doing socially/communicatively with this expression (e.g., softening pushback, signaling skepticism, setting a boundary).',
+                    'register_and_usage': 'Register & constraints: when this expression sounds natural vs. when it might sound too formal, sarcastic, or out of place, plus a short Active-Use prompt for the learner.',
                     'arabic_equivalent': 'Natural idiomatic Arabic equivalent (NO literal word-for-word calques).',
                     'contrastive_note': None
                 },
@@ -1421,7 +1421,7 @@ class NYCLoungeAI:
                     'usage_status_label': 'Verbatim from Chloe (turn_2)',
                     'core_lexical_meaning': 'Precise, calibrated definition matching the exact sense used in turn_2.',
                     'contextual_function': 'How this expression supports Chloe perspective.',
-                    'register_and_usage': 'Register and social tone note.',
+                    'register_and_usage': 'Register & constraints: when this expression sounds natural vs. when it might sound too formal, sarcastic, or out of place, plus a short Active-Use prompt for the learner.',
                     'arabic_equivalent': 'Natural idiomatic Arabic equivalent (NO literal word-for-word calques).',
                     'contrastive_note': None
                 },

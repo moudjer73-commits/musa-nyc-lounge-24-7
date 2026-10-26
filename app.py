@@ -287,8 +287,8 @@ def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> s
                 f"\n<b>({idx}) 🧩 Base Pattern: <code>{_e(it.expression)}</code></b>",
                 f"  └ {src_line}",
                 f"  └ 📖 <b>Core Meaning:</b> {_e(it.core_lexical_meaning)}",
-                f"  └ 🎯 <b>In This Context:</b> {_e(it.contextual_function)}",
-                f"  └ 🏷️ <b>Register:</b> {_e(it.register_and_usage)}",
+                f"  └ 🎯 <b>Pragmatic Function:</b> {_e(it.contextual_function)}",
+                f"  └ 🏷️ <b>Register & Constraints:</b> {_e(it.register_and_usage)}",
                 f"  └ 🇸🇦 <b>Arabic:</b> {_e(it.arabic_equivalent)}",
             ])
             if it.contrastive_note:
