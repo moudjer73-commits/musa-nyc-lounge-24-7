@@ -249,13 +249,13 @@ def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> 
     lines = [
         f"⚡ <b>What to Say When... ({vibe_label})</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"🎯 <b>Situation Read:</b> {_e(sit_sum)}\n",
+        f"🎯 <b>Situation Diagnosis:</b> {_e(sit_sum)}\n",
         f"👩🏼‍💼 <b>Chloe:</b> {_e(host_comm)}\n",
-        f"🗣️ <b>Best Instinctive Line (Say This First):</b>\n<code>{_e(best_l)}</code>\n",
-        f"🕊️ <b>Softer / Tactful Option:</b>\n<code>{_e(softer_l)}</code>\n",
-        f"🛡️ <b>Firmer / Boundary Option:</b>\n<code>{_e(firmer_l)}</code>\n",
-        f"• 🇸🇦 <b>Arabic Meaning:</b> {_e(ar_eq)}",
-        f"• 💡 <b>Why It Works:</b> {_e(why_w)}",
+        f"1️⃣ <b>Diplomatic & Natural (Best Default):</b>\n<code>{_e(best_l)}</code>\n",
+        f"2️⃣ <b>Assertive & Ownership-First:</b>\n<code>{_e(softer_l)}</code>\n",
+        f"3️⃣ <b>Concise & Direct (Fast-Moving Room):</b>\n<code>{_e(firmer_l)}</code>\n",
+        f"• 🇸🇦 <b>Arabic Meaning (Option 1):</b> {_e(ar_eq)}",
+        f"• 💡 <b>Why It Works & Tactical Trade-Off:</b> {_e(why_w)}",
         f"• 🔄 <b>If They Push Back:</b> <i>\"{_e(f_up)}\"</i>",
     ]
     upgrades = getattr(g_res, "lexical_upgrades", None) or []
