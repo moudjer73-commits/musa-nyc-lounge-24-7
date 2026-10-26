@@ -157,7 +157,7 @@ def format_lounge_turn_html(
     active_reg: str = "articulate"
 ) -> str:
     def _e(val: Any) -> str:
-        return html.escape(str(val or ""), quote=False)
+        return html.escape(str(val if val is not None else ""), quote=False)
 
     LRM = "\u200e"
     top_section = ""
@@ -240,7 +240,7 @@ def format_lounge_turn_html(
 
 def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> str:
     def _e(val: Any) -> str:
-        return html.escape(str(val or ""), quote=False)
+        return html.escape(str(val if val is not None else ""), quote=False)
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
     lines = [
@@ -297,7 +297,7 @@ def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> s
 
     lines.append(
         "\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"✅ <b>Pydantic v2 Log:</b> <code>PASSED (LoungeTurnResponse | mode={_e(d_res.active_mode)} | "
+        f"✅ <b>Pydantic v2 Log:</b> <code>PASSED (LoungeTurnResponse | mode={_e(d_res.active_mode)} [submode=devils_advocate] | "
         f"diagnosis={_e(d_res.learner_diagnosis)} | mirror={_e(d_res.show_diagnostic_mirror)} | "
         f"{len(d_res.host_turns)} host_turns | {len(d_res.lexical_items)} citations verified)</code>"
     )
@@ -307,7 +307,7 @@ def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> s
 def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> str:
     from validation_layer import count_spoken_words
     def _e(val: Any) -> str:
-        return html.escape(str(val or ""), quote=False)
+        return html.escape(str(val if val is not None else ""), quote=False)
 
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
 
@@ -1596,7 +1596,7 @@ if bot:
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
-            if mode == "devils_advocate" or any(k in text.lower() for k in ("junior engineers to work in the office", "five days a week because they cannot learn", "[devil")):
+            if mode == "devils_advocate" or any(k in text.lower() for k in ("junior engineers to work in the office", "five days a week because they cannot learn", "remote work is always better", "[devil")):
                 d_res = ai_engine.process_devils_advocate(user=user, user_text=text)
                 db.append_history(uid, "user", f"[Devil's Advocate]: {text}")
                 db.append_history(uid, "assistant", d_res.host_commentary)
