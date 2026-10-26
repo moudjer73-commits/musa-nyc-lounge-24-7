@@ -80,19 +80,26 @@ def sanitize_ai_html(raw_text: str) -> str:
 
 
 def safe_edit_text(chat_id: int, message_id: int, text: str, reply_markup=None):
-    if len(text) > 4050:
-        text = text[:4040] + "...</blockquote>" if "<blockquote" in text else text[:4040] + "..."
-    try:
-        return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup)
-    except Exception as e:
-        err_str = str(e).lower()
-        if "message is not modified" in err_str:
-            return None
+    if len(text) <= 4050:
         try:
+            return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup)
+        except Exception as e:
+            if "message is not modified" in str(e).lower():
+                return None
             return bot.send_message(chat_id, text, reply_markup=reply_markup)
-        except Exception:
-            plain = re.sub(r"<[^>]+>", "", text)
-            return bot.send_message(chat_id, plain[:4000], parse_mode=None, reply_markup=reply_markup)
+    # إذا زاد طول HTML عن 4050 حرفاً، نقسمه عند سطر جديد قبل قسم💎 دون بتر أي حرف
+    split_pos = text.rfind("\n💎", 0, 3900)
+    if split_pos == -1:
+        split_pos = text.rfind("\n", 0, 3900)
+    if split_pos == -1:
+        split_pos = 3900
+    part1 = text[:split_pos].strip()
+    part2 = text[split_pos:].strip()
+    try:
+        bot.edit_message_text(part1, chat_id, message_id)
+    except Exception:
+        bot.send_message(chat_id, part1)
+    return bot.send_message(chat_id, part2, reply_markup=reply_markup)
 
 
 def is_authorized(user_id: int, username: str = "", full_name: str = "") -> bool:
