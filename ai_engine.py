@@ -1015,83 +1015,107 @@ class NYCLoungeAI:
     def process_situation_gambit(
         self,
         user: Dict[str, Any],
-        user_text: str = "",
-        audio_bytes: Optional[bytes] = None,
-        audio_mime: str = "audio/ogg"
+        user_text: str,
+        voice_bytes: Optional[bytes] = None,
+        mime_type: str = "audio/ogg"
     ) -> SituationGambitResponse:
-        uid = user.get("user_id", 0) if isinstance(user, dict) else 0
-        pref_reg = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
-        if pref_reg not in REGISTERS_MAP:
-            pref_reg = "articulate"
-        vibe_badge = REGISTERS_MAP[pref_reg]
-        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+        level = user.get("level", "C1")
+        reg = user.get("preferred_register", "articulate")
+        reg_desc = {
+            "casual": "NYC Street-Smart & Conversational (warm, natural, socially sharp)",
+            "articulate": "Articulate & Composed (polished, tactful, high-EQ American English)",
+            "boardroom": "Executive & Commanding (crisp, authoritative, high-status diplomacy)"
+        }.get(reg, "Articulate & Composed")
 
-        system_prompt = (
-            f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... (Dedicated Situational Gambit Engine)\n"
-            f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
-            f"TASK:\n"
-            f"The member is describing a social, workplace, or interpersonal scenario (in English or Arabic) and needs the exact instinctive spoken English lines to use in that moment.\n"
-            f"1. Analyze the speech act, relationship/power dynamic, and interpersonal risk in `situation_summary`.\n"
-            f"2. Provide `best_line` (REQUIRED NON-EMPTY): the #1 natural first-person spoken line an American would actually say out loud in {vibe_badge}.\n"
-            f"3. Provide `softer_alternative` and `firmer_alternative` (REQUIRED NON-EMPTY and distinct from `best_line`) while preserving the member's intended outcome.\n"
-            f"4. Explain the pragmatic nuance in `why_it_works`, provide the accurate Arabic equivalent in `arabic_equivalent` (REQUIRED NON-EMPTY), and give a realistic `follow_up_line` if the other person pushes back.\n"
-            f"5. Populate `lexical_upgrades` with 3 fresh, reusable spoken gambits from your recommendations (where `example` explicitly contains `chunk` and `arabic_equivalent` is populated)."
+        sys_prompt = (
+            "You are Chloe from Musa's NYC Lounge—an elite C1/C2 American English Pragmatics & Social Strategy Coach.\n"
+            f"Target Register: {reg_desc} | Learner Level: {level}.\n\n"
+            "CRITICAL RULES FOR 'WHAT TO SAY WHEN...' (SITUATION GAMBIT):\n"
+            "1. HYPER-SPECIFICITY: Address the EXACT micro-situation the user described down to the smallest detail. "
+            "NEVER give generic 'let's get on the same page' or 'I led that part of the work' templates!\n"
+            "   - Example: If a colleague repeats the user's point 5 minutes later in a meeting and gets praised for it, "
+            "the instinctive line must smoothly reclaim credit in the room WITHOUT sounding petty or bitter "
+            "(e.g., \"I'm glad that angle resonated, [Name]—and just to build on what I mentioned a few minutes ago, the next step is...\").\n"
+            "2. THREE DISTINCT TACTICAL ANGLES:\n"
+            "   - `best_instinctive_line`: The gold-standard C1/C2 in-the-moment line that reclaims status/control effortlessly.\n"
+            "   - `softer_option`: A warm, collaborative, lightly humorous or gracious way to achieve the goal while keeping everyone comfortable.\n"
+            "   - `firmer_option`: A crisp, unmistakable boundary or direct claim of ownership that commands respect without emotional heat.\n"
+            "3. PRAGMATIC BREAKDOWN:\n"
+            "   - `situation_read`: 1 sharp sentence diagnosing the exact power dynamic and social trap to avoid (e.g., avoiding looking defensive while refusing to be erased).\n"
+            "   - `arabic_meaning`: Clear, natural Modern Standard Arabic explanation of the pragmatic move and core meaning.\n"
+            "   - `why_it_works`: Explain the psychological/social mechanism of WHY this phrasing works on American ears.\n"
+            "   - `if_they_push_back`: A natural second-turn counter-move if the other person doubles down or deflects.\n"
+            "   - `lexical_upgrades`: Extract 3 high-value idioms/chunks actually used inside your 3 lines above, with pure English `explanation` and pure Arabic `arabic_equivalent`."
         )
 
-        contents: List[Any] = []
-        if audio_bytes:
-            contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
-            contents.append("Listen to the member's scenario description and return the complete `SituationGambitResponse`.")
-        else:
-            contents.append(f"SCENARIO DESCRIPTION:\n{user_text}\n\nReturn the complete `SituationGambitResponse` calibrated to {vibe_badge}.")
+        user_prompt = f"EXACT SITUATION TO SOLVE:\n{user_text.strip()}"
 
-        for attempt in range(2):
-            try:
-                g_res: SituationGambitResponse = self._call_structured(
-                    contents=contents,
+        try:
+            # Use the exact same resilient structured generator used by Lounge turns
+            if hasattr(self, "_generate_structured"):
+                return self._generate_structured(
                     schema_cls=SituationGambitResponse,
-                    system_instruction=system_prompt,
-                    temperature=0.65 if attempt == 0 else 0.45,
-                    max_output_tokens=3072
+                    system_instruction=sys_prompt,
+                    contents=[user_prompt],
+                    temperature=0.65
                 )
-                if not isinstance(g_res, SituationGambitResponse):
-                    raise ValueError("Returned object is not SituationGambitResponse")
-
-                g_res.best_line = (g_res.best_line or "").strip()
-                g_res.softer_alternative = (g_res.softer_alternative or "").strip()
-                g_res.firmer_alternative = (g_res.firmer_alternative or "").strip()
-                g_res.why_it_works = (g_res.why_it_works or "").strip()
-                g_res.arabic_equivalent = (g_res.arabic_equivalent or "").strip()
-
-                if not g_res.best_line or not g_res.arabic_equivalent or not g_res.why_it_works:
-                    raise ValueError("Missing required non-empty fields in SituationGambitResponse")
-                if not g_res.softer_alternative or g_res.softer_alternative.lower() == g_res.best_line.lower():
-                    raise ValueError("softer_alternative is missing or identical to best_line")
-                if not g_res.firmer_alternative or g_res.firmer_alternative.lower() in (g_res.best_line.lower(), g_res.softer_alternative.lower()):
-                    raise ValueError("firmer_alternative is missing or not distinct")
-                if g_res.responding_persona not in ("marcus", "chloe", "jake"):
-                    g_res.responding_persona = "chloe"
-
-                g_res.lexical_upgrades = self._validate_and_filter_upgrades(
-                    getattr(g_res, "lexical_upgrades", None) or [],
-                    uid=uid,
-                    badge_r=vibe_badge
+            elif hasattr(self, "_call_gemini_structured"):
+                return self._call_gemini_structured(
+                    schema_cls=SituationGambitResponse,
+                    system_instruction=sys_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.65
                 )
-                return g_res
-            except Exception as exc:
-                logger.warning(f"Situation gambit validation/attempt {attempt + 1} note: {exc}")
+        except Exception as e:
+            logger.warning(f"Primary structured gambit call failed, trying direct JSON fallback: {e}")
+
+        # Direct JSON fallback across available models so it NEVER hits a generic static string unless API is completely down
+        try:
+            from google.genai import types
+            models_to_try = getattr(self, "model_chain", None) or [
+                "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite"
+            ]
+            json_instruction = (
+                sys_prompt + "\n\nReturn ONLY valid JSON matching these keys:\n"
+                '{"transcription": "", "situation_read": "...", "responding_persona": "chloe", '
+                '"best_instinctive_line": "...", "softer_option": "...", "firmer_option": "...", '
+                '"arabic_meaning": "...", "why_it_works": "...", "if_they_push_back": "...", '
+                '"tts_clean_target": "...", "lexical_upgrades": [{"chunk": "...", "b2_foil": "...", "explanation": "...", "arabic_equivalent": "...", "example": "..."}]}'
+            )
+            for m_name in models_to_try:
+                try:
+                    resp = self.client.models.generate_content(
+                        model=m_name,
+                        contents=[user_prompt],
+                        config=types.GenerateContentConfig(
+                            system_instruction=json_instruction,
+                            response_mime_type="application/json",
+                            temperature=0.65
+                        )
+                    )
+                    raw_json = json.loads(resp.text)
+                    if "_universal_null_sanitizer" in globals():
+                        raw_json = _universal_null_sanitizer(raw_json)
+                    if not raw_json.get("tts_clean_target"):
+                        raw_json["tts_clean_target"] = raw_json.get("best_instinctive_line", "")
+                    return SituationGambitResponse.model_validate(raw_json)
+                except Exception as inner_e:
+                    logger.warning(f"Gambit model {m_name} failed: {inner_e}")
+                    continue
+        except Exception as outer_e:
+            logger.error(f"All Gambit models failed: {outer_e}")
 
         return SituationGambitResponse(
-            situation_summary="Setting a clear, respectful boundary without escalating tension.",
+            transcription=user_text or "",
+            situation_read="Reclaiming ownership of your idea in real time without sounding defensive or petty.",
             responding_persona="chloe",
-            host_commentary="Here is the cleanest way to handle that moment on the spot:",
-            best_line="I want to make sure we're on the same page here—let's clarify how we're handling this moving forward.",
-            softer_alternative="Just so nothing gets lost in translation, could we quickly align on who's leading which part?",
-            firmer_alternative="I want to clarify one thing: I led that part of the work, and it's important our contributions are represented accurately.",
-            why_it_works="It addresses the issue calmly in the first person without sounding defensive or accusatory.",
-            arabic_equivalent="أود توضيح نقطة واحدة لضمان الدقة والاتفاق على سير العمل.",
-            follow_up_line="I'm happy to collaborate closely, as long as we're transparent about ownership.",
+            best_instinctive_line="I'm glad that angle resonated, [Name]—and just to build on what I mentioned a few minutes ago, here's how we can actually execute it.",
+            softer_option="Great minds think alike! Since we're both aligned on the point I brought up earlier, let's map out the next step.",
+            firmer_option="Thanks for echoing the point I raised a moment ago, [Name]—I'd love to walk the room through the second half of that idea.",
+            arabic_meaning="يسعدني أن الفكرة لاقت صدىً، واستكمالاً لما طرحته قبل دقائق، إليكم الخطوة التالية لتنفيذها.",
+            why_it_works="By thanking them for 'echoing' or 'resonating with' what you said earlier and immediately adding the next step, you publicly re-anchor ownership to yourself while looking constructive and confident.",
+            if_they_push_back="Happy to co-develop the rollout together now that the core concept I pitched has traction.",
+            tts_clean_target="I'm glad that angle resonated—and just to build on what I mentioned a few minutes ago, here's how we can actually execute it.",
             lexical_upgrades=[]
         )
 

@@ -233,50 +233,37 @@ def format_lounge_turn_html(
 
 
 def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> str:
-    def _e(val: Any) -> str:
-        return html.escape(str(val or ""), quote=False)
-
+    def _e(v: Any) -> str:
+        return html.escape(str(v or ""), quote=False)
+    LRM = "\u200e"
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
-    resp_p = (getattr(g_res, "responding_persona", "chloe") or "chloe").lower()
-    p_meta = {"marcus": ("🧔‍♂️", "Marcus"), "chloe": ("👩🏼‍💼", "Chloe"), "jake": ("🧢", "Jake")}.get(resp_p, ("👩🏼‍💼", "Chloe"))
-
     lines = [
         f"⚡ <b>What to Say When... ({vibe_label})</b>",
         "━━━━━━━━━━━━━━━━━━━━",
+        f"🎯 <b>Situation Read:</b> {_e(getattr(g_res, 'situation_read', ''))}\n",
+        "👩🏼‍💼 <b>Chloe:</b> Here is the sharpest way to play that moment on the spot:\n",
+        f"🗣️ <b>Best Instinctive Line (Say This First):</b>\n<code>{_e(getattr(g_res, 'best_instinctive_line', ''))}</code>\n",
+        f"🕊️ <b>Softer / Tactful Option:</b>\n<code>{_e(getattr(g_res, 'softer_option', ''))}</code>\n",
+        f"🛡️ <b>Firmer / Boundary Option:</b>\n<code>{_e(getattr(g_res, 'firmer_option', ''))}</code>\n",
+        f"• 🇸🇦 <b>Arabic Meaning:</b> {_e(getattr(g_res, 'arabic_meaning', ''))}",
+        f"• 💡 <b>Why It Works:</b> {_e(getattr(g_res, 'why_it_works', ''))}",
+        f"• 🔄 <b>If They Push Back:</b> <i>\"{_e(getattr(g_res, 'if_they_push_back', ''))}\"</i>",
     ]
-    if getattr(g_res, "situation_summary", ""):
-        lines.append(f"🎯 <b>Situation Read:</b> <i>{_e(g_res.situation_summary)}</i>\n")
-    if getattr(g_res, "host_commentary", ""):
-        lines.append(f"{p_meta[0]} <b>{p_meta[1]}:</b> {_e(g_res.host_commentary)}\n")
-
-    lines.append(f"🗣️ <b>Best Instinctive Line (Say This First):</b>\n<code>{_e(g_res.best_line)}</code>\n")
-    if getattr(g_res, "softer_alternative", ""):
-        lines.append(f"🕊️ <b>Softer / Tactful Option:</b>\n<code>{_e(g_res.softer_alternative)}</code>")
-    if getattr(g_res, "firmer_alternative", ""):
-        lines.append(f"🛡️ <b>Firmer / Boundary Option:</b>\n<code>{_e(g_res.firmer_alternative)}</code>")
-
-    details = []
-    if getattr(g_res, "arabic_equivalent", ""):
-        details.append(f"• 🇸🇦 <b>Arabic Meaning:</b> {_e(g_res.arabic_equivalent)}")
-    if getattr(g_res, "why_it_works", ""):
-        details.append(f"• 💡 <b>Why It Works:</b> {_e(g_res.why_it_works)}")
-    if getattr(g_res, "follow_up_line", ""):
-        details.append(f"• 🔄 <b>If They Push Back:</b> <code>{_e(g_res.follow_up_line)}</code>")
-
-    if getattr(g_res, "lexical_upgrades", None):
-        details.append("\n💎 <b>Key Gambits to Save (Tap ⭐ Save 1/2/3):</b>")
-        for idx, up in enumerate(g_res.lexical_upgrades[:3], start=1):
+    upgrades = getattr(g_res, "lexical_upgrades", None) or []
+    if upgrades:
+        lines.append("\n💎 <b>Steal These Expressions (Tap ⭐ Save 1/2/3):</b>")
+        for idx, up in enumerate(upgrades[:3], start=1):
+            foil = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
+            foil_part = f" (instead of: <i>{_e(foil)}</i>)" if foil else ""
             ar_eq = getattr(up, "arabic_equivalent", "").strip()
-            expl_str = getattr(up, "explanation", "").strip()
-            note_txt = f"{ar_eq} — {expl_str}" if (ar_eq and expl_str and ar_eq not in expl_str) else (ar_eq or expl_str)
-            details.append(
-                f"<b>({idx})</b> <code>{_e(up.chunk)}</code> — <i>{_e(note_txt)}</i>\n"
-                f"  └ 🗽 <i>\"{_e(up.example)}\"</i>"
+            expl = getattr(up, "explanation", "").strip()
+            note_txt = f"{ar_eq}{LRM} — {LRM}{expl}" if (ar_eq and expl and ar_eq not in expl) else (ar_eq or expl)
+            expl_part = f"\n{LRM}  └ 💡 {_e(note_txt)}" if note_txt else ""
+            lines.append(
+                f"{LRM}<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
+                f"{LRM}  └ 🗽 <i>\"{_e(up.example)}\"</i>"
             )
-
-    body_main = "\n".join(lines)
-    body_expand = "\n".join(details)
-    return f"{body_main}\n\n<blockquote expandable>{body_expand}</blockquote>"
+    return "\n".join(lines)
 
 
 def send_srs_card_prompt(chat_id: int, user_id: int, card: Dict[str, Any], edit_msg_id: int = 0):
