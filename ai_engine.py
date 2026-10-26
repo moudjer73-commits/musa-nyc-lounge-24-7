@@ -1375,7 +1375,7 @@ class NYCLoungeAI:
             'learner_input_text': clean_user_text,
             'runtime_has_audio_bytes': has_audio,
         }
-        sub_template = json.loads('{"literal_meaning": "Clear explanation of the literal surface meaning of the words (with accurate Arabic translation).", "observable_facts": "What is explicitly stated in the utterance and what situational context is known vs. unknown.", "plausible_implicatures": ["1. [Warm / Sincere Context]: Explanation of the genuine, supportive, or neutral implied meaning + natural American example + المقابل العربي الدقيق للمقصود.", "2. [Wistful / Guarded / Mildly Envious or Skeptical Context]: Explanation of the subtle or hedged implied meaning + natural American example + المقابل العربي الدقيق للمقصود.", "3. [Dry / Pointed / Sarcastic or Passive-Aggressive Context]: Explanation of the critical or ironic implied meaning + natural American example + المقابل العربي الدقيق للمقصود."], "behavior_confidence": "Moderate", "motive_confidence": "Low", "evidence_to_watch": "Vocal delivery cues (which word gets stressed, falling flat pitch vs. warm rising tone, pacing) and situational relationship that tell you which reading applies.", "escalation_options": [{"option_id": "escalation_1", "label": "Light & Deflective (Assuming Good Faith)", "objective": "Respond smoothly as if the remark was warm or playful without creating tension.", "exact_wording": "Yeah, I definitely got lucky with the timing on this one.", "makes_explicit": "Acknowledges the benefit lightly while staying humble.", "interpersonal_tradeoff": "Keeps the mood easygoing, though it does not address hidden resentment if the speaker was being sarcastic.", "when_not_to_use": "Avoid if the speaker is repeatedly making passive-aggressive digs that need a firm boundary."}, {"option_id": "escalation_2", "label": "Grounded & Clarifying (Adding Context)", "objective": "Gently correct a misconception that something came effortlessly without sounding defensive.", "exact_wording": "It has been great, though it definitely took a lot of late nights to set up.", "makes_explicit": "Signals that real effort went into the outcome while keeping a friendly tone.", "interpersonal_tradeoff": "Balances warmth with self-respect, though over-explaining can sound slightly defensive.", "when_not_to_use": "Skip when the speaker is genuinely happy for you and just making casual small talk."}, {"option_id": "escalation_3", "label": "Direct & Curious Check-In (Surfacing Subtext)", "objective": "Address a dry or pointed tone directly but calmly to see what is actually bothering the speaker.", "exact_wording": "I cannot tell if you are teasing me or if something about this feels unfair.", "makes_explicit": "Brings the unspoken tension into the open cleanly without attacking the other person.", "interpersonal_tradeoff": "Clears the air quickly, but can feel intense if the remark was only a throwaway joke.", "when_not_to_use": "Do not use in fleeting small talk where you have no stake in a deeper conversation."}]}')
+        sub_template = json.loads('{"literal_meaning": "<Explain the literal surface meaning of the words clearly + accurate Arabic literal meaning>", "observable_facts": "<State only what is explicitly observable from the words vs. what context remains unknown>", "plausible_implicatures": ["1. [Neutral / Sincere / Good-Faith Reading]: <Explain when this phrase is used sincerely or neutrally + natural spoken American example + المقابل العربي الدقيق للمقصود>", "2. [Hedged / Skeptical / Mildly Guarded Reading]: <Explain when this phrase signals polite doubt, hesitation, or wistful comparison + natural spoken American example + المقابل العربي الدقيق للمقصود>", "3. [Pointed / Dry / Indirectly Critical Reading]: <Explain when this phrase carries dry sarcasm, disapproval, or a subtle dig + natural spoken American example + المقابل العربي الدقيق للمقصود>"], "behavior_confidence": "Moderate", "motive_confidence": "Low", "evidence_to_watch": "<Order clues by reliability: (1) Prior conversational context, (2) Relationship & past history, (3) Vocal delivery cues (stress, pitch, pauses—qualified as probabilistic, never deterministic), (4) Repeated pattern>", "escalation_options": [{"option_id": "escalation_1", "label": "<Short label for Option 1: Easygoing / Good-Faith Reply>", "objective": "<Communicative goal when taking the remark lightly or constructively>", "exact_wording": "<Write a fresh, natural spoken American reply (5 to 16 words, using natural contractions) tailored specifically to the target utterance>", "makes_explicit": "<What this reply signals socially>", "interpersonal_tradeoff": "<Pros and cons of choosing this low-friction reply>", "when_not_to_use": "<When this reply would be the wrong choice>"}, {"option_id": "escalation_2", "label": "<Short label for Option 2: Clarifying / Constructive Invite>", "objective": "<Communicative goal when inviting the other person to share a better idea or clarify their concern without sounding defensive>", "exact_wording": "<Write a fresh, natural spoken American reply (5 to 16 words, using natural contractions) tailored specifically to the target utterance>", "makes_explicit": "<What this reply brings into the conversation>", "interpersonal_tradeoff": "<Pros and cons of this middle-ground reply>", "when_not_to_use": "<When to skip this option>"}, {"option_id": "escalation_3", "label": "<Short label for Option 3: Direct / Lightly Surfacing the Subtext>", "objective": "<Communicative goal when checking directly but casually if they have a real objection or dig>", "exact_wording": "<Write a fresh, natural, crisp spoken American reply (4 to 15 words, conversational—not stiff or overly formal) tailored specifically to the target utterance>", "makes_explicit": "<What unspoken tension this surfaces>", "interpersonal_tradeoff": "<Pros and cons of addressing the subtext directly>", "when_not_to_use": "<When this direct check-in is inappropriate>"}]}')
         json_template_example = {
             'active_mode': 'subtext_decoder',
             'learner_input_text': clean_user_text,
@@ -1390,53 +1390,53 @@ class NYCLoungeAI:
                 {
                     'turn_id': 'turn_1',
                     'speaker': 'marcus',
-                    'text': '2 natural spoken American sentences unpacking how Americans use and interpret this utterance across different contexts and vocal tones.'
+                    'text': '<2 natural spoken American sentences (no theatrical metaphors) explaining how Americans actually use and hear this phrase across situations.>'
                 },
                 {
                     'turn_id': 'turn_2',
                     'speaker': 'chloe',
-                    'text': '2 natural spoken American sentences contrasting how a shift in situation changes the subtext, ending with a brief active-use question for the learner.'
+                    'text': '<2 natural spoken American sentences showing how to respond smoothly in real life, ending with a short situational question for the learner.>'
                 }
             ],
             'lexical_items': [
                 {
-                    'expression': 'reusable canonical base pattern from turn_1 (use base verb; replace context nouns with [something] or [someone])',
+                    'expression': '<canonical base pattern from turn_1: strip optional adverbs like entirely/completely; use base verb + [something]/[someone]>',
                     'source_type': 'verbatim_from_host_dialogue',
                     'source_ref_id': 'turn_1',
                     'source_speaker': 'marcus',
-                    'full_sentence_citation': 'EXACT single complete sentence from turn_1 ending in .!? containing expression.',
+                    'full_sentence_citation': '<EXACT single complete sentence from turn_1 ending in .!? containing expression>',
                     'usage_status_label': 'Verbatim from Marcus (turn_1)',
-                    'core_lexical_meaning': 'Accurate, calibrated definition.',
-                    'contextual_function': 'Pragmatic function: what the speaker is doing socially with this expression.',
-                    'register_and_usage': 'Register & constraints: when it sounds natural vs. out of place.',
-                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent conveying intent.',
+                    'core_lexical_meaning': '<Accurate, calibrated definition>',
+                    'contextual_function': '<Pragmatic function in this conversation>',
+                    'register_and_usage': '[Type: phrasal_verb | idiom | conversational_frame | collocation] <When it sounds natural vs. when a simpler everyday alternative is better>',
+                    'arabic_equivalent': '<Natural idiomatic Arabic equivalent conveying intent>',
                     'contrastive_note': None
                 },
                 {
-                    'expression': 'reusable canonical base pattern from turn_2 (use base verb; replace context nouns with [something] or [someone])',
+                    'expression': '<canonical base pattern from turn_2: strip optional adverbs; use base verb + [something]/[someone]>',
                     'source_type': 'verbatim_from_host_dialogue',
                     'source_ref_id': 'turn_2',
                     'source_speaker': 'chloe',
-                    'full_sentence_citation': 'EXACT single complete sentence from turn_2 ending in .!? containing expression.',
+                    'full_sentence_citation': '<EXACT single complete sentence from turn_2 ending in .!? containing expression>',
                     'usage_status_label': 'Verbatim from Chloe (turn_2)',
-                    'core_lexical_meaning': 'Accurate, calibrated definition.',
-                    'contextual_function': 'Pragmatic function in context.',
-                    'register_and_usage': 'Register & constraints.',
-                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent conveying intent.',
+                    'core_lexical_meaning': '<Accurate, calibrated definition>',
+                    'contextual_function': '<Pragmatic function in context>',
+                    'register_and_usage': '[Type: phrasal_verb | idiom | conversational_frame | collocation] <Register & constraints>',
+                    'arabic_equivalent': '<Natural idiomatic Arabic equivalent conveying intent>',
                     'contrastive_note': None
                 },
                 {
-                    'expression': 'related expression NOT used anywhere in turn_1, turn_2, or exact_wording',
+                    'expression': '<genuine fixed idiom or phrasal verb (NOT a free -ing combination) NOT used anywhere in turn_1 or turn_2>',
                     'source_type': 'related_extension',
                     'source_ref_id': None,
                     'source_speaker': None,
                     'full_sentence_citation': None,
                     'usage_status_label': 'Related extension — not used in the cited response',
-                    'core_lexical_meaning': 'Accurate definition.',
-                    'contextual_function': 'How it relates to decoding tone, subtext, or indirect speech.',
-                    'register_and_usage': 'Register & constraints.',
-                    'arabic_equivalent': 'Natural idiomatic Arabic equivalent ONLY.',
-                    'contrastive_note': 'Precise contrast with expression 1 or 2.'
+                    'core_lexical_meaning': '<Accurate definition>',
+                    'contextual_function': '<How it relates to indirect speech, tone, or subtext>',
+                    'register_and_usage': '[Type: idiom | phrasal_verb | conversational_frame] <Register & constraints>',
+                    'arabic_equivalent': '<Natural idiomatic Arabic equivalent ONLY>',
+                    'contrastive_note': '<Precise semantic contrast with expression 1 or 2>'
                 }
             ]
         }
@@ -1445,17 +1445,14 @@ class NYCLoungeAI:
             f'{CORE_NYC_PERSONA_PROMPT}',
             'ACTIVE ENGINE: SUBTEXT & NUANCE DECODER (`active_mode=subtext_decoder`)',
             f'TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}',
-            'Return ONLY a valid JSON object matching this exact structure (no extra keys allowed):',
+            'Return ONLY a valid JSON object matching this exact schema (replace all `<...>` instructions with fresh, utterance-specific content):',
             json.dumps(json_template_example, ensure_ascii=False, indent=2),
-            'GENERAL SUBTEXT & PRAGMATIC ANALYSIS RULES (ZERO BIAS):',
+            'MANDATORY SUBTEXT DECODER RULES (ZERO BIAS & ZERO TEMPLATE LEAKAGE):',
             f'1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}',
-            '2. LITERAL MEANING (`literal_meaning`): Clearly explain the literal surface meaning of the phrase and include its accurate Arabic literal meaning.',
-            '3. CONTEXT SENSITIVITY & IMPLIED MEANINGS (`plausible_implicatures`): Provide 3 distinct items in the `plausible_implicatures` list showing how the implied meaning shifts across contexts and tones (e.g., 1. Sincere/warm/neutral reading, 2. Wistful/guarded/mildly envious or skeptical reading, 3. Dry/pointed/sarcastic or passive-aggressive reading). Include a natural American mini-example and an idiomatic Arabic explanation of the intended subtext in each item.',
-            '4. EPISTEMIC CALIBRATION (`behavior_confidence`, `motive_confidence`, `observable_facts`, `evidence_to_watch`):',
-            '   - `behavior_confidence` and `motive_confidence` MUST be exactly one of: "Low", "Moderate", or "Higher". When a phrase is submitted without detailed context, set `motive_confidence` to "Low" or "Moderate" and use probabilistic language ("may", "can signal", "often means") instead of claiming certainty about hidden motives.',
-            '   - In `evidence_to_watch`, specify the exact vocal delivery cues (which word gets stressed, pitch contour, pacing, facial expression) and situational factors that disambiguate the meaning.',
-            '5. ESCALATION OPTIONS (`escalation_options`): Provide 3 calibrated response options with `option_id` set to `"escalation_1"`, `"escalation_2"`, and `"escalation_3"` in exact order. Every `exact_wording` MUST be a natural spoken American sentence between 5 and 22 words.',
-            '6. NATURAL SPOKEN DIALOGUE & LEXICAL FRAMES: Keep Marcus and Chloe conversational and concise (2 sentences each). Extract reusable canonical patterns (`[something]`/`[someone]`) that appear contiguously in `turn_1` and `turn_2`.',
+            '2. HIERARCHY OF PRAGMATIC EVIDENCE (`evidence_to_watch`): Teach the learner to weigh clues in this order: (1) Situational Context (what happened or was proposed right before the remark), (2) Relationship & History (trust vs. rivalry/frustration), (3) Vocal Delivery (stress, pitch contour, pauses—always frame vocal cues as probabilistic possibilities using "can" or "may", never as fixed deterministic proof), and (4) Repeated Pattern.',
+            '3. UTTERANCE-SPECIFIC `escalation_options`: Every `exact_wording` MUST directly respond to the specific phrase in `learner_input_text` in natural, everyday spoken American English (use contractions like "I\'m", "that\'s", "you\'ve"; avoid defensive over-explaining or stiff textbook sentences; keep between 4 and 16 words).',
+            '4. GROUNDED HOST DIALOGUE: Keep Marcus and Chloe natural and direct—do NOT use overwritten metaphors like "passive-aggressive static" or "linguistic chameleon".',
+            '5. STRICT LEXICAL CLASSIFICATION & CANONICAL FRAMES: Strip optional intensifier adverbs (do NOT include words like "entirely", "completely", "really", "actually", "simply" inside `expression`). Never select a bare `-ing` free combination (like "masking resentment") as a target expression; choose a genuine `idiom`, `phrasal_verb`, or `conversational_frame` in base form and label its type in `register_and_usage`.',
         ]
         system_prompt = '\n\n'.join(rules_list)
 
@@ -1481,7 +1478,7 @@ class NYCLoungeAI:
                 tries_done += 1
                 prompt_suffix = ''
                 if last_err:
-                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED VALIDATION WITH ERROR:\n{last_err}\nFix this error and keep strings concise so JSON is complete.'
+                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED VALIDATION WITH ERROR:\n{last_err}\nFix this exact error immediately.'
                 contents: List[Any] = [
                     f'UTTERANCE OR SCENARIO TO DECODE FOR SUBTEXT & NUANCE:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}'
                 ]

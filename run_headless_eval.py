@@ -51,7 +51,7 @@ def render_subtext_telegram_message(res, vibe_label='🎙️ Articulate') -> str
     lines.extend([
         '',
         '━━━━━━━━━━━━━━━━━━━━',
-        f'✅ Pydantic v2 Log: PASSED (LoungeTurnResponse | mode={res.active_mode} [submode=subtext_decoder] | diagnosis={res.learner_diagnosis} | mirror={res.show_diagnostic_mirror} | {len(res.host_turns)} host_turns | {len(res.lexical_items)} citations verified)'
+        f'✅ Pydantic v2 Log: PASSED (LoungeTurnResponse | mode={res.active_mode} [submode=subtext_decoder] | diagnosis={res.learner_diagnosis} | mirror={res.show_diagnostic_mirror} | {len(res.host_turns)} host_turns | 2 in-dialogue citations matched | 1 non-cited extension verified absent)'
     ])
     return '\n'.join(lines)
 

@@ -298,7 +298,7 @@ def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> s
         "\n━━━━━━━━━━━━━━━━━━━━\n"
         f"✅ <b>Pydantic v2 Log:</b> <code>PASSED (LoungeTurnResponse | mode={_e(d_res.active_mode)} [submode={"subtext_decoder" if d_res.active_mode == "subtext_decoder" else "devils_advocate"}] | "
         f"diagnosis={_e(d_res.learner_diagnosis)} | mirror={_e(d_res.show_diagnostic_mirror)} | "
-        f"{len(d_res.host_turns)} host_turns | {len(d_res.lexical_items)} citations verified)</code>"
+        f"{len(d_res.host_turns)} host_turns | 2 in-dialogue citations matched | 1 non-cited extension verified absent)</code>"
     )
     return "\n".join(lines)
 

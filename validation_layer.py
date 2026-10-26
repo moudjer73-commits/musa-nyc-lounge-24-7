@@ -76,6 +76,8 @@ _IRREGULAR_FAMILIES = [
     {'give', 'gives', 'gave', 'given', 'giving'},
 ]
 _REFLEXIVE_SET = {'oneself', 'myself', 'yourself', 'himself', 'herself', 'itself', 'ourselves', 'yourselves', 'themselves'}
+
+_FILLER_INTENSIFIER_ADVERBS = {'entirely', 'completely', 'totally', 'really', 'actually', 'simply', 'merely', 'literally', 'definitely', 'certainly'}
 _POSSESSIVE_SET = {'ones', "one's", 'my', 'your', 'his', 'her', 'its', 'our', 'their'}
 _SLOT_WORDS = {'something', 'someone', 'somebody'}
 
@@ -160,6 +162,11 @@ def _build_token_regex(w: str) -> str:
     return '(?:' + '|'.join(escaped_forms) + ')' if len(escaped_forms) > 1 else escaped_forms[0]
 
 def verify_contiguous_expression_in_sentence(expression: str, sentence: str) -> bool:
+    _expr_low = (expression or '').lower()
+    _active_fillers = [w for w in _FILLER_INTENSIFIER_ADVERBS if w not in _expr_low]
+    if _active_fillers and sentence:
+        sentence = re.sub(r'\b(?:' + '|'.join(_active_fillers) + r')\b\s+', ' ', sentence, flags=re.IGNORECASE)
+        sentence = re.sub(r'\s{2,}', ' ', sentence)
     norm_expr = normalize_for_citation(expression).lower()
     norm_sent = normalize_for_citation(sentence).lower()
     norm_expr = re.sub(r'^to\s+', '', norm_expr).strip()
@@ -330,6 +337,14 @@ class LoungeTurnResponse(StrictBaseModel):
 
     @model_validator(mode="after")
     def enforce_all_invariants(self, info: ValidationInfo) -> "LoungeTurnResponse":
+        for _idx, _item in enumerate(self.lexical_items):
+            _expr_clean = re.sub(r'\[[^\]]+\]', ' ', _item.expression or '')
+            _toks = [t.lower() for t in re.findall(r"[a-zA-Z]+(?:'[a-zA-Z]+)?", _expr_clean)]
+            _bad_adv = [t for t in _toks if t in _FILLER_INTENSIFIER_ADVERBS]
+            if _bad_adv:
+                raise ValueError(f'lexical_items[{_idx}].expression contains optional intensifier adverb {_bad_adv}; strip it to keep the canonical Base Pattern clean.')
+            if _toks and _toks[0].endswith('ing') and _toks[0] not in ('nothing', 'something', 'anything', 'everything', 'bring', 'spring', 'sing', 'ring', 'cling', 'swing', 'sting', 'wing'):
+                raise ValueError(f'lexical_items[{_idx}].expression starts with a gerund/participle ({_toks[0]}); use the base infinitive verb form or a fixed idiom frame.')
         if not isinstance(info.context, dict):
             raise ValueError("Trusted ValidationInfo.context dict is required for LoungeTurnResponse validation.")
         ctx: Dict[str, Any] = info.context
@@ -966,3 +981,18 @@ class TestLoungeValidationLayer(unittest.TestCase):
         self.assertTrue(verify_contiguous_expression_in_sentence('erode something', 'You have inadvertently eroded the social capital.'))
         self.assertFalse(verify_contiguous_expression_in_sentence('make [something] clear', 'The market is marking its territory clear.'))
         self.assertFalse(verify_contiguous_expression_in_sentence('run into [something]', 'They were ruining into the schedule.'))
+
+    def test_30_reject_filler_adverbs_and_gerund_free_combinations_in_base_pattern(self):
+        p1 = self._base_banter_payload()
+        p1['host_turns'][0]['text'] = 'Look, this decision hinges entirely on our budget.'
+        p1['lexical_items'][0]['expression'] = 'hinge entirely on [something]'
+        p1['lexical_items'][0]['full_sentence_citation'] = 'Look, this decision hinges entirely on our budget.'
+        with self.assertRaises(ValidationError):
+            LoungeTurnResponse.model_validate(p1, context={'active_mode': 'banter', 'learner_input_text': p1['learner_input_text'], 'runtime_has_audio_bytes': False})
+        p1['lexical_items'][0]['expression'] = 'hinge on [something]'
+        res = LoungeTurnResponse.model_validate(p1, context={'active_mode': 'banter', 'learner_input_text': p1['learner_input_text'], 'runtime_has_audio_bytes': False})
+        self.assertEqual(res.lexical_items[0].expression, 'hinge on [something]')
+        p2 = self._base_banter_payload()
+        p2['lexical_items'][0]['expression'] = 'masking resentment'
+        with self.assertRaises(ValidationError):
+            LoungeTurnResponse.model_validate(p2, context={'active_mode': 'banter', 'learner_input_text': p1['learner_input_text'], 'runtime_has_audio_bytes': False})
