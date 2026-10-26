@@ -1621,7 +1621,7 @@ if bot:
                     message.chat.id,
                     status_msg.message_id,
                     formatted_html,
-                    reply_markup=LoungeKeyboards.SaveAndVoiceRow(token_key, d_res.lexical_upgrades, show_voice=True)
+                    reply_markup=LoungeKeyboards.turn_action_bar(token_key, len(upgrades_dicts), has_user_voice=False, has_host_voice=True, persona_key=active_cast_key, recast_label="🗣️ Hear Debate")
                 )
                 return
             elif mode == "situation_gambit" or any(k in text.lower() for k in ("how do i push back", "what do i say", "without making it sound like", "without sounding uncooperative")):
