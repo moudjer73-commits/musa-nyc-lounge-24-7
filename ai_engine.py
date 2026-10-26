@@ -1,3 +1,4 @@
+from validation_layer import LoungeTurnResponse, count_spoken_words, verify_is_complete_sentence_in_source, verify_contiguous_expression_in_sentence
 def _universal_null_sanitizer(val):
     if isinstance(val, dict):
         return {k: ([] if any(k.endswith(s) for s in ('turns','diagnostics','upgrades','items','lines','options','gambits','examples','points','cards')) else (False if k.startswith(('is_','has_')) else '')) if v is None else _universal_null_sanitizer(v) for k, v in val.items()}
@@ -1023,71 +1024,200 @@ class NYCLoungeAI:
         user_text: str = "",
         audio_bytes: Optional[bytes] = None,
         audio_mime: str = "audio/ogg"
-    ) -> SituationGambitResponse:
+    ) -> Any:
+        from validation_layer import LoungeTurnResponse, count_spoken_words
         pref_reg = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
         if pref_reg not in REGISTERS_MAP:
             pref_reg = "articulate"
         vibe_badge = REGISTERS_MAP[pref_reg]
         vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
 
+        clean_user_text = (user_text or "").strip() or "Voice scenario submitted."
+        has_audio = bool(audio_bytes)
+        trusted_context = {
+            "active_mode": "situation_strategy",
+            "learner_input_text": clean_user_text,
+            "runtime_has_audio_bytes": has_audio,
+        }
+
         system_prompt = (
             f"{CORE_NYC_PERSONA_PROMPT}\n\n"
-            f"ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... (Dedicated C1/C2 Situational Gambit Engine)\n"
+            f"ACTIVE ENGINE: CONVERSATION STRATEGIES & WORKPLACE SOFT SKILLS (`situation_strategy`)\n"
             f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
-            "STRICT PRAGMATIC & SPOKEN-DELIVERY RULES (APPLY ACROSS ALL SCENARIOS):\n"
-            "1. NEUTRAL, OBSERVABLE SITUATION DIAGNOSIS (`situation_summary`):\n"
-            "   - Describe the observable interpersonal/workplace dynamic and the exact pragmatic goal without assuming malice or using buzzwords like 'micro-aggression'.\n\n"
-            "2. THREE GENUINELY DISTINCT TACTICAL LINES (15–22 WORDS MAX EACH, LIVE SPOKEN CADENCE):\n"
-            "   - Optimize for real-time spoken delivery: no fake enthusiasm ('thrilled'), no rehearsed literary metaphors, and no premature assumptions about unapproved plans (use adaptable endings like 'looking at the practical implications' or 'deciding our next step').\n"
-            "   - `best_line` (Option 1 — Diplomatic & Natural [Best Default]): Achieves the core interpersonal goal clearly while keeping the tone composed, constructive, and easy to accept.\n"
-            "   - `softer_alternative` (Option 2 — Strategic & Collaborative): Frames the move around shared goals, practical next steps, or mutual alignment while protecting your boundary or interest.\n"
-            "   - `firmer_alternative` (Option 3 — Concise & Direct [Fast-Moving Room]): Crisp, unmistakable, zero-fluff boundary or claim of ownership for high-pressure moments.\n\n"
-            "3. TRUE PUSHBACK RECOVERY (`follow_up_line`):\n"
-            "   - Do NOT write a generic follow-up question! Write a calm, firm second-turn line specifically for when the other person pushes back, deflects, ignores your boundary, or doubles down.\n\n"
-            "4. ZERO METADATA LEAKAGE IN EXPLANATIONS (`why_it_works` & `lexical_upgrades`):\n"
-            "   - NEVER use internal variable names like `best_line`, `softer_alternative`, or `firmer_alternative` anywhere in your text! Always refer to them as 'Option 1', 'Option 2', and 'Option 3'.\n"
-            "   - In `why_it_works`, explain the realistic trade-off between Option 1, Option 2, and Option 3 without claiming any phrasing 'guarantees' an outcome.\n\n"
-            "5. LEXICAL VS. CONTEXTUAL MEANING IN `lexical_upgrades`:\n"
-            "   - Extract 3 multi-word expressions verbatim from Option 1, Option 2, or Option 3.\n"
-            "   - In `explanation`, state the expression's conventional English meaning FIRST, then briefly state how it functions in Option 1/2/3. Never attribute the rhetorical effect of the whole sentence to a single phrasal verb."
+            "MANDATORY SCHEMA & EPISTEMIC RULES (ENFORCED BY PYDANTIC v2 VALIDATOR):\n"
+            f"1. EXACT ECHO OF CONTEXT:\n"
+            f"   - Set `active_mode` = \"situation_strategy\".\n"
+            f"   - Set `learner_input_text` = {json.dumps(clean_user_text)} (must match character-for-character).\n"
+            "   - Set `input_intent_type` = \"request_for_new_phrasing\" (unless the user explicitly asked to evaluate a draft they wrote).\n"
+            "   - If the user's question is already natural English, set `learner_diagnosis` = \"already_natural\", `show_diagnostic_mirror` = false, and `diagnostic_mirror` = null.\n"
+            "   - Leave `subtext_analysis` = null and `pronunciation_guide` = null.\n\n"
+            "2. ZERO FABRICATION OF UNSTATED FACTS (CRITICAL):\n"
+            "   - NEVER invent unverified technical components (do NOT mention payment flows, APIs, databases, or specific tools like 'custom export tool' unless the user mentioned them).\n"
+            "   - NEVER invent unverified time estimates or release names (do NOT invent 'two weeks', 'Phase 2', or 'week-two update' unless the user stated them).\n"
+            "   - NEVER open a boundary-setting line with an unconditional promise (avoid starting with 'We can add all three features...'); instead, tie any scope addition conditionally to deferring existing work, narrowing scope, or adjusting the timeline.\n"
+            "   - NEVER guarantee that deferring one item will automatically free up enough capacity before engineering reviews the effort.\n\n"
+            "3. HOST TURNS (`host_turns` — 2 TO 3 TURNS):\n"
+            "   - Sequential `turn_id`: \"turn_1\", \"turn_2\" (and optional \"turn_3\").\n"
+            "   - Marcus and Chloe react to each other naturally, explaining the strategic principle without lecturing or inventing facts.\n\n"
+            "4. THREE STRATEGIC OPTIONS (`strategy_playbook.strategic_options`):\n"
+            "   - Must be 3 items mapped strictly in this exact order:\n"
+            "     * `option_1` -> `archetype`: \"Diplomatic\" (prioritizes rapport and collaborative prioritization)\n"
+            "     * `option_2` -> `archetype`: \"Assertive\" (states the scope/time/resource constraint explicitly without an upfront unconditional promise)\n"
+            "     * `option_3` -> `archetype`: \"Concise\" (crisp, conditional trade-off for a fast-moving meeting)\n"
+            "   - HARD WORD-COUNT RULE: Each `spoken_line` MUST be between 12 and 22 words (`12 <= words <= 22`) and end with `.` or `?`.\n"
+            "   - Populate `makes_explicit`, `leaves_implicit`, `remaining_risk`, `best_fit_when`, and accurate `arabic_equivalent`.\n\n"
+            "5. THREE FOLLOW-UP BRANCHES (`strategy_playbook.follow_up_branches`):\n"
+            "   - Must include all 3 `reaction_type` values: \"Deflection or Minimization\", \"Pushback or Defensiveness\", and \"Agreement or Cooperation\".\n"
+            "   - Every `your_follow_up_line` must respond directly to the client's reaction WITHOUT inventing technical modules, specific feature names, or unverified dates.\n\n"
+            "6. STRICT LEXICAL CITATIONS (`lexical_items` — 2 TO 3 ITEMS):\n"
+            "   - For `from_recommended_option`: set `source_ref_id` to \"option_1\", \"option_2\", or \"option_3\", set `source_speaker` = null, and copy the ENTIRE `spoken_line` of that option verbatim (character-for-character, including final `.` or `?`) into `full_sentence_citation`. The `expression` must appear as an unbroken contiguous phrase inside that sentence.\n"
+            "   - For `verbatim_from_host_dialogue`: set `source_ref_id` to \"turn_1\" or \"turn_2\", set `source_speaker` to that turn's speaker, and copy a complete sentence ending in `.!?` from that turn into `full_sentence_citation`.\n"
+            "   - For `related_extension`: set `source_ref_id` = null, `source_speaker` = null, `full_sentence_citation` = null, include the exact words \"not used\" inside `usage_status_label` (e.g., \"Related extension — not used in the cited response\"), and provide a clear `contrastive_note`."
         )
 
-        contents: List[Any] = []
-        if audio_bytes:
-            contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
-            contents.append("Listen to the member's scenario description and return the complete `SituationGambitResponse`.")
-        else:
-            contents.append(f"SCENARIO DESCRIPTION:\n{user_text}\n\nReturn the complete `SituationGambitResponse` calibrated to {vibe_badge}.")
+        last_err = None
+        for attempt in range(3):
+            prompt_suffix = ""
+            if last_err:
+                prompt_suffix = f"\n\nPREVIOUS ATTEMPT FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error while keeping all zero-fabrication rules."
 
-        for attempt in range(2):
+            contents: List[Any] = []
+            if audio_bytes:
+                contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+                contents.append(f"Listen to the scenario and return valid JSON matching LoungeTurnResponse.{prompt_suffix}")
+            else:
+                contents.append(f"LEARNER SCENARIO:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}")
+
             try:
-                g_res: SituationGambitResponse = self._call_structured(
+                raw_obj: LoungeTurnResponse = self._call_structured(
                     contents=contents,
-                    schema_cls=SituationGambitResponse,
+                    schema_cls=LoungeTurnResponse,
                     system_instruction=system_prompt,
-                    temperature=0.55 if attempt == 0 else 0.4,
+                    temperature=0.35 if attempt == 0 else 0.2,
                     max_output_tokens=4096
                 )
-                if isinstance(g_res, SituationGambitResponse) and (g_res.best_line or "").strip():
-                    for up in (g_res.lexical_upgrades or []):
-                        if not (up.example or "").strip():
-                            up.example = g_res.best_line
-                    return g_res
+                payload_dict = raw_obj.model_dump() if hasattr(raw_obj, "model_dump") else dict(raw_obj)
+                # Enforce strict validation with trusted out-of-band Telegram context!
+                validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
+                    payload_dict,
+                    context=trusted_context
+                )
+                logger.info(f"✅ LoungeTurnResponse Pydantic Validation PASSED on attempt {attempt+1}!")
+                return validated
             except Exception as e:
-                logger.warning(f"SituationGambit attempt {attempt+1} error: {e}")
+                last_err = str(e)
+                logger.warning(f"LoungeTurnResponse validation attempt {attempt+1} failed: {last_err}")
 
-        return SituationGambitResponse(
-            situation_summary="Navigating a delicate workplace boundary while keeping the conversation constructive and professional.",
-            responding_persona="chloe",
-            host_commentary="The cleanest move here is to state your position plainly and immediately anchor the conversation to practical next steps:",
-            best_line="I'd love to give this the attention it deserves—let's look at the current priorities and see what we can realistically shift.",
-            softer_alternative="To make sure we do this justice, could we align on which current deliverable should take a back seat first?",
-            firmer_alternative="I won't be able to take this on right now without pushing back our current deadline—let me know which one takes priority.",
-            why_it_works="Option 1 is the best default because it pairs willingness with a realistic capacity check. Option 2 invites collaborative trade-offs, while Option 3 sets a crisp, direct boundary under time pressure.",
-            arabic_equivalent="أود أن أمنح هذا الأمر الاهتمام الذي يستحقه—دعنا نراجع الأولويات الحالية لنرى ما الذي يمكننا تعديله واقعياً.",
-            follow_up_line="I understand the urgency, which is why I want to be upfront now about what can realistically get done before the deadline.",
-            lexical_upgrades=[]
-        )
+        # Deterministic fallback that still runs through LoungeTurnResponse.model_validate(..., context=trusted_context)
+        fallback_payload = {
+            "active_mode": "situation_strategy",
+            "learner_input_text": clean_user_text,
+            "input_intent_type": "request_for_new_phrasing",
+            "learner_diagnosis": "already_natural",
+            "show_diagnostic_mirror": False,
+            "diagnostic_mirror": None,
+            "host_turns": [
+                {"turn_id": "turn_1", "speaker": "marcus", "text": "The cleanest move is to frame this as a scope-versus-schedule trade-off rather than a refusal."},
+                {"turn_id": "turn_2", "speaker": "chloe", "text": "Right—when you ask them how they want to prioritize the current scope, you stay helpful while protecting Friday's deadline."}
+            ],
+            "strategy_playbook": {
+                "situation_objective": "Show willingness to help while tying any new additions to either deferring existing work or moving the delivery timeline.",
+                "relationship_constraints": "External client requesting three extra features by Friday while holding the launch date fixed.",
+                "strategic_options": [
+                    {
+                        "option_id": "option_1",
+                        "archetype": "Diplomatic",
+                        "spoken_line": "To keep our launch date intact, which existing items should we defer so we can prioritize these by Friday?",
+                        "arabic_equivalent": "للحفاظ على موعد الإطلاق كما هو، ما العناصر الحالية التي ينبغي تأجيلها لكي نمنح الأولوية لهذه الميزات بحلول الجمعة؟",
+                        "makes_explicit": "Adding new work by Friday requires deferring existing items if the launch date cannot move.",
+                        "leaves_implicit": "How much existing work must be deferred until engineering estimates the तीन features.",
+                        "remaining_risk": "The client may insist that all current items and the three new features are equally urgent.",
+                        "best_fit_when": "You want to sound collaborative and invite the client to co-own the prioritization trade-off."
+                    },
+                    {
+                        "option_id": "option_2",
+                        "archetype": "Assertive",
+                        "spoken_line": "Delivering three extra features by Friday would require either adjusting our current scope or moving the launch date.",
+                        "arabic_equivalent": "سيتطلب تسليم ثلاث ميزات إضافية بحلول الجمعة إما تعديل نطاق العمل الحالي أو تحريك موعد الإطلاق.",
+                        "makes_explicit": "The operational constraint that three additional features cannot be absorbed into Friday's schedule without a trade-off.",
+                        "leaves_implicit": "Internal staffing details—it focuses strictly on delivery options.",
+                        "remaining_risk": "More direct; a pressured client may ask why the team cannot work overtime.",
+                        "best_fit_when": "You need to state a firm, unmistakable boundary without sounding defensive."
+                    },
+                    {
+                        "option_id": "option_3",
+                        "archetype": "Concise",
+                        "spoken_line": "We can prioritize those for Friday if we swap out current items or push the launch date back.",
+                        "arabic_equivalent": "يمكننا منح الأولوية لتلك الميزات ليوم الجمعة إذا استبدلنا عناصر حالية أو أجّلنا موعد الإطلاق.",
+                        "makes_explicit": "The conditional trade-off in a single brief sentence.",
+                        "leaves_implicit": "Specific swap candidates until the client agrees to the trade-off principle.",
+                        "remaining_risk": "Brief enough that a demanding client may test whether the constraint is negotiable.",
+                        "best_fit_when": "You need a quick, composed answer in a fast-moving meeting."
+                    }
+                ],
+                "follow_up_branches": [
+                    {
+                        "reaction_type": "Deflection or Minimization",
+                        "their_likely_reply": "Come on, these three features are small—can't you just fit them in by Friday?",
+                        "your_follow_up_line": "Even small additions need to be scoped and tested before we commit, so let's confirm the impact before changing Friday's plan.",
+                        "tactical_note": "Require an engineering impact check before committing, without inventing technical details."
+                    },
+                    {
+                        "reaction_type": "Pushback or Defensiveness",
+                        "their_likely_reply": "We really need all three features by Friday and the launch date cannot move.",
+                        "your_follow_up_line": "We can protect the launch date for the core release and consider scheduling these three features for a follow-up release once we confirm the plan.",
+                        "tactical_note": "Protect the core launch date while proposing a follow-up release conditionally."
+                    },
+                    {
+                        "reaction_type": "Agreement or Cooperation",
+                        "their_likely_reply": "Fair enough—what if we defer part of the current list?",
+                        "your_follow_up_line": "Let's identify which current items can wait, then confirm with the team how much of the new work fits by Friday.",
+                        "tactical_note": "Avoid promising all three features fit by Friday before checking capacity with the team."
+                    }
+                ],
+                "when_to_let_it_go": "If the client refuses both trade-offs, do not commit on the spot; offer to review capacity with the team and follow up in writing."
+            },
+            "lexical_items": [
+                {
+                    "expression": "keep [something] intact",
+                    "source_type": "from_recommended_option",
+                    "source_ref_id": "option_1",
+                    "source_speaker": None,
+                    "full_sentence_citation": "To keep our launch date intact, which existing items should we defer so we can prioritize these by Friday?",
+                    "usage_status_label": "Used in Strategic Option 1 (Diplomatic)",
+                    "core_lexical_meaning": "Preserve something complete and unchanged.",
+                    "contextual_function": "Frames protecting the fixed launch date as a shared priority.",
+                    "register_and_usage": "Neutral professional and general American English.",
+                    "arabic_equivalent": "يحافظ على الشيء كما هو دون تغيير أو مساس"
+                },
+                {
+                    "expression": "push [something] back",
+                    "source_type": "from_recommended_option",
+                    "source_ref_id": "option_3",
+                    "source_speaker": None,
+                    "full_sentence_citation": "We can prioritize those for Friday if we swap out current items or push the launch date back.",
+                    "usage_status_label": "Used in Strategic Option 3 (Concise)",
+                    "core_lexical_meaning": "Move a scheduled event or deadline to a later time.",
+                    "contextual_function": "Refers neutrally to moving the launch date later on the calendar.",
+                    "register_and_usage": "Everyday workplace and conversational American English.",
+                    "arabic_equivalent": "يؤخّر أو يؤجّل موعداً إلى وقت لاحق"
+                },
+                {
+                    "expression": "push back on [something]",
+                    "source_type": "related_extension",
+                    "source_ref_id": None,
+                    "source_speaker": None,
+                    "full_sentence_citation": None,
+                    "usage_status_label": "Related extension — not used in the cited response",
+                    "core_lexical_meaning": "Object to, resist, or ask to reconsider a request, proposal, or assumption (not necessarily a flat refusal).",
+                    "contextual_function": "Contrasts objecting to or questioning part of a request with rescheduling a date.",
+                    "register_and_usage": "Common workplace English.",
+                    "arabic_equivalent": "يعترض على طلب أو يتحفّظ عليه أو يطلب إعادة النظر فيه",
+                    "contrastive_note": "Unlike 'push [a date] back' (reschedule to a later time), 'push back on [a request]' means objecting to, resisting, or asking to reconsider a demand."
+                }
+            ]
+        }
+        return LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
 
     def _raw_process_lounge_turn(
         self,

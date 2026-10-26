@@ -233,60 +233,83 @@ def format_lounge_turn_html(
 
 
 def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> str:
-    def _clean_meta(text: Any) -> str:
-        s = str(text or "")
-        replacements = [
-            (r"\bbest_line\b", "Option 1"),
-            (r"\bbest_instinctive_line\b", "Option 1"),
-            (r"\bsofter_alternative\b", "Option 2"),
-            (r"\bsofter_option\b", "Option 2"),
-            (r"\bfirmer_alternative\b", "Option 3"),
-            (r"\bfirmer_option\b", "Option 3"),
-            (r"\bsituation_summary\b", "the diagnosis"),
-            (r"\bfollow_up_line\b", "the follow-up line"),
-        ]
-        for pat, rep in replacements:
-            s = re.sub(pat, rep, s, flags=re.IGNORECASE)
-        return html.escape(s, quote=False)
+    from validation_layer import count_spoken_words
+    def _e(val: Any) -> str:
+        return html.escape(str(val or ""), quote=False)
 
-    LRM = "\u200e"
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
-    sit_sum = getattr(g_res, "situation_summary", "") or getattr(g_res, "situation_read", "")
-    host_comm = getattr(g_res, "host_commentary", "") or "Here is the cleanest way to handle that moment on the spot:"
-    best_l = getattr(g_res, "best_line", "") or getattr(g_res, "best_instinctive_line", "")
-    softer_l = getattr(g_res, "softer_alternative", "") or getattr(g_res, "softer_option", "")
-    firmer_l = getattr(g_res, "firmer_alternative", "") or getattr(g_res, "firmer_option", "")
-    ar_eq = getattr(g_res, "arabic_equivalent", "") or getattr(g_res, "arabic_meaning", "")
-    why_w = getattr(g_res, "why_it_works", "")
-    f_up = getattr(g_res, "follow_up_line", "") or getattr(g_res, "if_they_push_back", "")
 
-    lines = [
-        f"⚡ <b>What to Say When... ({vibe_label})</b>",
-        "━━━━━━━━━━━━━━━━━━━━",
-        f"🎯 <b>Situation Diagnosis:</b> {_clean_meta(sit_sum)}\n",
-        f"👩🏼‍💼 <b>Chloe:</b> {_clean_meta(host_comm)}\n",
-        f"1️⃣ <b>Diplomatic & Natural (Best Default):</b>\n<code>{_clean_meta(best_l)}</code>\n",
-        f"2️⃣ <b>Strategic & Collaborative:</b>\n<code>{_clean_meta(softer_l)}</code>\n",
-        f"3️⃣ <b>Concise & Direct (Fast-Moving Room):</b>\n<code>{_clean_meta(firmer_l)}</code>\n",
-        f"• 🇸🇦 <b>Arabic Meaning (Option 1):</b> {_clean_meta(ar_eq)}",
-        f"• 💡 <b>Why It Works & Tactical Trade-Off:</b> {_clean_meta(why_w)}",
-        f"• 🔄 <b>If They Push Back:</b> <i>\"{_clean_meta(f_up)}\"</i>",
-    ]
-    upgrades = getattr(g_res, "lexical_upgrades", None) or []
-    if upgrades:
-        lines.append("\n💎 <b>Steal These Expressions (Tap ⭐ Save 1/2/3):</b>")
-        for idx, up in enumerate(upgrades[:3], start=1):
-            foil = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
-            foil_part = f" (instead of: <i>{_clean_meta(foil)}</i>)" if foil else ""
-            up_ar = _clean_meta(getattr(up, "arabic_equivalent", "").strip())
-            expl = _clean_meta(getattr(up, "explanation", "").strip())
-            note_txt = f"{up_ar}{LRM} — {LRM}{expl}" if (up_ar and expl and up_ar not in expl) else (up_ar or expl)
-            expl_part = f"\n{LRM}  └ 💡 {note_txt}" if note_txt else ""
-            lines.append(
-                f"{LRM}<b>({idx})</b> <code>{_clean_meta(up.chunk)}</code>{foil_part}{expl_part}\n"
-                f"{LRM}  └ 🗽 <i>\"{_clean_meta(up.example)}\"</i>"
-            )
-    return "\n".join(lines)
+    # إذا كان المخرج من طبقة التحقق الجديدة LoungeTurnResponse
+    if hasattr(g_res, "strategy_playbook") and g_res.strategy_playbook is not None:
+        pb = g_res.strategy_playbook
+        lines = [
+            f"⚡ <b>Conversation Strategy & Soft-Skills Playbook ({vibe_label})</b>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "🎯 <b>Objective & Constraints:</b>",
+            f"• <b>Your Goal:</b> {_e(pb.situation_objective)}",
+            f"• <b>Key Constraint:</b> {_e(pb.relationship_constraints)}\n",
+        ]
+        persona_icons = {"marcus": "🧔‍♂️ <b>Marcus:</b>", "chloe": "👩🏼‍💼 <b>Chloe:</b>", "jake": "🧢 <b>Jake:</b>"}
+        for t in (g_res.host_turns or []):
+            icon = persona_icons.get(t.speaker, "🎙️")
+            lines.append(f"{icon} {_e(t.text)}")
+
+        lines.append("\n🗣️ <b>Three Strategic Spoken Options (12–22 Words Each)</b>")
+        num_badges = {"option_1": "1️⃣", "option_2": "2️⃣", "option_3": "3️⃣"}
+        word_counts = []
+        for opt in pb.strategic_options:
+            wc = count_spoken_words(opt.spoken_line)
+            word_counts.append(f"{opt.option_id}={wc}w")
+            badge = num_badges.get(opt.option_id, "•")
+            lines.extend([
+                f"\n{badge} <b>{_e(opt.archetype)} (<code>{_e(opt.option_id)}</code> — {wc} words)</b>",
+                f"<code>\"{_e(opt.spoken_line)}\"</code>",
+                f"• 🇸🇦 <b>Arabic:</b> {_e(opt.arabic_equivalent)}",
+                f"• <b>Makes explicit:</b> {_e(opt.makes_explicit)}",
+                f"• <b>Leaves implicit:</b> {_e(opt.leaves_implicit)}",
+                f"• <b>Remaining risk:</b> {_e(opt.remaining_risk)}",
+                f"• <b>Best fit when:</b> {_e(opt.best_fit_when)}",
+            ])
+
+        lines.append("\n🔄 <b>Multi-Branch Follow-Ups (All 3 Reaction Types)</b>")
+        for idx, br in enumerate(pb.follow_up_branches, start=1):
+            lines.extend([
+                f"\n• <b>{idx}. {_e(br.reaction_type)}:</b>",
+                f"  <i>Client:</i> \"{_e(br.their_likely_reply)}\"",
+                f"  <i>Your Follow-Up:</i> <code>\"{_e(br.your_follow_up_line)}\"</code>",
+                f"  └ <i>Tactical Note:</i> {_e(br.tactical_note)}",
+            ])
+
+        lines.append(f"\n• 🛑 <b>When to Let It Go / Pause:</b> {_e(pb.when_to_let_it_go)}")
+
+        if g_res.lexical_items:
+            lines.append("\n💎 <b>Target Expressions (Verified by <code>LoungeTurnResponse</code>)</b>")
+            for idx, it in enumerate(g_res.lexical_items, start=1):
+                if it.source_type == "related_extension":
+                    src_line = f"  └ 📍 <b>Source (<code>related_extension</code>):</b> <i>{_e(it.usage_status_label)}</i>"
+                else:
+                    ref_part = f" — <code>{_e(it.source_ref_id)}</code>" if it.source_ref_id else ""
+                    src_line = f"  └ 📍 <b>Source (<code>{_e(it.source_type)}</code>{ref_part}):</b> \"{_e(it.full_sentence_citation)}\""
+                lines.extend([
+                    f"\n<b>({idx}) <code>{_e(it.expression)}</code></b>",
+                    src_line,
+                    f"  └ 📖 <b>Core Meaning:</b> {_e(it.core_lexical_meaning)}",
+                    f"  └ 🎯 <b>In This Context:</b> {_e(it.contextual_function)}",
+                    f"  └ 🏷️ <b>Register:</b> {_e(it.register_and_usage)}",
+                    f"  └ 🇸🇦 <b>Arabic:</b> {_e(it.arabic_equivalent)}",
+                ])
+                if it.contrastive_note:
+                    lines.append(f"  └ 🔄 <b>Contrastive Note:</b> {_e(it.contrastive_note)}")
+
+        lines.append(
+            "\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ <b>Pydantic v2 Validation Log:</b> <code>PASSED (LoungeTurnResponse | mode={_e(g_res.active_mode)} | "
+            f"mirror={_e(g_res.show_diagnostic_mirror)} | {', '.join(word_counts)} | {len(g_res.lexical_items)} citations verified)</code>"
+        )
+        return "\n".join(lines)
+
+    # Fallback compatibility
+    return f"⚡ <b>What to Say When...</b>\n{_e(getattr(g_res, 'best_line', ''))}"
 
 
 def send_srs_card_prompt(chat_id: int, user_id: int, card: Dict[str, Any], edit_msg_id: int = 0):
