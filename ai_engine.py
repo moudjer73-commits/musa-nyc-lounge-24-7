@@ -1390,50 +1390,50 @@ class NYCLoungeAI:
                 {
                     'turn_id': 'turn_1',
                     'speaker': 'marcus',
-                    'text': '2 natural spoken American sentences acknowledging where the premise has a point before challenging its core causal assumption without inventing statistics.'
+                    'text': '2 natural spoken American sentences acknowledging the valid kernel in the learner premise before challenging its core causal assumption.'
                 },
                 {
                     'turn_id': 'turn_2',
                     'speaker': 'chloe',
-                    'text': '2 natural spoken American sentences exposing a practical second-order trade-off or alternative explanation using everyday idiomatic English instead of consultant jargon.'
+                    'text': '2 natural spoken American sentences exposing a distinct second-order consequence or alternative explanation using everyday idiomatic English.'
                 }
             ],
             'lexical_items': [
                 {
-                    'expression': 'reusable canonical frame from turn_1 (replace topic nouns with [something] or [someone])',
+                    'expression': 'reusable canonical frame from turn_1 (use base verb form; replace topic nouns with [something] or [someone])',
                     'source_type': 'verbatim_from_host_dialogue',
                     'source_ref_id': 'turn_1',
                     'source_speaker': 'marcus',
                     'full_sentence_citation': 'EXACT single complete sentence from turn_1 ending in .!? containing expression.',
                     'usage_status_label': 'Verbatim from Marcus (turn_1)',
-                    'core_lexical_meaning': 'Precise, calibrated definition matching the sense used in turn_1.',
-                    'contextual_function': 'How this expression sharpens Marcus counter-argument.',
+                    'core_lexical_meaning': 'Precise, calibrated definition matching the exact sense used in turn_1.',
+                    'contextual_function': 'How this expression sharpens Marcus argument.',
                     'register_and_usage': 'Register and social tone note.',
                     'arabic_equivalent': 'Natural idiomatic Arabic equivalent (NO literal word-for-word calques).',
                     'contrastive_note': None
                 },
                 {
-                    'expression': 'reusable canonical frame from turn_2 (replace topic nouns with [something] or [someone])',
+                    'expression': 'reusable canonical frame from turn_2 (use base verb form; replace topic nouns with [something] or [someone])',
                     'source_type': 'verbatim_from_host_dialogue',
                     'source_ref_id': 'turn_2',
                     'source_speaker': 'chloe',
                     'full_sentence_citation': 'EXACT single complete sentence from turn_2 ending in .!? containing expression.',
                     'usage_status_label': 'Verbatim from Chloe (turn_2)',
-                    'core_lexical_meaning': 'Precise, calibrated definition matching the sense used in turn_2.',
+                    'core_lexical_meaning': 'Precise, calibrated definition matching the exact sense used in turn_2.',
                     'contextual_function': 'How this expression supports Chloe perspective.',
                     'register_and_usage': 'Register and social tone note.',
                     'arabic_equivalent': 'Natural idiomatic Arabic equivalent (NO literal word-for-word calques).',
                     'contrastive_note': None
                 },
                 {
-                    'expression': 'topic-relevant idiom NOT used in turn_1 or turn_2',
+                    'expression': 'topic-relevant idiom NOT used anywhere in turn_1 or turn_2',
                     'source_type': 'related_extension',
                     'source_ref_id': None,
                     'source_speaker': None,
                     'full_sentence_citation': None,
                     'usage_status_label': 'Related extension — not used in the cited response',
-                    'core_lexical_meaning': 'Accurate definition.',
-                    'contextual_function': 'Directly relevant to the exact topic under discussion.',
+                    'core_lexical_meaning': 'Accurate, non-exaggerated definition.',
+                    'contextual_function': 'How a learner can use this idiom when discussing this exact subject.',
                     'register_and_usage': 'Register note.',
                     'arabic_equivalent': 'Natural idiomatic Arabic equivalent ONLY (never write literal calques).',
                     'contrastive_note': 'Clear semantic contrast with expression 1 or 2.'
@@ -1447,15 +1447,15 @@ class NYCLoungeAI:
             f'TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}',
             'Return ONLY a valid JSON object matching this exact structure (no extra keys allowed):',
             json.dumps(json_template_example, ensure_ascii=False, indent=2),
-            'MANDATORY DEVIL\'S ADVOCATE & PEDAGOGICAL RULES:',
+            'UNIVERSAL DEVIL\'S ADVOCATE & PEDAGOGICAL RULES (TOPIC-AGNOSTIC):',
             f'1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}',
-            '2. NATURAL SPOKEN AMERICAN DIALOGUE (NO CONSULTANT JARGON): Marcus and Chloe must sound like sharp, natural Americans talking in person. Do NOT stack abstract business or sociological buzzwords (avoid phrases like "operational trade-off", "distributed networks", "impediment", "false dichotomy", or "democratize"). Prefer crisp, idiomatic spoken English.',
-            '3. TARGET THE LEARNER\'S ACTUAL PREMISE (NO STRAW-MANNING & ZERO FAKE STATS):',
-            '   - Acknowledge where the learner has a fair point (e.g., putting in extra hours during a real crunch can help), then challenge the specific overgeneralizations in their message.',
-            '   - If the learner claims longer hours equal higher value and leaving on time means low commitment, challenge both assumptions: point out how logging marathon hours often hits diminishing returns or rewards performative face time over actual impact, and how leaving on time can reflect strong prioritization and boundaries rather than a lack of drive.',
-            '   - Frame consequences conditionally ("can", "often", "tends to", "may") and NEVER invent fake statistics or studies.',
-            '4. REUSABLE CANONICAL LEXICAL FRAMES: Use base verb forms in `expression` and replace context-specific object nouns with `[something]` or `[someone]`. Avoid repeating overused debate verbs like `conflate` or `paint with a broad brush`.',
-            '5. TOPIC-SPECIFIC RELATED EXTENSION & PURE IDIOMATIC ARABIC: In item (3) (`related_extension`), choose an expression tightly tied to the topic itself (e.g., `burn the candle at both ends` or `spin one\'s wheels` for overwork/efficiency, NOT generic idioms like `open a can of worms`). In `arabic_equivalent`, provide ONLY natural idiomatic Arabic—never include literal word-for-word translations.',
+            '2. NATURAL SPOKEN AMERICAN DIALOGUE (NO STACKED ACADEMIC/CONSULTANT JARGON): Marcus and Chloe must sound like articulate Americans talking naturally in person—not a written consulting memo. Avoid stacking abstract buzzwords (such as "operational trade-off", "distributed networks", "impediment", "false dichotomy", or "systemic structural shifts"). Prefer clear, everyday idiomatic English.',
+            '3. FAIRNESS, NO STRAW-MANNING & EPISTEMIC CALIBRATION:',
+            '   - Acknowledge the valid point in the learner\'s premise first before pushing back.',
+            '   - Challenge the specific causal assumption or generalization the learner actually made (do not attack an exaggerated straw-man version of their view, and do not swing to the opposite extreme).',
+            '   - Use calibrated probabilistic language ("can", "often", "tends to", "may") rather than deterministic claims ("always", "dictates", "what really happens"). NEVER invent fake statistics or studies.',
+            '4. REUSABLE CANONICAL LEXICAL FRAMES: Extract expressions in their canonical base pattern, replacing context-specific nouns with `[something]` or `[someone]`. Avoid repeating overused debate clichés.',
+            '5. TOPIC-COUPLED RELATED EXTENSION & IDIOMATIC ARABIC: Item (3) (`related_extension`) must belong to the semantic domain of the learner\'s topic (not a random filler idiom) and must NOT appear in `turn_1` or `turn_2`. In `arabic_equivalent`, write ONLY natural idiomatic Arabic—never write literal word-for-word calques.',
             '6. DIAGNOSTIC MIRROR: If the learner\'s English is already natural, set `learner_diagnosis="already_natural"`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`.'
         ]
         system_prompt = '\n\n'.join(rules_list)
@@ -1470,7 +1470,7 @@ class NYCLoungeAI:
             healthy_key_indices = list(range(len(self.keys_pool)))
 
         tries_done = 0
-        for k_idx in healthy_key_indices[:2]:
+        for k_idx in healthy_key_indices[:3]:
             key = self.keys_pool[k_idx]
             client = genai.Client(api_key=key, http_options={'timeout': 25000})
             models_to_try = self._get_active_models(client, k_idx=k_idx)
@@ -1482,7 +1482,7 @@ class NYCLoungeAI:
                 tries_done += 1
                 prompt_suffix = ''
                 if last_err:
-                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately.'
+                    prompt_suffix = f'\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately. Make sure every word in `expression` outside `[something]` appears contiguously in `full_sentence_citation`.'
                 contents: List[Any] = [
                     f'LEARNER OPINION TO CHALLENGE AS DEVIL\'S ADVOCATE:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}'
                 ]
@@ -1515,70 +1515,11 @@ class NYCLoungeAI:
                         self._dead_key_models_until[(k_idx, model_name)] = time.time() + 65
                     elif '404' in err_str or 'NOT_FOUND' in err_str:
                         self._dead_models_until[model_name] = time.time() + 86400
-                if tries_done >= 4:
+                if tries_done >= 6:
                     break
-            if tries_done >= 4:
+            if tries_done >= 6:
                 break
-
-        fb_s1 = 'Putting in extra hours during a real crunch can help, but assuming more time at your desk automatically makes you more valuable ignores how quickly people hit a wall after a full day. In a lot of workplaces, staying late just rewards people who drag their feet during normal hours rather than the ones delivering real results.'
-        fb_s2 = 'And judging people who leave on time as less committed can really backfire on a team. Often, the employees who log off at five are simply better at managing their workload, whereas constant late nights can lead to burnout and sloppy mistakes down the road.'
-        fallback_payload = {
-            'active_mode': 'banter',
-            'learner_input_text': clean_user_text,
-            'input_intent_type': 'general_conversation_or_question',
-            'learner_diagnosis': 'already_natural',
-            'show_diagnostic_mirror': False,
-            'diagnostic_mirror': None,
-            'subtext_analysis': None,
-            'strategy_playbook': None,
-            'pronunciation_guide': None,
-            'host_turns': [
-                {'turn_id': 'turn_1', 'speaker': 'marcus', 'text': fb_s1},
-                {'turn_id': 'turn_2', 'speaker': 'chloe', 'text': fb_s2},
-            ],
-            'lexical_items': [
-                {
-                    'expression': 'hit a wall',
-                    'source_type': 'verbatim_from_host_dialogue',
-                    'source_ref_id': 'turn_1',
-                    'source_speaker': 'marcus',
-                    'full_sentence_citation': fb_s1.split('. ')[0] + '.',
-                    'usage_status_label': 'Verbatim from Marcus (turn_1)',
-                    'core_lexical_meaning': 'Reach a point of mental or physical exhaustion where productivity and focus drop sharply.',
-                    'contextual_function': 'Challenges the assumption that extra hours linearly produce more value by pointing out mental fatigue.',
-                    'register_and_usage': 'Natural everyday and professional spoken American English.',
-                    'arabic_equivalent': 'يصل إلىمرحلة الإنهاك الذهني أو الجسدي التي يتوقف عندها العطاء',
-                    'contrastive_note': None
-                },
-                {
-                    'expression': 'backfire on [someone]',
-                    'source_type': 'verbatim_from_host_dialogue',
-                    'source_ref_id': 'turn_2',
-                    'source_speaker': 'chloe',
-                    'full_sentence_citation': fb_s2.split('. ')[0] + '.',
-                    'usage_status_label': 'Verbatim from Chloe (turn_2)',
-                    'core_lexical_meaning': 'Produce an undesirable, opposite result from the one intended.',
-                    'contextual_function': 'Warns that penalizing efficient employees who leave on time can hurt team morale and retention.',
-                    'register_and_usage': 'Common conversational and professional American English.',
-                    'arabic_equivalent': 'ينقلب سلباً على صاحبه أو يأتي بنتيجة عكسية',
-                    'contrastive_note': None
-                },
-                {
-                    'expression': 'burn the candle at both ends',
-                    'source_type': 'related_extension',
-                    'source_ref_id': None,
-                    'source_speaker': None,
-                    'full_sentence_citation': None,
-                    'usage_status_label': 'Related extension — not used in the cited response',
-                    'core_lexical_meaning': 'Overwork oneself by working very early and very late without adequate rest.',
-                    'contextual_function': 'Directly describes the unsustainable habit of constantly working late hours to get ahead.',
-                    'register_and_usage': 'Well-known American and general English idiom.',
-                    'arabic_equivalent': 'يُجهد نفسه فوق طاقته بالعمل المتواصل دون راحة',
-                    'contrastive_note': 'While "hit a wall" describes the moment focus runs out on a given task, "burn the candle at both ends" describes a prolonged lifestyle of overwork and insufficient rest.'
-                }
-            ]
-        }
-        return LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
+        raise RuntimeError(f'Devil\'s Advocate live generation failed after {tries_done} tries: {last_err}')
 
     def _raw_process_lounge_turn(
         self,
