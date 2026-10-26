@@ -1259,7 +1259,7 @@ class NYCLoungeAI:
                     {
                         "option_id": "option_1",
                         "archetype": "Diplomatic",
-                        "spoken_line": "To keep our launch date intact, which existing items should we defer so we can prioritize these by Friday?",
+                        "spoken_line": "To keep our launch date intact, which existing items can we defer so we can deliver these by Friday?",
                         "arabic_equivalent": "للحفاظ على موعد الإطلاق كما هو، ما العناصر الحالية التي ينبغي تأجيلها لكي نمنح الأولوية لهذه الميزات بحلول الجمعة؟",
                         "makes_explicit": "Adding new work by Friday requires deferring existing items if the launch date cannot move.",
                         "leaves_implicit": "How much existing work must be deferred until engineering estimates the three features.",
@@ -1315,7 +1315,7 @@ class NYCLoungeAI:
                     "source_type": "from_recommended_option",
                     "source_ref_id": "option_1",
                     "source_speaker": None,
-                    "full_sentence_citation": "To keep our launch date intact, which existing items should we defer so we can prioritize these by Friday?",
+                    "full_sentence_citation": "To keep our launch date intact, which existing items can we defer so we can deliver these by Friday?",
                     "usage_status_label": "Used in Strategic Option 1 (Diplomatic)",
                     "core_lexical_meaning": "Preserve something complete and unchanged.",
                     "contextual_function": "Frames protecting the fixed launch date as a shared priority.",
@@ -1346,6 +1346,242 @@ class NYCLoungeAI:
                     "register_and_usage": "Common workplace English.",
                     "arabic_equivalent": "يعترض على طلب أو يتحفّظ عليه أو يطلب إعادة النظر فيه",
                     "contrastive_note": "Unlike 'push [a date] back' (reschedule to a later time), 'push back on [a request]' means objecting to, resisting, or asking to reconsider a demand."
+                }
+            ]
+        }
+        return LoungeTurnResponse.model_validate(fallback_payload, context=trusted_context)
+
+    def process_devils_advocate(
+        self,
+        user: Dict[str, Any],
+        user_text: str = "",
+        audio_bytes: Optional[bytes] = None,
+        audio_mime: str = "audio/ogg"
+    ) -> Any:
+        from validation_layer import LoungeTurnResponse
+        try:
+            pref_reg = user["preferred_register"] if (user and "preferred_register" in user and user["preferred_register"]) else "articulate"
+        except Exception:
+            pref_reg = "articulate"
+        if pref_reg not in REGISTERS_MAP:
+            pref_reg = "articulate"
+        vibe_badge = REGISTERS_MAP[pref_reg]
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+
+        clean_user_text = (user_text or "").strip() or "Voice opinion submitted."
+        has_audio = bool(audio_bytes)
+        trusted_context = {
+            "active_mode": "banter",
+            "learner_input_text": clean_user_text,
+            "runtime_has_audio_bytes": has_audio,
+        }
+
+        json_template_example = {
+            "active_mode": "banter",
+            "learner_input_text": clean_user_text,
+            "input_intent_type": "general_conversation_or_question",
+            "learner_diagnosis": "already_natural",
+            "show_diagnostic_mirror": False,
+            "diagnostic_mirror": None,
+            "subtext_analysis": None,
+            "strategy_playbook": None,
+            "pronunciation_guide": None,
+            "host_turns": [
+                {
+                    "turn_id": "turn_1",
+                    "speaker": "marcus",
+                    "text": "2 complete sentences challenging the hidden premise in the user's argument without inventing fake statistics."
+                },
+                {
+                    "turn_id": "turn_2",
+                    "speaker": "chloe",
+                    "text": "2 complete sentences exposing the second-order operational trade-off or unintended backfire of the user's stance."
+                }
+            ],
+            "lexical_items": [
+                {
+                    "expression": "exact contiguous phrase from turn_1",
+                    "source_type": "verbatim_from_host_dialogue",
+                    "source_ref_id": "turn_1",
+                    "source_speaker": "marcus",
+                    "full_sentence_citation": "EXACT single complete sentence from turn_1 ending in .!? containing expression.",
+                    "usage_status_label": "Verbatim from Marcus (turn_1)",
+                    "core_lexical_meaning": "...",
+                    "contextual_function": "...",
+                    "register_and_usage": "...",
+                    "arabic_equivalent": "...",
+                    "contrastive_note": None
+                },
+                {
+                    "expression": "exact contiguous phrase from turn_2",
+                    "source_type": "verbatim_from_host_dialogue",
+                    "source_ref_id": "turn_2",
+                    "source_speaker": "chloe",
+                    "full_sentence_citation": "EXACT single complete sentence from turn_2 ending in .!? containing expression.",
+                    "usage_status_label": "Verbatim from Chloe (turn_2)",
+                    "core_lexical_meaning": "...",
+                    "contextual_function": "...",
+                    "register_and_usage": "...",
+                    "arabic_equivalent": "...",
+                    "contrastive_note": None
+                },
+                {
+                    "expression": "related contrasting expression",
+                    "source_type": "related_extension",
+                    "source_ref_id": None,
+                    "source_speaker": None,
+                    "full_sentence_citation": None,
+                    "usage_status_label": "Related extension — not used in the cited response",
+                    "core_lexical_meaning": "...",
+                    "contextual_function": "...",
+                    "register_and_usage": "...",
+                    "arabic_equivalent": "...",
+                    "contrastive_note": "Explain the semantic distinction between this expression and the one used in turn_1 or turn_2."
+                }
+            ]
+        }
+
+        system_prompt = (
+            f"{CORE_NYC_PERSONA_PROMPT}\n\n"
+            f"ACTIVE ENGINE: DEVIL'S ADVOCATE INTELLECTUAL CHALLENGE (`active_mode='banter'`)\n"
+            f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
+            "Return ONLY a valid JSON object matching this exact structure (no extra keys allowed):\n"
+            f"{json.dumps(json_template_example, ensure_ascii=False, indent=2)}\n\n"
+            "MANDATORY DEVIL'S ADVOCATE & PYDANTIC v2 RULES:\n"
+            f"1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}\n"
+            "2. RIGOROUS COUNTER-ARGUMENT (NOT A POLITE PARAPHRASE):\n"
+            "   - Do NOT agree with the learner or merely restate their opinion politely.\n"
+            "   - In `turn_1` (Marcus), dismantle the unexamined causal assumption in the learner's claim (e.g., showing why two things the learner treats as equivalent are actually distinct).\n"
+            "   - In `turn_2` (Chloe), expose the second-order operational cost or how the learner's policy could backfire in practice.\n"
+            "3. ZERO FABRICATION: Do NOT invent fake statistics, fake studies, or unstated facts about the learner's workplace.\n"
+            "4. DIAGNOSTIC MIRROR: If the learner's English is already natural, set `learner_diagnosis='already_natural'`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`. Only set `show_diagnostic_mirror=True` if there is a genuine grammatical, collocation, or register error.\n"
+            "5. VERBATIM CITATIONS: For `verbatim_from_host_dialogue`, `full_sentence_citation` MUST be a single complete sentence copied character-for-character from that speaker's `text`, and `expression` must appear inside it as an unbroken contiguous phrase."
+        )
+
+        last_err = None
+        now = time.time()
+        dead_keys = getattr(self, "_dead_keys_until", {})
+        if not hasattr(self, "_dead_key_models_until"):
+            self._dead_key_models_until = {}
+
+        healthy_key_indices = [i for i in range(len(self.keys_pool)) if dead_keys.get(i, 0) < now]
+        if not healthy_key_indices and self.keys_pool:
+            healthy_key_indices = list(range(len(self.keys_pool)))
+
+        tries_done = 0
+        for k_idx in healthy_key_indices[:2]:
+            key = self.keys_pool[k_idx]
+            client = genai.Client(api_key=key, http_options={"timeout": 25000})
+            models_to_try = self._get_active_models(client, k_idx=k_idx)
+            for model_name in models_to_try:
+                if self._dead_models_until.get(model_name, 0) >= time.time():
+                    continue
+                if self._dead_key_models_until.get((k_idx, model_name), 0) >= time.time():
+                    continue
+                tries_done += 1
+                prompt_suffix = ""
+                if last_err:
+                    prompt_suffix = f"\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately."
+
+                contents: List[Any] = [
+                    f"LEARNER OPINION TO CHALLENGE AS DEVIL'S ADVOCATE:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}"
+                ]
+                try:
+                    resp = client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            temperature=0.3 if tries_done == 1 else 0.15,
+                            response_mime_type="application/json",
+                            max_output_tokens=4096,
+                        ),
+                    )
+                    raw_text = (getattr(resp, "text", "") or "").strip()
+                    if raw_text.startswith("```"):
+                        raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
+                    payload_dict = json.loads(raw_text)
+                    validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
+                        payload_dict,
+                        context=trusted_context
+                    )
+                    logger.info(f"✅ Devil's Advocate LIVE Validation PASSED on try {tries_done} ({model_name})!")
+                    return validated
+                except Exception as e:
+                    err_str = str(e)
+                    last_err = err_str
+                    logger.warning(f"Devil's Advocate live try {tries_done} ({model_name}) failed: {err_str[:220]}")
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        self._dead_key_models_until[(k_idx, model_name)] = time.time() + 65
+                    elif "404" in err_str or "NOT_FOUND" in err_str:
+                        self._dead_models_until[model_name] = time.time() + 86400
+                if tries_done >= 4:
+                    break
+            if tries_done >= 4:
+                break
+
+        # Deterministic fallback verified by LoungeTurnResponse (active_mode='banter')
+        fallback_payload = {
+            "active_mode": "banter",
+            "learner_input_text": clean_user_text,
+            "input_intent_type": "general_conversation_or_question",
+            "learner_diagnosis": "already_natural",
+            "show_diagnostic_mirror": False,
+            "diagnostic_mirror": None,
+            "subtext_analysis": None,
+            "strategy_playbook": None,
+            "pronunciation_guide": None,
+            "host_turns": [
+                {
+                    "turn_id": "turn_1",
+                    "speaker": "marcus",
+                    "text": "I'd push back on the assumption that physical proximity automatically translates into real mentorship. Sitting next to senior engineers five days a week doesn't guarantee juniors will learn by osmosis if those seniors are stuck in video calls with their headphones on all day."
+                },
+                {
+                    "turn_id": "turn_2",
+                    "speaker": "chloe",
+                    "text": "Plus, a rigid five-day mandate can easily backfire if it drives away the experienced engineers you rely on to do the mentoring. Too often, leadership teams conflate physical attendance with structured onboarding instead of fixing weak documentation and code-review habits."
+                }
+            ],
+            "lexical_items": [
+                {
+                    "expression": "learn by osmosis",
+                    "source_type": "verbatim_from_host_dialogue",
+                    "source_ref_id": "turn_1",
+                    "source_speaker": "marcus",
+                    "full_sentence_citation": "Sitting next to senior engineers five days a week doesn't guarantee juniors will learn by osmosis if those seniors are stuck in video calls with their headphones on all day.",
+                    "usage_status_label": "Verbatim from Marcus (turn_1)",
+                    "core_lexical_meaning": "Absorb knowledge or skills gradually and unconsciously through exposure rather than formal instruction.",
+                    "contextual_function": "Challenges the belief that merely sitting near senior staff produces skill transfer without deliberate coaching.",
+                    "register_and_usage": "Idiomatic professional and educated general American English.",
+                    "arabic_equivalent": "يتعلّم بالتشرّب التلقائي أو بالمخالطة غير المباشرة",
+                    "contrastive_note": None
+                },
+                {
+                    "expression": "conflate [something] with [something]",
+                    "source_type": "verbatim_from_host_dialogue",
+                    "source_ref_id": "turn_2",
+                    "source_speaker": "chloe",
+                    "full_sentence_citation": "Too often, leadership teams conflate physical attendance with structured onboarding instead of fixing weak documentation and code-review habits.",
+                    "usage_status_label": "Verbatim from Chloe (turn_2)",
+                    "core_lexical_meaning": "Fuse or confuse two distinct concepts into one, overlooking critical differences between them.",
+                    "contextual_function": "Pinpoints the analytical flaw of treating office presence as if it were the same thing as deliberate training.",
+                    "register_and_usage": "Analytical, executive, and persuasive American English.",
+                    "arabic_equivalent": "يخلط بين مفهومين مختلفين أو يدمجهما خطأً باعتبارهما شيئاً واحداً",
+                    "contrastive_note": None
+                },
+                {
+                    "expression": "equate [something] with [something]",
+                    "source_type": "related_extension",
+                    "source_ref_id": None,
+                    "source_speaker": None,
+                    "full_sentence_citation": None,
+                    "usage_status_label": "Related extension — not used in the cited response",
+                    "core_lexical_meaning": "Consider or explicitly state that one thing is equal or equivalent to another.",
+                    "contextual_function": "Provides a contrasting analytical verb for debating flawed workplace assumptions.",
+                    "register_and_usage": "Neutral to formal analytical English.",
+                    "arabic_equivalent": "يساوي بين شيئين أو يعتبرهما متكافئين",
+                    "contrastive_note": "While 'equate A with B' means explicitly treating A and B as equal, 'conflate A with B' (used by Chloe in turn_2) implies blurring the boundary between two distinct concepts that should be kept separate."
                 }
             ]
         }

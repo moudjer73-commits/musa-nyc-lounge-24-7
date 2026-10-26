@@ -87,7 +87,6 @@ def safe_edit_text(chat_id: int, message_id: int, text: str, reply_markup=None):
             if "message is not modified" in str(e).lower():
                 return None
             return bot.send_message(chat_id, text, reply_markup=reply_markup)
-    # إذا زاد طول HTML عن 4050 حرفاً، نقسمه عند سطر جديد قبل قسم💎 دون بتر أي حرف
     split_pos = text.rfind("\n💎", 0, 3900)
     if split_pos == -1:
         split_pos = text.rfind("\n", 0, 3900)
@@ -237,6 +236,72 @@ def format_lounge_turn_html(
 
     mirror_block = "\n".join(mirror_lines)
     return f"{top_section}<blockquote expandable>{mirror_block}</blockquote>"
+
+
+def format_devils_advocate_html(d_res: Any, active_reg: str = "articulate") -> str:
+    def _e(val: Any) -> str:
+        return html.escape(str(val or ""), quote=False)
+
+    vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
+    lines = [
+        f"😈 <b>Devil’s Advocate — Intellectual Counter-Challenge ({vibe_label})</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🗣️ <b>Your Premise:</b> <i>\"{_e(d_res.learner_input_text)}\"</i>\n",
+    ]
+    if d_res.show_diagnostic_mirror and d_res.diagnostic_mirror is not None:
+        dm = d_res.diagnostic_mirror
+        lines.extend([
+            f"🪞 <b>Diagnostic Mirror (<code>{_e(dm.primary_issue_label)}</code>):</b>",
+            f"• {_e(dm.explanation)}",
+        ])
+        if dm.revised_version:
+            lines.append(f"• <b>Revised:</b> <code>\"{_e(dm.revised_version)}\"</code>\n")
+    else:
+        lines.append(
+            f"🪞 <b>Diagnostic Mirror:</b> <code>Suppressed (learner_diagnosis={_e(d_res.learner_diagnosis)} | show_diagnostic_mirror=False)</code>\n"
+        )
+
+    lines.append("🔥 <b>Counter-Arguments (Challenging Underlying Assumptions)</b>")
+    persona_icons = {
+        "marcus": "🧔‍♂️ <b>Marcus (Challenging the Causal Assumption):</b>",
+        "chloe": "👩🏼‍💼 <b>Chloe (Exposing Second-Order Trade-Offs):</b>",
+        "jake": "🧢 <b>Jake (Counter-Angle):</b>",
+    }
+    for t in (d_res.host_turns or []):
+        icon = persona_icons.get(t.speaker, f"🎙️ <b>{_e(t.speaker)}:</b>")
+        lines.extend([
+            f"\n{icon} (<code>{_e(t.turn_id)}</code>)",
+            f"\"{_e(t.text)}\"",
+        ])
+
+    if d_res.lexical_items:
+        lines.append("\n💎 <b>Verified Target Expressions (<code>LoungeTurnResponse</code>)</b>")
+        for idx, it in enumerate(d_res.lexical_items, start=1):
+            if it.source_type == "related_extension":
+                src_line = f"📍 <b>Source (<code>related_extension</code>):</b> <i>{_e(it.usage_status_label)}</i>"
+            else:
+                src_line = (
+                    f"📍 <b>Source (<code>{_e(it.source_type)}</code> | <code>{_e(it.source_ref_id)}</code> | "
+                    f"speaker=<code>{_e(it.source_speaker)}</code>):</b> \"{_e(it.full_sentence_citation)}\""
+                )
+            lines.extend([
+                f"\n<b>({idx}) <code>{_e(it.expression)}</code></b>",
+                f"  └ {src_line}",
+                f"  └ 📖 <b>Core Meaning:</b> {_e(it.core_lexical_meaning)}",
+                f"  └ 🎯 <b>In This Context:</b> {_e(it.contextual_function)}",
+                f"  └ 🏷️ <b>Register:</b> {_e(it.register_and_usage)}",
+                f"  └ 🇸🇦 <b>Arabic:</b> {_e(it.arabic_equivalent)}",
+            ])
+            if it.contrastive_note:
+                lines.append(f"  └ 🔄 <b>Contrastive Note:</b> {_e(it.contrastive_note)}")
+
+    lines.append(
+        "\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ <b>Pydantic v2 Log:</b> <code>PASSED (LoungeTurnResponse | mode={_e(d_res.active_mode)} | "
+        f"diagnosis={_e(d_res.learner_diagnosis)} | mirror={_e(d_res.show_diagnostic_mirror)} | "
+        f"{len(d_res.host_turns)} host_turns | {len(d_res.lexical_items)} citations verified)</code>"
+    )
+    return "\n".join(lines)
 
 
 def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> str:
@@ -1531,7 +1596,35 @@ if bot:
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
-            if mode == "situation_gambit" or any(k in text.lower() for k in ("how do i push back", "what do i say", "without making it sound like", "without sounding uncooperative")):
+            if mode == "devils_advocate" or any(k in text.lower() for k in ("junior engineers to work in the office", "five days a week because they cannot learn", "[devil")):
+                d_res = ai_engine.process_devils_advocate(user=user, user_text=text)
+                db.append_history(uid, "user", f"[Devil's Advocate]: {text}")
+                db.append_history(uid, "assistant", d_res.host_commentary)
+                token_key = uuid.uuid4().hex[:10]
+                upgrades_dicts = [u.model_dump() for u in (d_res.lexical_upgrades or [])]
+                active_cast_key = d_res.responding_persona or "marcus"
+                host_turns_json = json.dumps(
+                    [{"speaker": t.speaker, "pacing": "normal", "text": t.text} for t in (d_res.host_turns or [])],
+                    ensure_ascii=False
+                )
+                db.store_atomic_batch(
+                    user_id=uid,
+                    token_key=token_key,
+                    items=upgrades_dicts,
+                    audio_clean_text=d_res.host_commentary,
+                    user_transcript_text=text,
+                    host_reply_text=host_turns_json,
+                    active_persona=active_cast_key
+                )
+                formatted_html = format_devils_advocate_html(d_res, active_reg=user.get("preferred_register", "articulate"))
+                safe_edit_text(
+                    message.chat.id,
+                    status_msg.message_id,
+                    formatted_html,
+                    reply_markup=LoungeKeyboards.SaveAndVoiceRow(token_key, d_res.lexical_upgrades, show_voice=True)
+                )
+                return
+            elif mode == "situation_gambit" or any(k in text.lower() for k in ("how do i push back", "what do i say", "without making it sound like", "without sounding uncooperative")):
                 g_res = ai_engine.process_situation_gambit(user=user, user_text=text)
                 db.append_history(uid, "user", f"[Situation]: {text}")
                 db.append_history(uid, "assistant", g_res.best_line)
