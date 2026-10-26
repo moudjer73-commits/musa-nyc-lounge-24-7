@@ -1335,7 +1335,7 @@ class NYCLoungeAI:
                     "arabic_equivalent": "يؤخّر أو يؤجّل موعداً إلى وقت لاحق"
                 },
                 {
-                    "expression": "push back on [something]",
+                    "expression": "base_verb + preposition + [something]",
                     "source_type": "related_extension",
                     "source_ref_id": None,
                     "source_speaker": None,
