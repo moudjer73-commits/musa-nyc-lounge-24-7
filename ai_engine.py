@@ -1015,107 +1015,71 @@ class NYCLoungeAI:
     def process_situation_gambit(
         self,
         user: Dict[str, Any],
-        user_text: str,
-        voice_bytes: Optional[bytes] = None,
-        mime_type: str = "audio/ogg"
+        user_text: str = "",
+        audio_bytes: Optional[bytes] = None,
+        audio_mime: str = "audio/ogg"
     ) -> SituationGambitResponse:
-        level = user.get("level", "C1")
-        reg = user.get("preferred_register", "articulate")
-        reg_desc = {
-            "casual": "NYC Street-Smart & Conversational (warm, natural, socially sharp)",
-            "articulate": "Articulate & Composed (polished, tactful, high-EQ American English)",
-            "boardroom": "Executive & Commanding (crisp, authoritative, high-status diplomacy)"
-        }.get(reg, "Articulate & Composed")
+        pref_reg = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
+        if pref_reg not in REGISTERS_MAP:
+            pref_reg = "articulate"
+        vibe_badge = REGISTERS_MAP[pref_reg]
+        vibe_rules = REGISTER_DESCRIPTIONS.get(pref_reg, "")
 
-        sys_prompt = (
-            "You are Chloe from Musa's NYC Lounge—an elite C1/C2 American English Pragmatics & Social Strategy Coach.\n"
-            f"Target Register: {reg_desc} | Learner Level: {level}.\n\n"
-            "CRITICAL RULES FOR 'WHAT TO SAY WHEN...' (SITUATION GAMBIT):\n"
-            "1. HYPER-SPECIFICITY: Address the EXACT micro-situation the user described down to the smallest detail. "
-            "NEVER give generic 'let's get on the same page' or 'I led that part of the work' templates!\n"
-            "   - Example: If a colleague repeats the user's point 5 minutes later in a meeting and gets praised for it, "
-            "the instinctive line must smoothly reclaim credit in the room WITHOUT sounding petty or bitter "
-            "(e.g., \"I'm glad that angle resonated, [Name]—and just to build on what I mentioned a few minutes ago, the next step is...\").\n"
-            "2. THREE DISTINCT TACTICAL ANGLES:\n"
-            "   - `best_instinctive_line`: The gold-standard C1/C2 in-the-moment line that reclaims status/control effortlessly.\n"
-            "   - `softer_option`: A warm, collaborative, lightly humorous or gracious way to achieve the goal while keeping everyone comfortable.\n"
-            "   - `firmer_option`: A crisp, unmistakable boundary or direct claim of ownership that commands respect without emotional heat.\n"
-            "3. PRAGMATIC BREAKDOWN:\n"
-            "   - `situation_read`: 1 sharp sentence diagnosing the exact power dynamic and social trap to avoid (e.g., avoiding looking defensive while refusing to be erased).\n"
-            "   - `arabic_meaning`: Clear, natural Modern Standard Arabic explanation of the pragmatic move and core meaning.\n"
-            "   - `why_it_works`: Explain the psychological/social mechanism of WHY this phrasing works on American ears.\n"
-            "   - `if_they_push_back`: A natural second-turn counter-move if the other person doubles down or deflects.\n"
-            "   - `lexical_upgrades`: Extract 3 high-value idioms/chunks actually used inside your 3 lines above, with pure English `explanation` and pure Arabic `arabic_equivalent`."
+        system_prompt = (
+            f"{CORE_NYC_PERSONA_PROMPT}\n\n"
+            f"ACTIVE ROOM: ⚡ WHAT TO SAY WHEN... (Dedicated C1/C2 Situational Gambit Engine)\n"
+            f"TARGET SPOKEN VIBE: {vibe_badge} — {vibe_rules}\n\n"
+            "CRITICAL RULES:\n"
+            "1. HYPER-SPECIFICITY: Address the EXACT micro-situation the user described. NEVER return generic 'let's align on who is leading which part' templates.\n"
+            "   - Example: If a colleague repeats the user's point 5 minutes later in a meeting and gets praised for it, the lines must smoothly reclaim ownership of the idea in the room WITHOUT sounding petty or bitter.\n"
+            "2. Populate ALL fields of `SituationGambitResponse`:\n"
+            "   - `situation_summary`: 1 sharp sentence diagnosing the exact power dynamic and social trap to avoid.\n"
+            "   - `responding_persona`: 'chloe'.\n"
+            "   - `host_commentary`: 1 warm, tactical coaching sentence from Chloe framing the move.\n"
+            "   - `best_line`: The #1 gold-standard C1/C2 spoken line an American would say out loud right in that moment.\n"
+            "   - `softer_alternative`: A collaborative, gracious, or lightly witty way to achieve the exact same goal.\n"
+            "   - `firmer_alternative`: A crisp, unmistakable claim of ownership or boundary that commands respect without emotional heat.\n"
+            "   - `why_it_works`: The psychological/pragmatic reason why this phrasing lands well on American ears.\n"
+            "   - `arabic_equivalent`: Accurate, natural Modern Standard Arabic translation of `best_line`.\n"
+            "   - `follow_up_line`: What to say next if the other person pushes back or deflects.\n"
+            "   - `lexical_upgrades`: 3 high-value idioms/expressions actually used inside `best_line`, `softer_alternative`, or `firmer_alternative` (with pure English `explanation`, pure Arabic `arabic_equivalent`, and `example` containing `chunk`)."
         )
 
-        user_prompt = f"EXACT SITUATION TO SOLVE:\n{user_text.strip()}"
+        contents: List[Any] = []
+        if audio_bytes:
+            contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+            contents.append("Listen to the member's scenario description and return the complete `SituationGambitResponse`.")
+        else:
+            contents.append(f"SCENARIO DESCRIPTION:\n{user_text}\n\nReturn the complete `SituationGambitResponse` calibrated to {vibe_badge}.")
 
-        try:
-            # Use the exact same resilient structured generator used by Lounge turns
-            if hasattr(self, "_generate_structured"):
-                return self._generate_structured(
+        for attempt in range(2):
+            try:
+                g_res: SituationGambitResponse = self._call_structured(
+                    contents=contents,
                     schema_cls=SituationGambitResponse,
-                    system_instruction=sys_prompt,
-                    contents=[user_prompt],
-                    temperature=0.65
+                    system_instruction=system_prompt,
+                    temperature=0.65 if attempt == 0 else 0.45,
+                    max_output_tokens=4096
                 )
-            elif hasattr(self, "_call_gemini_structured"):
-                return self._call_gemini_structured(
-                    schema_cls=SituationGambitResponse,
-                    system_instruction=sys_prompt,
-                    user_prompt=user_prompt,
-                    temperature=0.65
-                )
-        except Exception as e:
-            logger.warning(f"Primary structured gambit call failed, trying direct JSON fallback: {e}")
-
-        # Direct JSON fallback across available models so it NEVER hits a generic static string unless API is completely down
-        try:
-            from google.genai import types
-            models_to_try = getattr(self, "model_chain", None) or [
-                "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite"
-            ]
-            json_instruction = (
-                sys_prompt + "\n\nReturn ONLY valid JSON matching these keys:\n"
-                '{"transcription": "", "situation_read": "...", "responding_persona": "chloe", '
-                '"best_instinctive_line": "...", "softer_option": "...", "firmer_option": "...", '
-                '"arabic_meaning": "...", "why_it_works": "...", "if_they_push_back": "...", '
-                '"tts_clean_target": "...", "lexical_upgrades": [{"chunk": "...", "b2_foil": "...", "explanation": "...", "arabic_equivalent": "...", "example": "..."}]}'
-            )
-            for m_name in models_to_try:
-                try:
-                    resp = self.client.models.generate_content(
-                        model=m_name,
-                        contents=[user_prompt],
-                        config=types.GenerateContentConfig(
-                            system_instruction=json_instruction,
-                            response_mime_type="application/json",
-                            temperature=0.65
-                        )
-                    )
-                    raw_json = json.loads(resp.text)
-                    if "_universal_null_sanitizer" in globals():
-                        raw_json = _universal_null_sanitizer(raw_json)
-                    if not raw_json.get("tts_clean_target"):
-                        raw_json["tts_clean_target"] = raw_json.get("best_instinctive_line", "")
-                    return SituationGambitResponse.model_validate(raw_json)
-                except Exception as inner_e:
-                    logger.warning(f"Gambit model {m_name} failed: {inner_e}")
-                    continue
-        except Exception as outer_e:
-            logger.error(f"All Gambit models failed: {outer_e}")
+                if isinstance(g_res, SituationGambitResponse) and (g_res.best_line or "").strip():
+                    # Ensure all 3 lexical_upgrades have non-empty fields
+                    for up in (g_res.lexical_upgrades or []):
+                        if not (up.example or "").strip():
+                            up.example = g_res.best_line
+                    return g_res
+            except Exception as e:
+                logger.warning(f"SituationGambit attempt {attempt+1} error: {e}")
 
         return SituationGambitResponse(
-            transcription=user_text or "",
-            situation_read="Reclaiming ownership of your idea in real time without sounding defensive or petty.",
+            situation_summary="Reclaiming credit for your idea in real time without sounding defensive or petty.",
             responding_persona="chloe",
-            best_instinctive_line="I'm glad that angle resonated, [Name]—and just to build on what I mentioned a few minutes ago, here's how we can actually execute it.",
-            softer_option="Great minds think alike! Since we're both aligned on the point I brought up earlier, let's map out the next step.",
-            firmer_option="Thanks for echoing the point I raised a moment ago, [Name]—I'd love to walk the room through the second half of that idea.",
-            arabic_meaning="يسعدني أن الفكرة لاقت صدىً، واستكمالاً لما طرحته قبل دقائق، إليكم الخطوة التالية لتنفيذها.",
-            why_it_works="By thanking them for 'echoing' or 'resonating with' what you said earlier and immediately adding the next step, you publicly re-anchor ownership to yourself while looking constructive and confident.",
-            if_they_push_back="Happy to co-develop the rollout together now that the core concept I pitched has traction.",
-            tts_clean_target="I'm glad that angle resonated—and just to build on what I mentioned a few minutes ago, here's how we can actually execute it.",
+            host_commentary="The key here is to publicly anchor the idea back to your earlier comment while immediately moving the conversation to the next step:",
+            best_line="I'm glad that angle resonated, [Name]—and just to build on what I mentioned a few minutes ago, here's how we can actually execute it.",
+            softer_alternative="Great minds think alike! Since we're both aligned on the point I brought up earlier, let's map out the next step.",
+            firmer_alternative="Thanks for echoing the point I raised a moment ago, [Name]—I'd love to walk the room through the second half of that idea.",
+            why_it_works="By thanking them for 'echoing' or 'resonating with' what you said earlier and immediately adding the next step, you reclaim ownership while sounding constructive.",
+            arabic_equivalent="يسعدني أن هذه الزاوية لاقت صدىً، واستكمالاً لما طرحته قبل دقائق، إليكم كيف يمكننا تنفيذ ذلك عملياً.",
+            follow_up_line="Happy to co-develop the rollout together now that the core concept I pitched has traction.",
             lexical_upgrades=[]
         )
 

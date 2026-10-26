@@ -237,17 +237,26 @@ def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> 
         return html.escape(str(v or ""), quote=False)
     LRM = "\u200e"
     vibe_label = REGISTERS_MAP.get(active_reg, "🎙️ Articulate")
+    sit_sum = getattr(g_res, "situation_summary", "") or getattr(g_res, "situation_read", "")
+    host_comm = getattr(g_res, "host_commentary", "") or "Here is the cleanest way to handle that moment on the spot:"
+    best_l = getattr(g_res, "best_line", "") or getattr(g_res, "best_instinctive_line", "")
+    softer_l = getattr(g_res, "softer_alternative", "") or getattr(g_res, "softer_option", "")
+    firmer_l = getattr(g_res, "firmer_alternative", "") or getattr(g_res, "firmer_option", "")
+    ar_eq = getattr(g_res, "arabic_equivalent", "") or getattr(g_res, "arabic_meaning", "")
+    why_w = getattr(g_res, "why_it_works", "")
+    f_up = getattr(g_res, "follow_up_line", "") or getattr(g_res, "if_they_push_back", "")
+
     lines = [
         f"⚡ <b>What to Say When... ({vibe_label})</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"🎯 <b>Situation Read:</b> {_e(getattr(g_res, 'situation_read', ''))}\n",
-        "👩🏼‍💼 <b>Chloe:</b> Here is the sharpest way to play that moment on the spot:\n",
-        f"🗣️ <b>Best Instinctive Line (Say This First):</b>\n<code>{_e(getattr(g_res, 'best_instinctive_line', ''))}</code>\n",
-        f"🕊️ <b>Softer / Tactful Option:</b>\n<code>{_e(getattr(g_res, 'softer_option', ''))}</code>\n",
-        f"🛡️ <b>Firmer / Boundary Option:</b>\n<code>{_e(getattr(g_res, 'firmer_option', ''))}</code>\n",
-        f"• 🇸🇦 <b>Arabic Meaning:</b> {_e(getattr(g_res, 'arabic_meaning', ''))}",
-        f"• 💡 <b>Why It Works:</b> {_e(getattr(g_res, 'why_it_works', ''))}",
-        f"• 🔄 <b>If They Push Back:</b> <i>\"{_e(getattr(g_res, 'if_they_push_back', ''))}\"</i>",
+        f"🎯 <b>Situation Read:</b> {_e(sit_sum)}\n",
+        f"👩🏼‍💼 <b>Chloe:</b> {_e(host_comm)}\n",
+        f"🗣️ <b>Best Instinctive Line (Say This First):</b>\n<code>{_e(best_l)}</code>\n",
+        f"🕊️ <b>Softer / Tactful Option:</b>\n<code>{_e(softer_l)}</code>\n",
+        f"🛡️ <b>Firmer / Boundary Option:</b>\n<code>{_e(firmer_l)}</code>\n",
+        f"• 🇸🇦 <b>Arabic Meaning:</b> {_e(ar_eq)}",
+        f"• 💡 <b>Why It Works:</b> {_e(why_w)}",
+        f"• 🔄 <b>If They Push Back:</b> <i>\"{_e(f_up)}\"</i>",
     ]
     upgrades = getattr(g_res, "lexical_upgrades", None) or []
     if upgrades:
@@ -255,9 +264,9 @@ def format_situation_gambit_html(g_res: Any, active_reg: str = "articulate") -> 
         for idx, up in enumerate(upgrades[:3], start=1):
             foil = getattr(up, "b2_foil", "") or getattr(up, "b2_equivalent", "")
             foil_part = f" (instead of: <i>{_e(foil)}</i>)" if foil else ""
-            ar_eq = getattr(up, "arabic_equivalent", "").strip()
+            up_ar = getattr(up, "arabic_equivalent", "").strip()
             expl = getattr(up, "explanation", "").strip()
-            note_txt = f"{ar_eq}{LRM} — {LRM}{expl}" if (ar_eq and expl and ar_eq not in expl) else (ar_eq or expl)
+            note_txt = f"{up_ar}{LRM} — {LRM}{expl}" if (up_ar and expl and up_ar not in expl) else (up_ar or expl)
             expl_part = f"\n{LRM}  └ 💡 {_e(note_txt)}" if note_txt else ""
             lines.append(
                 f"{LRM}<b>({idx})</b> <code>{_e(up.chunk)}</code>{foil_part}{expl_part}\n"
