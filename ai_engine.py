@@ -1026,7 +1026,10 @@ class NYCLoungeAI:
         audio_mime: str = "audio/ogg"
     ) -> Any:
         from validation_layer import LoungeTurnResponse
-        pref_reg = user.get("preferred_register", "articulate") if isinstance(user, dict) else "articulate"
+        try:
+            pref_reg = user["preferred_register"] if (user and "preferred_register" in user and user["preferred_register"]) else "articulate"
+        except Exception:
+            pref_reg = "articulate"
         if pref_reg not in REGISTERS_MAP:
             pref_reg = "articulate"
         vibe_badge = REGISTERS_MAP[pref_reg]
@@ -1171,7 +1174,7 @@ class NYCLoungeAI:
         )
 
         last_err = None
-        models_to_try = [self.primary_model] + [m for m in self.fallback_models if m != self.primary_model]
+        models_to_try = list(getattr(self, "models", None) or getattr(self, "model_chain", None) or ["gemini-2.5-flash", "gemini-2.0-flash"])
 
         for attempt in range(3):
             model_name = models_to_try[min(attempt, len(models_to_try) - 1)]
@@ -1187,6 +1190,8 @@ class NYCLoungeAI:
                 contents.append(f"LEARNER SCENARIO:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}")
 
             try:
+                if not getattr(self, "client", None):
+                    raise RuntimeError("Gemini client is not initialized.")
                 resp = self.client.models.generate_content(
                     model=model_name,
                     contents=contents,

@@ -1536,7 +1536,7 @@ if bot:
         bot.send_chat_action(message.chat.id, "typing")
 
         try:
-            if mode == "situation_gambit":
+            if mode == "situation_gambit" or any(k in text.lower() for k in ("how do i push back", "what do i say", "without making it sound like", "without sounding uncooperative")):
                 g_res = ai_engine.process_situation_gambit(user=user, user_text=text)
                 db.append_history(uid, "user", f"[Situation]: {text}")
                 db.append_history(uid, "assistant", g_res.best_line)
