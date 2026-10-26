@@ -35,7 +35,7 @@ def verify_contiguous_expression_in_sentence(expression: str, sentence: str) -> 
         if not part:
             continue
         if part.startswith("[") and part.endswith("]"):
-            seq_patterns.append(r"[^\s.,;!?—–()\"']+(?:\s+[^\s.,;!?—–()\"']+){0,4}")
+            seq_patterns.append(r"[^\s.,;!?—–()\"']+(?:\s+[^\s.,;!?—–()\"']+){0,6}")
         else:
             for w in re.findall(r"[a-z0-9]+(?:['-][a-z0-9]+)*", part):
                 if len(w) >= 4 and "-" not in w and "'" not in w:
@@ -250,6 +250,21 @@ class LoungeTurnResponse(StrictBaseModel):
                 option_text_map[e.option_id] = e.exact_wording
 
         all_dialogue_norm = normalize_for_citation(" ".join(t.text for t in self.host_turns))
+        for item in self.lexical_items:
+            if item.source_type == "related_extension":
+                cleaned_ext = re.sub(r"^to\\s+", "", item.expression.lower().strip())
+                if "[" not in cleaned_ext and verify_contiguous_expression_in_sentence(cleaned_ext, all_dialogue_norm):
+                    raise ValueError(f"Expression '{item.expression}' already appears in host_turns; pick a different related_extension.")
+        for item in self.lexical_items:
+            if item.source_type == "related_extension":
+                cleaned_ext = re.sub(r"^to\\s+", "", item.expression.lower().strip())
+                if "[" not in cleaned_ext and verify_contiguous_expression_in_sentence(cleaned_ext, all_dialogue_norm):
+                    raise ValueError(f"Expression '{item.expression}' already appears in host_turns; pick a different related_extension.")
+        for item in self.lexical_items:
+            if item.source_type == "related_extension":
+                cleaned_ext = re.sub(r"^to\\s+", "", item.expression.lower().strip())
+                if "[" not in cleaned_ext and verify_contiguous_expression_in_sentence(cleaned_ext, all_dialogue_norm):
+                    raise ValueError(f"Expression '{item.expression}' already appears in host_turns; pick a different related_extension.")
         for item in self.lexical_items:
             expr_l = item.expression.lower().strip()
             if any(v in expr_l for v in ("conflate", "conflating", "equate", "equating")) and " with " not in expr_l:

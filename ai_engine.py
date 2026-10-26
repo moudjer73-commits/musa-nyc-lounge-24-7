@@ -1454,7 +1454,7 @@ class NYCLoungeAI:
             "   - In `turn_1` (Marcus), dismantle the unexamined causal assumption in the learner's claim (e.g., showing why two things the learner treats as equivalent are actually distinct).\n"
             "   - In `turn_2` (Chloe), expose the second-order operational cost or how the learner's policy could backfire in practice.\n"
             "3. ZERO FABRICATION & CALIBRATED CLAIMS: Never make sweeping unsupported claims like 'zero loyalty' (use conditional phrasing: 'can weaken', 'often erodes'); for `related_extension`, pick an idiom NOT used anywhere in `turn_1` or `turn_2`; and Do NOT invent fake statistics, fake studies, or unstated facts about the learner's workplace.\n"
-            "4. DIAGNOSTIC MIRROR: If the learner's English is already natural, set `learner_diagnosis='already_natural'`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`. Only set `show_diagnostic_mirror=True` if there is a genuine grammatical, collocation, or register error.\n"
+            "4. COMPLETE FRAMES & DIAGNOSTIC MIRROR: Always extract complete reusable frames (like `conflate [something] with [something]` or `paint with a broad brush`), never partial fragments; frame trade-offs conditionally ('can', 'often') without sweeping unsupported claims; and for `related_extension`, pick an expression NOT used in `turn_1` or `turn_2`. If the learner's English is already natural, set `learner_diagnosis='already_natural'`, `show_diagnostic_mirror=False`, and `diagnostic_mirror=None`. Only set `show_diagnostic_mirror=True` if there is a genuine grammatical, collocation, or register error.\n"
             "5. VERBATIM CITATIONS: For `verbatim_from_host_dialogue`, `full_sentence_citation` MUST be a single complete sentence copied character-for-character from that speaker's `text`, and `expression` must appear inside it as an unbroken contiguous phrase."
         )
 
@@ -1535,26 +1535,26 @@ class NYCLoungeAI:
                 {
                     "turn_id": "turn_1",
                     "speaker": "marcus",
-                    "text": "I'd push back on the assumption that physical proximity automatically translates into real mentorship. Sitting next to senior engineers five days a week doesn't guarantee juniors will learn by osmosis if those seniors are stuck in video calls with their headphones on all day."
+                    "text": "Saying remote work is always better tends to paint with a broad brush because it treats solo task execution and complex team coordination as if they had the exact same demands. While eliminating the commute saves time, unstructured problem-solving and rapid cross-team alignment are much harder to sustain through scheduled video calls alone."
                 },
                 {
                     "turn_id": "turn_2",
                     "speaker": "chloe",
-                    "text": "Plus, a rigid five-day mandate can easily backfire if it drives away the experienced engineers you rely on to do the mentoring. Too often, leadership teams conflate physical attendance with structured onboarding instead of fixing weak documentation and code-review habits."
+                    "text": "Right, and banning in-person requirements altogether can trade short-term convenience for slower cross-functional trust and weaker informal mentorship over time. Too often, remote-only advocates conflate individual task output with long-term organizational cohesion instead of tailoring attendance policies to the actual collaboration a role requires."
                 }
             ],
             "lexical_items": [
                 {
-                    "expression": "learn by osmosis",
+                    "expression": "paint with a broad brush",
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_1",
                     "source_speaker": "marcus",
-                    "full_sentence_citation": "Sitting next to senior engineers five days a week doesn't guarantee juniors will learn by osmosis if those seniors are stuck in video calls with their headphones on all day.",
+                    "full_sentence_citation": "Saying remote work is always better tends to paint with a broad brush because it treats solo task execution and complex team coordination as if they had the exact same demands.",
                     "usage_status_label": "Verbatim from Marcus (turn_1)",
-                    "core_lexical_meaning": "Absorb knowledge or skills gradually and unconsciously through exposure rather than formal instruction.",
-                    "contextual_function": "Challenges the belief that merely sitting near senior staff produces skill transfer without deliberate coaching.",
+                    "core_lexical_meaning": "Describe or categorize a complex issue using sweeping generalizations while ignoring important differences across cases.",
+                    "contextual_function": "Directly challenges the universal claim that remote work is always better by showing that solo execution and team coordination have different needs.",
                     "register_and_usage": "Idiomatic professional and educated general American English.",
-                    "arabic_equivalent": "يتعلّم بالتشرّب التلقائي أو بالمخالطة غير المباشرة",
+                    "arabic_equivalent": "يُعمّم على نحوٍ واسع دون مراعاة الفروق الدقيقة بين الحالات",
                     "contrastive_note": None
                 },
                 {
@@ -1562,10 +1562,10 @@ class NYCLoungeAI:
                     "source_type": "verbatim_from_host_dialogue",
                     "source_ref_id": "turn_2",
                     "source_speaker": "chloe",
-                    "full_sentence_citation": "Too often, leadership teams conflate physical attendance with structured onboarding instead of fixing weak documentation and code-review habits.",
+                    "full_sentence_citation": "Too often, remote-only advocates conflate individual task output with long-term organizational cohesion instead of tailoring attendance policies to the actual collaboration a role requires.",
                     "usage_status_label": "Verbatim from Chloe (turn_2)",
                     "core_lexical_meaning": "Fuse or confuse two distinct concepts into one, overlooking critical differences between them.",
-                    "contextual_function": "Pinpoints the analytical flaw of treating office presence as if it were the same thing as deliberate training.",
+                    "contextual_function": "Pinpoints the analytical flaw of treating individual task output at home as if it were equivalent to long-term organizational cohesion.",
                     "register_and_usage": "Analytical, executive, and persuasive American English.",
                     "arabic_equivalent": "يخلط بين مفهومين مختلفين أو يدمجهما خطأً باعتبارهما شيئاً واحداً",
                     "contrastive_note": None
