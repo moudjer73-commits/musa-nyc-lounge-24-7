@@ -1115,7 +1115,7 @@ class NYCLoungeAI:
             },
             "lexical_items": [
                 {
-                    "expression": "exact contiguous phrase from option_1",
+                    "expression": "exact contiguous words copied from option_1",
                     "source_type": "from_recommended_option",
                     "source_ref_id": "option_1",
                     "source_speaker": None,
@@ -1128,7 +1128,7 @@ class NYCLoungeAI:
                     "contrastive_note": None
                 },
                 {
-                    "expression": "exact contiguous phrase from option_3",
+                    "expression": "exact contiguous words copied from option_3",
                     "source_type": "from_recommended_option",
                     "source_ref_id": "option_3",
                     "source_speaker": None,
@@ -1165,22 +1165,35 @@ class NYCLoungeAI:
             "MANDATORY SCHEMA & EPISTEMIC RULES (ENFORCED BY PYDANTIC v2 VALIDATOR):\n"
             f"1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}\n"
             "2. ZERO FABRICATION OF UNSTATED FACTS:\n"
-            "   - Do NOT invent unverified technical components (no payment flows, APIs, or specific feature names like 'custom export tool').\n"
+            "   - Do NOT invent unverified technical components (no payment flows, APIs, databases, or specific feature names).\n"
             "   - Do NOT invent unverified durations or release names (no 'two weeks', 'Phase 2', or 'week-two update').\n"
             "   - Do NOT open a boundary-setting line with an unconditional commitment; tie any scope addition conditionally to deferring existing items or adjusting the timeline.\n"
             "   - Do NOT promise that deferring one item will automatically free up enough capacity before engineering checks it.\n"
             "3. WORD COUNT: Each `spoken_line` in `strategic_options` MUST be a single sentence of 12 to 22 words (`12 <= words <= 22`) ending in `.` or `?`.\n"
-            "4. CITATIONS: For `from_recommended_option`, `full_sentence_citation` MUST be the exact, complete `spoken_line` of that `option_id`, and `expression` must appear inside it as an unbroken contiguous phrase."
+            "4. CITATIONS: For `from_recommended_option`, `full_sentence_citation` MUST be the exact, complete `spoken_line` of that `option_id`, and `expression` must appear inside it as an unbroken contiguous phrase using the exact same word forms."
         )
 
         last_err = None
-        models_to_try = list(getattr(self, "_discovered_models", None) or ["gemini-2.5-flash", "gemini-2.0-flash"])
-        keys_list = list(getattr(self, "keys_pool", None) or [])
+        now = time.time()
+        dead_keys = getattr(self, "_dead_keys_until", {})
+        if not hasattr(self, "_dead_key_models_until"):
+            self._dead_key_models_until = {}
 
-        if keys_list:
-            for attempt in range(3):
-                api_k = keys_list[attempt % len(keys_list)]
-                model_name = models_to_try[min(attempt, len(models_to_try) - 1)]
+        healthy_key_indices = [i for i in range(len(self.keys_pool)) if dead_keys.get(i, 0) < now]
+        if not healthy_key_indices and self.keys_pool:
+            healthy_key_indices = list(range(len(self.keys_pool)))
+
+        tries_done = 0
+        for k_idx in healthy_key_indices[:2]:
+            key = self.keys_pool[k_idx]
+            client = genai.Client(api_key=key, http_options={"timeout": 25000})
+            models_to_try = self._get_active_models(client, k_idx=k_idx)
+            for model_name in models_to_try:
+                if self._dead_models_until.get(model_name, 0) >= time.time():
+                    continue
+                if self._dead_key_models_until.get((k_idx, model_name), 0) >= time.time():
+                    continue
+                tries_done += 1
                 prompt_suffix = ""
                 if last_err:
                     prompt_suffix = f"\n\nYOUR PREVIOUS JSON FAILED PYDANTIC VALIDATION WITH ERROR:\n{last_err}\nFix this exact validation error immediately."
@@ -1193,18 +1206,17 @@ class NYCLoungeAI:
                     contents.append(f"LEARNER SCENARIO:\n{clean_user_text}\n\nReturn valid JSON matching LoungeTurnResponse.{prompt_suffix}")
 
                 try:
-                    client = genai.Client(api_key=api_k)
                     resp = client.models.generate_content(
                         model=model_name,
                         contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt,
-                            temperature=0.25 if attempt == 0 else 0.15,
+                            temperature=0.25 if tries_done == 1 else 0.15,
                             response_mime_type="application/json",
                             max_output_tokens=4096,
                         ),
                     )
-                    raw_text = (resp.text or "").strip()
+                    raw_text = (getattr(resp, "text", "") or "").strip()
                     if raw_text.startswith("```"):
                         raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
                     payload_dict = json.loads(raw_text)
@@ -1212,11 +1224,20 @@ class NYCLoungeAI:
                         payload_dict,
                         context=trusted_context
                     )
-                    logger.info(f"✅ LoungeTurnResponse Pydantic Validation PASSED on attempt {attempt+1} ({model_name})!")
+                    logger.info(f"✅ LoungeTurnResponse LIVE Validation PASSED on try {tries_done} ({model_name})!")
                     return validated
                 except Exception as e:
-                    last_err = str(e)
-                    logger.warning(f"LoungeTurnResponse live attempt {attempt+1} ({model_name}) failed: {last_err}")
+                    err_str = str(e)
+                    last_err = err_str
+                    logger.warning(f"LoungeTurnResponse live try {tries_done} ({model_name}) failed: {err_str[:220]}")
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        self._dead_key_models_until[(k_idx, model_name)] = time.time() + 65
+                    elif "404" in err_str or "NOT_FOUND" in err_str:
+                        self._dead_models_until[model_name] = time.time() + 86400
+                if tries_done >= 4:
+                    break
+            if tries_done >= 4:
+                break
 
         fallback_payload = {
             "active_mode": "situation_strategy",

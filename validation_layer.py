@@ -192,7 +192,7 @@ class LoungeTurnResponse(StrictBaseModel):
             raise ValueError(f"Trusted ValidationInfo.context is missing required keys: {sorted(missing_keys)}")
 
         trusted_has_audio = bool(ctx["runtime_has_audio_bytes"])
-        if self.learner_input_text != ctx["learner_input_text"]:
+        if normalize_for_citation(self.learner_input_text) != normalize_for_citation(ctx["learner_input_text"]):
             raise ValueError("LLM altered learner_input_text relative to trusted Telegram runtime context.")
         if self.active_mode != ctx["active_mode"]:
             raise ValueError("LLM altered active_mode relative to trusted Telegram runtime context.")
