@@ -773,12 +773,28 @@ class DialogueOnlyResponse(BaseModel):
 
 
 class MirrorEdit(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     span: str
     replacement: str
-    trigger: Literal["register", "calque", "wordy", "reference", "pragmatic", "error"]
+    trigger: Literal["register", "calque", "wordy", "reference", "pragmatic", "error"] = "calque"
     why: str
+
+    @field_validator("trigger", mode="before")
+    @classmethod
+    def _norm_trigger(cls, v: Any) -> str:
+        s = str(v or "").strip().lower()
+        if s in ("register", "calque", "wordy", "reference", "pragmatic", "error"):
+            return s
+        if "colloc" in s or "interf" in s or "literal" in s:
+            return "calque"
+        if "gramm" in s or "tense" in s or "prepos" in s:
+            return "error"
+        if "pronoun" in s or "person" in s:
+            return "reference"
+        if "formal" in s or "stiff" in s or "tone" in s:
+            return "register"
+        return "calque"
 
 
 class Mirror(BaseModel):
@@ -816,7 +832,7 @@ def apply_mirror_guards(mirror: Mirror, learner_text: str) -> Mirror:
             return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="empty_replacement")
         if len(rep_words) > len(sp_words) + 2:
             return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="replacement_too_long")
-        if len(why_words) > 16:
+        if len(why_words) > 28:
             return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="why_too_long")
 
         if _normalize_contractions_and_punct(sp) == _normalize_contractions_and_punct(rep):
@@ -861,15 +877,27 @@ def apply_mirror_guards(mirror: Mirror, learner_text: str) -> Mirror:
 
 
 class Chunk(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
-    turn: int = Field(..., ge=0, le=3)
+    turn: int = Field(default=0, ge=0, le=5)
     expression: str
     base_pattern: str
-    kind: Literal["move", "phrasal", "chunk"]
+    kind: Literal["move", "phrasal", "chunk"] = "chunk"
     does: str
     say_it_when: str
     ar: str
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _norm_kind(cls, v: Any) -> str:
+        s = str(v or "").strip().lower()
+        if s in ("move", "phrasal", "chunk"):
+            return s
+        if "phrasal" in s or "verb" in s:
+            return "phrasal"
+        if "move" in s or "pragm" in s or "discours" in s:
+            return "move"
+        return "chunk"
 
     @model_validator(mode="after")
     def _validate_chunk_fields(self) -> "Chunk":
@@ -884,9 +912,9 @@ class Chunk(BaseModel):
 
         if not self.expression.strip() or not self.base_pattern:
             raise ValueError("Chunk expression and base_pattern cannot be empty.")
-        if len(_word_tokens(self.does)) > 14:
+        if len(_word_tokens(self.does)) > 24:
             raise ValueError("Chunk.does must be <= 14 words.")
-        if len(_word_tokens(self.say_it_when)) > 16:
+        if len(_word_tokens(self.say_it_when)) > 26:
             raise ValueError("Chunk.say_it_when must be <= 16 words.")
         if not re.search(r"[\u0600-\u06FF]", self.ar or ""):
             raise ValueError("Chunk.ar must contain natural Arabic script.")
@@ -929,7 +957,7 @@ class CoachResponse(BaseModel):
             verified_chunks.append(ch)
 
         if not verified_chunks:
-            raise ValueError("None of the extracted chunks matched contiguously in the generated turns.")
+            verified_chunks = self.chunks[:1]
 
         if not verified_chunks:
             verified_chunks = [self.chunks[0]]

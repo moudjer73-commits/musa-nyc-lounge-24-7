@@ -2341,15 +2341,16 @@ class NYCLoungeAI:
                     if spk not in ("Marcus", "Chloe", "Jake"):
                         spk = "Marcus"
                     txt = str(t_item.get("text", "")).strip()
-                    # Keep '?' only on the last turn that has one
-                    if idx < len(raw_turns) - 1 and "?" in txt:
-                        txt = txt.replace("?", ".")
+                    # Question marks will be deduplicated after collecting all turns
                     words = txt.split()
                     limit_map = {"Jake": 22, "Chloe": 33, "Marcus": 40}
                     max_w = limit_map.get(spk, 40)
                     if len(words) > max_w:
                         txt = " ".join(words[:max_w]).rstrip(",;:") + "."
                     repaired.append({"speaker": spk, "text": txt})
+                q_idxs = [i for i, t in enumerate(repaired) if "?" in t["text"]]
+                for i in q_idxs[:-1]:
+                    repaired[i]["text"] = repaired[i]["text"].replace("?", ".")
                 return DialogueOnlyResponse.model_validate({"turns": repaired})
 
         return self._call_gemini_json(

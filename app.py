@@ -2091,13 +2091,13 @@ def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int
             rtr_html = format_v2_read_the_room_html(rtr, clean_t)
             bot_inst.send_message(chat_id, rtr_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
             try:
-                db_inst.update_user_mode(user_id, "banter")
+                db_inst.update_user_mode(user_id, "spontaneous_chat")
             except Exception:
                 pass
             return True
 
         # 3. Two-Call Lounge Banter & Devil's Advocate
-        if active_mode in ("banter", "devils_advocate"):
+        if active_mode in ("spontaneous_chat", "banter", "nyc_banter", "devils_advocate", "devil", "debate"):
             try:
                 bot_inst.send_chat_action(chat_id, "typing")
             except Exception:
