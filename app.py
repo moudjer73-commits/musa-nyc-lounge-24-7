@@ -1340,11 +1340,6 @@ if bot:
             audio_bytes = bot.download_file(file_info.file_path)
 
             # --- Active Phrase Practice Mode via Voice Note ---
-            # [CLAUDE V2 LIVE HOOK]
-            _v2_u_dict = dict(user) if user else {'user_id': message.from_user.id}
-            _v2_active_mode = (_v2_u_dict.get('current_mode') or 'banter')
-            if handle_claude_v2_turn(bot, ai, db, message, _v2_u_dict, text, _v2_active_mode):
-                return
             if mode == "srs_active_practice":
                 meta = db.get_session_meta(uid)
                 card_id = int(meta.get("active_srs_card_id", 0))
@@ -1468,6 +1463,11 @@ if bot:
         mode = user.get("current_mode", "spontaneous_chat")
 
         # --- A. Host Member Management ---
+        # [CLAUDE V2 LIVE HOOK]
+        _v2_u_dict = dict(user) if user else {'user_id': message.from_user.id}
+        _v2_active_mode = (_v2_u_dict.get('current_mode') or 'banter')
+        if handle_claude_v2_turn(bot, ai, db, message, _v2_u_dict, text, _v2_active_mode):
+            return
         if uid == ADMIN_ID and mode in ("admin_add_user", "admin_del_user"):
             digits = "".join([c for c in text if c.isdigit()])
             if not digits:
