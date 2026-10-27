@@ -1,5 +1,5 @@
 import os, sys, json, base64, traceback
-import config, database, ai_engine, app
+import config, database, ai_engine, validation_layer
 
 if __name__ == "__main__":
     try:
@@ -16,8 +16,8 @@ if __name__ == "__main__":
         sections.append(
             "=== GOLDEN TEST 1: BANTER WITH NATURAL SENTENCE (MIRROR MUST BE SILENT) ===\n"
             f"👤 Learner: {msg1}\n\n"
-            "[Message 1 — Call A: Free Dialogue @ T=0.8]\n" + app.format_v2_dialogue_html(d1) + "\n\n"
-            "[Message 2 — Call B: Coach @ T=0.15 (Mirror Verdict=" + (c1.mirror.verdict if c1 else "none") + ")]\n" + app.format_v2_coach_html(c1)
+            "[Message 1 — Call A: Free Dialogue @ T=0.8]\n" + validation_layer.format_v2_dialogue_html(d1) + "\n\n"
+            "[Message 2 — Call B: Coach @ T=0.15 (Mirror Verdict=" + (c1.mirror.verdict if c1 else "none") + ")]\n" + validation_layer.format_v2_coach_html(c1)
         )
 
         # TEST 2: Learner sentence with 'for him or her' -> Mirror MUST do surgical span -> replacement
@@ -27,8 +27,8 @@ if __name__ == "__main__":
         sections.append(
             "=== GOLDEN TEST 2: BANTER WITH PRONOUN SHIFT (SURGICAL MIRROR + NO IDIOM STACKING) ===\n"
             f"👤 Learner: {msg2}\n\n"
-            "[Message 1 — Call A: Free Dialogue @ T=0.8]\n" + app.format_v2_dialogue_html(d2) + "\n\n"
-            "[Message 2 — Call B: Coach @ T=0.15 (Mirror Verdict=" + (c2.mirror.verdict if c2 else "none") + ")]\n" + app.format_v2_coach_html(c2)
+            "[Message 1 — Call A: Free Dialogue @ T=0.8]\n" + validation_layer.format_v2_dialogue_html(d2) + "\n\n"
+            "[Message 2 — Call B: Coach @ T=0.15 (Mirror Verdict=" + (c2.mirror.verdict if c2 else "none") + ")]\n" + validation_layer.format_v2_coach_html(c2)
         )
 
         # TEST 3: Read the Room + Turn-2 Stateful Practice Reply
@@ -40,11 +40,11 @@ if __name__ == "__main__":
 
         sections.append(
             "=== GOLDEN TEST 3A: READ THE ROOM V2 (STREAMLINED + HIDDEN READING) ===\n"
-            + app.format_v2_read_the_room_html(rtr_res, rtr_input)
+            + validation_layer.format_v2_read_the_room_html(rtr_res, rtr_input)
             + "\n\n=== GOLDEN TEST 3B: TURN-2 STATEFUL FEEDBACK LOOP (`PracticeEval`) ===\n"
             + f"👤 Learner Reply to Your Turn: \"{learner_attempt}\"\n"
             + f"🔒 Counterpart's Hidden Reading Index: {rtr_res.your_turn.hidden_reading}\n\n"
-            + app.format_v2_practice_eval_html(pe_res, learner_attempt)
+            + validation_layer.format_v2_practice_eval_html(pe_res, learner_attempt)
         )
 
         rendered = "\n\n" + ("=" * 72 + "\n\n").join(sections)

@@ -1925,6 +1925,10 @@ def build_contextual_take2_prompt(uid: int, tok: str, msg_text: str = "") -> Tup
 
 
 # === CLAUDE V2 RENDERERS & STATEFUL ROUTER HELPERS ===
+import html as _html_mod
+def _e(val) -> str:
+    return _html_mod.escape(str(val if val is not None else ''))
+
 SPEAKER_BADGES_V2 = {
     "Marcus": "🧔‍♂️ <b>Marcus:</b>",
     "Chloe": "👩🏼‍💼 <b>Chloe:</b>",
