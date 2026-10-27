@@ -1922,3 +1922,112 @@ def build_contextual_take2_prompt(uid: int, tok: str, msg_text: str = "") -> Tup
         "3️⃣ Marcus, Chloe, and Jake will react to your move and diagnose your phrasing!"
     )
     return prompt_html, (natural_flow or None)
+
+
+# === CLAUDE V2 RENDERERS & STATEFUL ROUTER HELPERS ===
+SPEAKER_BADGES_V2 = {
+    "Marcus": "🧔‍♂️ <b>Marcus:</b>",
+    "Chloe": "👩🏼‍💼 <b>Chloe:</b>",
+    "Jake": "🧢 <b>Jake:</b>",
+}
+
+RISK_BADGES_V2 = {
+    "low": "🟢 Low Risk",
+    "mid": "🟡 Medium Risk",
+    "high": "🔴 High Stakes",
+}
+
+
+def format_v2_dialogue_html(dialogue_res) -> str:
+    lines = []
+    for t in dialogue_res.turns:
+        badge = SPEAKER_BADGES_V2.get(t.speaker, f"🗣️ <b>{t.speaker}:</b>")
+        lines.append(f"{badge} {_e(t.text)}")
+    return "\n\n".join(lines)
+
+
+def format_v2_coach_html(coach_res) -> str:
+    if not coach_res:
+        return ""
+    lines = []
+    if coach_res.mirror and coach_res.mirror.verdict == "fix" and coach_res.mirror.html_render:
+        lines.append(coach_res.mirror.html_render)
+        lines.append("")
+    if coach_res.chunks:
+        lines.append("💎 <b>Spoken American Moves:</b>")
+        for idx, ch in enumerate(coach_res.chunks, 1):
+            lines.append(
+                f"({idx}) 🧩 <b>{_e(ch.base_pattern)}</b> <i>[{_e(ch.kind)}]</i> — {_e(ch.ar)}\n"
+                f"  └ 💬 <i>\"{_e(ch.expression)}\"</i>\n"
+                f"  └ 🎯 <b>Does:</b> {_e(ch.does)}\n"
+                f"  └ 🗽 <b>Say it when:</b> {_e(ch.say_it_when)}"
+            )
+    return "\n".join(lines).strip()
+
+
+def format_v2_read_the_room_html(rtr, input_text: str) -> str:
+    lines = [
+        "🎭 <b>Read the Room</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🗣️ <b>Input:</b> \"{_e(input_text)}\"",
+        f"📌 <b>Surface / Core Point:</b> {_e(rtr.surface_point)}",
+        "",
+        "1️⃣ <b>What It Might Mean (Cue → Subtext)</b>",
+    ]
+    for idx, rd in enumerate(rtr.readings, 1):
+        ar_part = f" — <i>{_e(rd.ar)}</i>" if rd.ar else ""
+        lines.append(f"• <b>[{idx}] {_e(rd.cue)}</b> → {_e(rd.meaning)}{ar_part}")
+
+    lines.append("\n2️⃣ <b>What You Could Say (Strategic Moves)</b>")
+    move_Titles = {
+        "ask": "Clarify Without Assuming (Ask)",
+        "go_along": "Keep Momentum Smoothly (Go Along)",
+        "name_it": "Surface the Subtext / Set Boundary (Name It)",
+    }
+    for mv in rtr.moves:
+        r_badge = RISK_BADGES_V2.get(mv.risk, mv.risk)
+        m_title = move_Titles.get(mv.kind, mv.kind)
+        lines.append(
+            f"• <b>{m_title}</b> ({r_badge})\n"
+            f"  💬 <b>Say:</b> \"{_e(mv.line)}\"\n"
+            f"  🎯 <b>Fits when:</b> {_e(mv.when_to_use)}"
+        )
+
+    lines.append("\n3️⃣ <b>Lounge Takeaway</b>")
+    for t in rtr.lounge_take:
+        badge = SPEAKER_BADGES_V2.get(t.speaker, f"🗣️ <b>{t.speaker}:</b>")
+        lines.append(f"{badge} \"{_e(t.text)}\"")
+
+    if rtr.chunks:
+        lines.append("\n💎 <b>Spoken Moves from the Lounge</b>")
+        for idx, ch in enumerate(rtr.chunks, 1):
+            lines.append(
+                f"• 🧩 <b>{_e(ch.base_pattern)}</b> ({_e(ch.ar)}): {_e(ch.does)} — <i>Say it when: {_e(ch.say_it_when)}</i>"
+            )
+
+    yt = rtr.your_turn
+    c_badge = SPEAKER_BADGES_V2.get(yt.counterpart, f"🗣️ <b>{yt.counterpart}:</b>")
+    lines.extend([
+        "",
+        "4️⃣ <b>Your Turn (Active Roleplay)</b>",
+        f"{c_badge} \"{_e(yt.their_line)}\"",
+        f"🎯 <b>Goal:</b> {_e(yt.goal)}",
+        f"👉 <b>{_e(yt.prompt)}</b> <i>(Reply directly with your spoken line, or send /skip to exit)</i>",
+    ])
+    return "\n".join(lines)
+
+
+def format_v2_practice_eval_html(pe, learner_text: str) -> str:
+    from validation_layer import Mirror, apply_mirror_guards
+    lines = [
+        f"👂 <b>How It Lands:</b> {_e(pe.lands_as or '')}"
+    ]
+    if pe.tweak:
+        guarded = apply_mirror_guards(Mirror(verdict="fix", edits=[pe.tweak]), learner_text)
+        if guarded.verdict == "fix" and guarded.html_render:
+            lines.append(guarded.html_render)
+    if pe.reply:
+        badge = SPEAKER_BADGES_V2.get(pe.reply.speaker, f"🗣️ <b>{pe.reply.speaker}:</b>")
+        lines.append(f"\n{badge} \"{_e(pe.reply.text)}\"")
+    return "\n".join(lines)
+

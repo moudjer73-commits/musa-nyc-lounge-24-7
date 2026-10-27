@@ -1223,3 +1223,120 @@ class LoungeDatabase:
                 return data
         except Exception:
             return None
+
+    # === CLAUDE V2 STATE & MEMORY METHODS ===
+    def _ensure_v2_tables(self):
+        with sqlite3.connect(self.user_db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pending_practice (
+                    user_id INTEGER PRIMARY KEY,
+                    mode TEXT NOT NULL,
+                    scenario_json TEXT NOT NULL,
+                    rounds INTEGER DEFAULT 0,
+                    expires_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS shown_chunks_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    base_pattern TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mirror_audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    verdict TEXT NOT NULL,
+                    vetoed INTEGER NOT NULL,
+                    reason TEXT,
+                    created_at REAL NOT NULL
+                )
+            """)
+            conn.commit()
+
+    def set_pending_practice(self, user_id: int, mode: str, scenario_dict: dict, ttl_seconds: int = 1800):
+        self._ensure_v2_tables()
+        expires = time.time() + ttl_seconds
+        with sqlite3.connect(self.user_db_path) as conn:
+            conn.execute("""
+                INSERT INTO pending_practice (user_id, mode, scenario_json, rounds, expires_at)
+                VALUES (?, ?, ?, 0, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    mode=excluded.mode,
+                    scenario_json=excluded.scenario_json,
+                    rounds=0,
+                    expires_at=excluded.expires_at
+            """, (user_id, mode, json.dumps(scenario_dict, ensure_ascii=False), expires))
+            conn.commit()
+
+    def get_pending_practice(self, user_id: int):
+        self._ensure_v2_tables()
+        now = time.time()
+        with sqlite3.connect(self.user_db_path) as conn:
+            row = conn.execute(
+                "SELECT mode, scenario_json, rounds, expires_at FROM pending_practice WHERE user_id = ?",
+                (user_id,)
+            ).fetchone()
+            if not row:
+                return None
+            mode, scen_json, rounds, expires_at = row[0], row[1], row[2], row[3]
+            if expires_at < now:
+                conn.execute("DELETE FROM pending_practice WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return None
+            return {
+                "mode": mode,
+                "scenario": json.loads(scen_json),
+                "rounds": int(rounds),
+                "expires_at": float(expires_at),
+            }
+
+    def increment_practice_round(self, user_id: int) -> int:
+        self._ensure_v2_tables()
+        with sqlite3.connect(self.user_db_path) as conn:
+            conn.execute(
+                "UPDATE pending_practice SET rounds = rounds + 1 WHERE user_id = ?",
+                (user_id,)
+            )
+            conn.commit()
+            row = conn.execute("SELECT rounds FROM pending_practice WHERE user_id = ?", (user_id,)).fetchone()
+            return int(row[0]) if row else 0
+
+    def clear_pending_practice(self, user_id: int):
+        self._ensure_v2_tables()
+        with sqlite3.connect(self.user_db_path) as conn:
+            conn.execute("DELETE FROM pending_practice WHERE user_id = ?", (user_id,))
+            conn.commit()
+
+    def log_shown_chunks(self, user_id: int, base_patterns: list):
+        self._ensure_v2_tables()
+        now = time.time()
+        with sqlite3.connect(self.user_db_path) as conn:
+            for bp in base_patterns:
+                if bp:
+                    conn.execute(
+                        "INSERT INTO shown_chunks_log (user_id, base_pattern, created_at) VALUES (?, ?, ?)",
+                        (user_id, str(bp).strip().lower(), now)
+                    )
+            conn.commit()
+
+    def get_recent_shown_chunks(self, user_id: int, limit: int = 40) -> list:
+        self._ensure_v2_tables()
+        with sqlite3.connect(self.user_db_path) as conn:
+            rows = conn.execute(
+                "SELECT base_pattern FROM shown_chunks_log WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                (user_id, limit)
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def log_mirror_event(self, user_id: int, verdict: str, vetoed: bool, reason: str = None):
+        self._ensure_v2_tables()
+        with sqlite3.connect(self.user_db_path) as conn:
+            conn.execute(
+                "INSERT INTO mirror_audit_log (user_id, verdict, vetoed, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, verdict, 1 if vetoed else 0, reason, time.time())
+            )
+            conn.commit()
+

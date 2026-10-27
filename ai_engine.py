@@ -338,6 +338,123 @@ def _auto_clean_base_patterns(payload_dict: dict) -> dict:
                     it['expression'] = ' '.join(words)
     return payload_dict
 
+
+# === CLAUDE V2 TWO-CALL ENGINE & STATEFUL PRACTICE ===
+CLAUDE_BEHAVIORAL_PERSONAS = """
+BEHAVIORAL RULES FOR THE NYC TRIO (NO ADJECTIVE CLICHES, NO META-LANGUAGE):
+- Marcus (<= 35 words): Picks up on trade-offs and concrete details. Concedes a fair point before pushing back ("Fair point, though..."). Uses complete, measured sentences. Asks about the specific condition, cost, or number. Never uses sarcasm.
+- Chloe (<= 28 words): Picks up on what is left unsaid (awkwardness, motive, social friction). Reframes what others said sharply. Uses crisp sentences and pointed questions. Never lectures or explains.
+- Jake (<= 18 words): Cuts straight to the practical bottom line (time, effort, what we actually do next). Uses punchy spoken fragments, interrupts lightly, and avoids abstract words.
+
+HARD DIALOGUE RULES (ENFORCED BY VALIDATOR):
+1. Return 2 to 4 turns in whatever speaker order fits the moment—NEVER write three parallel speeches of equal length.
+2. At most ONE turn in the entire response may contain a question mark (`?`), directed naturally at the learner.
+3. NEVER talk about language, phrases, idioms, or linguistics in the characters' dialogue (banned: "the ultimate linguistic...", "shots fired", "lost the plot"). Talk about the people and the situation.
+4. At most ONE figurative metaphor across the entire turn (and zero unless the learner asked about idioms/proverbs).
+""".strip()
+
+CLAUDE_COACH_SYSTEM_PROMPT = """
+You are the precision C1-C2 Spoken American English Coach analyzing a learner's message and the NYC Trio's dialogue.
+Return ONLY valid JSON matching `CoachResponse`:
+{
+  "mirror": {
+    "verdict": "natural" | "fix",
+    "edits": [
+      {
+        "span": "<exact contiguous verbatim substring from learner's message, <= 8 words>",
+        "replacement": "<natural spoken American replacement, <= span words + 2>",
+        "trigger": "register" | "calque" | "wordy" | "reference" | "pragmatic" | "error",
+        "why": "<concise spoken-ear reason in <= 14 words>"
+      }
+    ]
+  },
+  "chunks": [
+    {
+      "turn": 0,
+      "expression": "<exact contiguous verbatim phrase used in turns[turn].text>",
+      "base_pattern": "<canonical reusable frame with [something]/[someone]>",
+      "kind": "move" | "phrasal" | "chunk",
+      "does": "<what it achieves in conversation, <= 12 words>",
+      "say_it_when": "<when an American says this out loud, <= 14 words>",
+      "ar": "<natural idiomatic Arabic equivalent>"
+    }
+  ]
+}
+
+GATE FOR NATIVE MIRROR (JUDGE BY THE EAR, NOT THE EYE):
+1. Would a native American in a casual NYC lounge say the learner's sentence like this (ignoring punctuation, capitalization, contractions, or sentence fragments)? If YES -> set `"verdict": "natural"` and `"edits": []`.
+2. NEVER rewrite the full sentence. Only isolate the exact awkward contiguous `span` (<= 8 words) and replace it with a brisk spoken American `replacement` (<= span words + 2).
+3. NEVER inflate a short phrase into formal/academic wording (never use "why is that the case", "resonates with", "personal approach").
+
+RULES FOR SPOKEN CHUNKS (1 TO 2 ITEMS):
+1. Extract 1 or 2 genuine spoken American moves, phrasal verbs, or everyday conversational chunks verbatim from `turns`.
+2. Prioritize conversational moves (handling pushback, hedging, agreeing with reservations) and everyday phrasal chunks over rare proverbs.
+3. Do NOT repeat any `base_pattern` listed in `RECENTLY_SHOWN_CHUNKS`.
+""".strip()
+
+CLAUDE_READ_THE_ROOM_PROMPT = """
+You are the Read the Room Pragmatic Engine for C1-C2 Spoken American English.
+Given either a spoken quote someone said to the learner OR a social/workplace scenario, return ONLY valid JSON matching `ReadTheRoom`:
+{
+  "surface_point": "<If quote: brief literal surface meaning + Arabic. If scenario: core communicative goal & social stakes + Arabic>",
+  "readings": [
+    {"cue": "<tone, pause, relationship, or context cue>", "meaning": "<what they likely mean>", "ar": "<المعنى الضمني بالعربية>"}
+  ],
+  "moves": [
+    {"kind": "ask", "line": "<4-14 word non-presumptive clarifying question>", "when_to_use": "<when to use>", "risk": "low"},
+    {"kind": "go_along", "line": "<4-14 word low-friction constructive reply>", "when_to_use": "<when to use>", "risk": "low"},
+    {"kind": "name_it", "line": "<4-14 word direct boundary or surfacing reply>", "when_to_use": "<when to use>", "risk": "mid"}
+  ],
+  "lounge_take": [
+    {"speaker": "Marcus", "text": "<1-2 plain sentences about the people and social dynamic, <= 35 words>"},
+    {"speaker": "Chloe", "text": "<1 crisp sentence about the practical play, <= 25 words>"}
+  ],
+  "your_turn": {
+    "counterpart": "Marcus" | "Chloe" | "Jake",
+    "their_line": "<exact spoken line the counterpart says to the learner in roleplay>",
+    "hidden_reading": 0,
+    "goal": "<what a strong spoken reply from the learner should achieve>",
+    "prompt": "<1 direct question inviting the learner to reply in character>"
+  },
+  "chunks": [
+    {
+      "turn": 0,
+      "expression": "<verbatim contiguous expression from lounge_take[turn].text>",
+      "base_pattern": "<canonical base pattern>",
+      "kind": "move" | "phrasal" | "chunk",
+      "does": "<pragmatic function in <= 12 words>",
+      "say_it_when": "<when to use in <= 14 words>",
+      "ar": "<المقابل العربي الطبيعي>"
+    }
+  ]
+}
+CRITICAL: `moves[0].kind` MUST be `"ask"` (clarifying intent without assuming hostility). `lounge_take` must talk about the people, NEVER about "the phrase" or "linguistic shields".
+""".strip()
+
+CLAUDE_PRACTICE_EVAL_PROMPT = """
+You are evaluating the learner's spoken reply to an active Read the Room roleplay exercise.
+Return ONLY valid JSON matching `PracticeEval`:
+{
+  "intent": "attempt" | "off_topic",
+  "lands_as": "<<= 20 words: how the learner's line sounds to an American ear against the goal; no hollow praise>",
+  "tweak": null | {
+    "span": "<exact verbatim substring from learner's reply, <= 8 words>",
+    "replacement": "<sharper/more natural spoken American phrasing, <= span words + 2>",
+    "trigger": "pragmatic" | "register" | "wordy" | "calque" | "reference" | "error",
+    "why": "<why this lands better in <= 14 words>"
+  },
+  "reply": {
+    "speaker": "<counterpart name>",
+    "text": "<in-character spoken reaction consistent with `hidden_reading`, <= 28 words>"
+  },
+  "done": true | false
+}
+RULES:
+1. If the learner changed the subject or asked an unrelated question, set `"intent": "off_topic"`, `"lands_as": null`, `"tweak": null`, `"reply": null`, `"done": true`.
+2. If the learner's phrasing is already natural and achieves the goal, set `"tweak": null`.
+3. Make the counterpart's `reply` react realistically based on `hidden_reading`.
+""".strip()
+
 class NYCLoungeAI:
     def __init__(self, api_key: str, db: LoungeDatabase):
         self.db = db
@@ -2222,3 +2339,164 @@ class NYCLoungeAI:
         # 5. Credentials embedded in URLs (https://user:pass@host)
         s = re.sub(r"(https?://)[^/\s:@]+:[^/\s@]+@", r"\1[REDACTED_URL_CREDS]@", s)
         return s
+
+    # === CLAUDE V2 METHODS INSIDE NYCLoungeAI ===
+    def _call_gemini_json(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tries: int = 6, validator_fn=None):
+        last_err = None
+        now = time.time()
+        dead_keys = getattr(self, "_dead_keys_until", {})
+        if not hasattr(self, "_dead_key_models_until"):
+            self._dead_key_models_until = {}
+        healthy_indices = [i for i in range(len(self.keys_pool)) if dead_keys.get(i, 0) < now]
+        if not healthy_indices and self.keys_pool:
+            healthy_indices = list(range(len(self.keys_pool)))
+
+        tries_done = 0
+        for k_idx in healthy_indices[:3]:
+            key = self.keys_pool[k_idx]
+            client = genai.Client(api_key=key, http_options={"timeout": 30000})
+            models_to_try = self._get_active_models(client, k_idx=k_idx)
+            for model_name in models_to_try:
+                if self._dead_models_until.get(model_name, 0) >= time.time():
+                    continue
+                if self._dead_key_models_until.get((k_idx, model_name), 0) >= time.time():
+                    continue
+                tries_done += 1
+                err_feedback = f"\n\nPREVIOUS JSON FAILED VALIDATION:\n{last_err}\nFix this exact issue immediately." if last_err else ""
+                try:
+                    resp = client.models.generate_content(
+                        model=model_name,
+                        contents=[user_prompt + err_feedback],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            temperature=temperature if tries_done == 1 else max(0.15, temperature - 0.2),
+                            response_mime_type="application/json",
+                            max_output_tokens=4096,
+                        ),
+                    )
+                    raw_text = (getattr(resp, "text", "") or "").strip()
+                    if raw_text.startswith("```"):
+                        raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
+                    data = json.loads(raw_text)
+                    return validator_fn(data) if validator_fn else data
+                except Exception as e:
+                    err_str = str(e)
+                    last_err = err_str
+                    logger.warning(f"ClaudeV2 call try {tries_done} ({model_name}) failed: {err_str[:200]}")
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        self._dead_key_models_until[(k_idx, model_name)] = time.time() + 65
+                    elif "404" in err_str or "NOT_FOUND" in err_str:
+                        self._dead_models_until[model_name] = time.time() + 86400
+                if tries_done >= max_tries:
+                    break
+            if tries_done >= max_tries:
+                break
+        raise RuntimeError(f"ClaudeV2 call failed after {tries_done} tries: {last_err}")
+
+    def generate_dialogue(self, user: Dict[str, Any], user_text: str, mode: str = "banter", history_lines: Optional[List[str]] = None) -> Any:
+        from validation_layer import DialogueOnlyResponse
+        pref_reg = (user.get("preferred_register") if isinstance(user, dict) else None) or "witty"
+        vibe_badge = REGISTERS_MAP.get(pref_reg, "🎭 Witty")
+        vibe_desc = REGISTER_DESCRIPTIONS.get(pref_reg, "")
+
+        mode_contract = (
+            "MODE CONTRACT (DEVIL'S ADVOCATE): Pick ONE speaker who best fits the topic to challenge the learner's premise (concede one valid point, deliver one sharp counter-argument, end with one pointed question), plus one brief 1-sentence reaction from a second speaker."
+            if mode == "devils_advocate"
+            else "MODE CONTRACT (LOUNGE BANTER): Natural NYC lounge conversation among peers reacting to the learner and to each other."
+        )
+        hist_block = "\n".join(history_lines[-8:]) if history_lines else "(Start of conversation)"
+        sys_prompt = "\n\n".join([
+            CLAUDE_BEHAVIORAL_PERSONAS,
+            mode_contract,
+            f"SPOKEN VIBE SETTING: {vibe_badge} ({vibe_desc})",
+            'Return ONLY valid JSON: {"turns": [{"speaker": "Marcus"|"Chloe"|"Jake", "text": "..."}]}',
+        ])
+        u_prompt = f"RECENT DIALOGUE CONTEXT:\n{hist_block}\n\nLEARNER MESSAGE:\n{user_text}"
+        return self._call_gemini_json(
+            system_prompt=sys_prompt,
+            user_prompt=u_prompt,
+            temperature=0.8,
+            max_tries=5,
+            validator_fn=lambda d: DialogueOnlyResponse.model_validate(d),
+        )
+
+    def coach_turn(self, user: Dict[str, Any], user_text: str, turns: List[Any]) -> Optional[Any]:
+        from validation_layer import CoachResponse
+        uid = int(user.get("user_id", 0)) if isinstance(user, dict) else 0
+        recent_chunks = self.db.get_recent_shown_chunks(uid, limit=40) if (self.db and uid) else []
+        turns_json = json.dumps([{"turn": i, "speaker": t.speaker, "text": t.text} for i, t in enumerate(turns)], ensure_ascii=False)
+        u_prompt = (
+            f"LEARNER MESSAGE (judge mirror ONLY on this text):\n{user_text}\n\n"
+            f"GENERATED HOST TURNS (extract 1-2 spoken chunks verbatim from here):\n{turns_json}\n\n"
+            f"RECENTLY_SHOWN_CHUNKS (avoid repeating):\n{json.dumps(recent_chunks[:30])}"
+        )
+        try:
+            coach: CoachResponse = self._call_gemini_json(
+                system_prompt=CLAUDE_COACH_SYSTEM_PROMPT,
+                user_prompt=u_prompt,
+                temperature=0.15,
+                max_tries=3,
+                validator_fn=lambda d: CoachResponse.model_validate(d).validate_and_guard(
+                    turns=turns, learner_text=user_text, recent_chunks=recent_chunks
+                ),
+            )
+            if self.db and uid:
+                self.db.log_mirror_event(uid, coach.mirror.verdict, coach.mirror.vetoed, coach.mirror.veto_reason)
+                self.db.log_shown_chunks(uid, [c.base_pattern for c in coach.chunks])
+            return coach
+        except Exception as e:
+            logger.warning(f"Coach Call B skipped after retries (dialogue unaffected): {e}")
+            return None
+
+    def read_the_room_v2(self, user: Dict[str, Any], user_text: str) -> Any:
+        from validation_layer import ReadTheRoom
+        uid = int(user.get("user_id", 0)) if isinstance(user, dict) else 0
+        rtr: ReadTheRoom = self._call_gemini_json(
+            system_prompt=CLAUDE_READ_THE_ROOM_PROMPT,
+            user_prompt=f"LEARNER INPUT (QUOTE OR SOCIAL SCENARIO):\n{user_text}",
+            temperature=0.55,
+            max_tries=5,
+            validator_fn=lambda d: ReadTheRoom.model_validate(d),
+        )
+        if self.db and uid:
+            scen = {
+                "input_text": user_text,
+                "surface_point": rtr.surface_point,
+                "readings": [r.model_dump() for r in rtr.readings],
+                "your_turn": rtr.your_turn.model_dump(),
+            }
+            self.db.set_pending_practice(uid, "read_the_room", scen, ttl_seconds=1800)
+            self.db.log_shown_chunks(uid, [c.base_pattern for c in rtr.chunks])
+        return rtr
+
+    def practice_reply_v2(self, user: Dict[str, Any], learner_reply: str, pending_state: Dict[str, Any]) -> Any:
+        from validation_layer import PracticeEval
+        uid = int(user.get("user_id", 0)) if isinstance(user, dict) else 0
+        scen = pending_state.get("scenario", {})
+        yt = scen.get("your_turn", {})
+        readings = scen.get("readings", [])
+        h_idx = yt.get("hidden_reading", 0)
+        hidden_meaning = readings[h_idx] if 0 <= h_idx < len(readings) else {}
+
+        u_prompt = (
+            f"ORIGINAL SITUATION / QUOTE: {scen.get('input_text', '')}\n"
+            f"COUNTERPART ({yt.get('counterpart', 'Chloe')}) SAID: \"{yt.get('their_line', '')}\"\n"
+            f"COUNTERPART'S TRUE HIDDEN INTENT (hidden_reading={h_idx}): {json.dumps(hidden_meaning, ensure_ascii=False)}\n"
+            f"COMMUNICATIVE GOAL FOR LEARNER: {yt.get('goal', '')}\n"
+            f"LEARNER'S SPOKEN REPLY: \"{learner_reply}\""
+        )
+        pe: PracticeEval = self._call_gemini_json(
+            system_prompt=CLAUDE_PRACTICE_EVAL_PROMPT,
+            user_prompt=u_prompt,
+            temperature=0.35,
+            max_tries=4,
+            validator_fn=lambda d: PracticeEval.model_validate(d).validate_with_learner_reply(learner_reply),
+        )
+        if self.db and uid:
+            if pe.intent == "off_topic" or pe.done:
+                self.db.clear_pending_practice(uid)
+            else:
+                rounds = self.db.increment_practice_round(uid)
+                if rounds >= 2:
+                    self.db.clear_pending_practice(uid)
+        return pe

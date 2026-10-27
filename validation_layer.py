@@ -651,6 +651,382 @@ def make_valid_strategy_payload() -> dict:
     }
 
 
+# === CLAUDE V2 ARCHITECTURE MODELS & CODE GUARDS ===
+from typing import Sequence, List, Optional, Literal, Any, Dict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationError
+
+BRITISHISM_AND_CLICHE_DENYLIST = (
+    "lost the plot",
+    "bloody hell",
+    "taking the piss",
+    "take the piss",
+    "chuffed",
+    "knackered",
+    "gobsmacked",
+    "gutted",
+    "the ultimate linguistic",
+    "linguistic chameleon",
+    "linguistic shield",
+    "passive-aggressive static",
+    "shots fired",
+)
+
+MIRROR_INFLATION_DENYLIST = (
+    "why is that the case",
+    "what is the reason for that",
+    "resonates with",
+    "personal approach",
+    "furthermore",
+    "moreover",
+    "consequently",
+    "in addition to that",
+    "as a matter of fact",
+)
+
+SPEAKER_HARD_WORD_LIMITS = {
+    "Jake": 24,
+    "Chloe": 35,
+    "Marcus": 42,
+}
+
+
+def _word_tokens(text: str) -> List[str]:
+    return re.findall(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?", text or "")
+
+
+def _normalize_contractions_and_punct(text: str) -> str:
+    s = (text or "").lower().strip()
+    replacements = {
+        "what's": "what is",
+        "what've": "what have",
+        "that's": "that is",
+        "it's": "it is",
+        "i'm": "i am",
+        "you're": "you are",
+        "we're": "we are",
+        "they're": "they are",
+        "don't": "do not",
+        "doesn't": "does not",
+        "didn't": "did not",
+        "can't": "cannot",
+        "won't": "will not",
+        "isn't": "is not",
+        "aren't": "are not",
+        "ok": "okay",
+    }
+    for k, v in replacements.items():
+        s = re.sub(rf"\b{re.escape(k)}\b", v, s)
+    return " ".join(re.findall(r"[a-z0-9]+", s))
+
+
+class Turn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    speaker: Literal["Marcus", "Chloe", "Jake"]
+    text: str
+
+    @field_validator("speaker", mode="before")
+    @classmethod
+    def _norm_speaker(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            cap = v.strip().capitalize()
+            if cap in ("Marcus", "Chloe", "Jake"):
+                return cap
+        return v
+
+    @model_validator(mode="after")
+    def _validate_turn_constraints(self) -> "Turn":
+        clean = (self.text or "").strip()
+        if not clean:
+            raise ValueError("Turn.text cannot be empty.")
+        words = _word_tokens(clean)
+        max_w = SPEAKER_HARD_WORD_LIMITS.get(self.speaker, 42)
+        if len(words) > max_w:
+            raise ValueError(
+                f"{self.speaker} turn has {len(words)} words, exceeding hard limit of {max_w} words."
+            )
+        low = clean.lower()
+        for banned in BRITISHISM_AND_CLICHE_DENYLIST:
+            if banned in low:
+                raise ValueError(
+                    f"Turn contains banned Britishism or meta-cliche '{banned}'."
+                )
+        return self
+
+
+class DialogueOnlyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turns: List[Turn] = Field(..., min_length=2, max_length=4)
+
+    @model_validator(mode="after")
+    def _validate_dialogue_flow(self) -> "DialogueOnlyResponse":
+        speakers = {t.speaker for t in self.turns}
+        if len(speakers) < 2:
+            raise ValueError("DialogueOnlyResponse must include at least 2 distinct speakers.")
+        question_turns = [i for i, t in enumerate(self.turns) if "?" in t.text]
+        if len(question_turns) > 1:
+            raise ValueError(
+                f"At most 1 turn may ask a question (found questions in turns {question_turns})."
+            )
+        return self
+
+
+class MirrorEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    span: str
+    replacement: str
+    trigger: Literal["register", "calque", "wordy", "reference", "pragmatic", "error"]
+    why: str
+
+
+class Mirror(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["natural", "fix"] = "natural"
+    edits: List[MirrorEdit] = Field(default_factory=list)
+    vetoed: bool = False
+    veto_reason: Optional[str] = None
+    composed_text: Optional[str] = None
+    html_render: Optional[str] = None
+
+
+def apply_mirror_guards(mirror: Mirror, learner_text: str) -> Mirror:
+    orig = (learner_text or "").strip()
+    if not orig or mirror.verdict == "natural" or not mirror.edits:
+        return Mirror(verdict="natural", edits=[], vetoed=False)
+
+    valid_edits: List[MirrorEdit] = []
+    composed = orig
+    html_parts: List[str] = []
+
+    for ed in mirror.edits[:2]:
+        sp = (ed.span or "").strip()
+        rep = (ed.replacement or "").strip()
+        why = (ed.why or "").strip()
+
+        sp_words = _word_tokens(sp)
+        rep_words = _word_tokens(rep)
+        why_words = _word_tokens(why)
+
+        if not sp_words or len(sp_words) > 8:
+            return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="span_length_invalid")
+        if not rep_words:
+            return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="empty_replacement")
+        if len(rep_words) > len(sp_words) + 2:
+            return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="replacement_too_long")
+        if len(why_words) > 16:
+            return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="why_too_long")
+
+        if _normalize_contractions_and_punct(sp) == _normalize_contractions_and_punct(rep):
+            return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="trivial_contraction_or_punct_edit")
+
+        rep_low = rep.lower()
+        for inf in MIRROR_INFLATION_DENYLIST:
+            if inf in rep_low:
+                return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason=f"inflation_banned:{inf}")
+
+        m = re.search(re.escape(sp), composed)
+        if not m:
+            m = re.search(re.escape(sp), composed, flags=re.IGNORECASE)
+        if not m:
+            return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="span_not_found_verbatim")
+
+        exact_matched_span = composed[m.start():m.end()]
+        composed = composed[:m.start()] + rep + composed[m.end():]
+
+        prefix_words = orig[:m.start()].strip().split()
+        ctx_lead = ("…" + " ".join(prefix_words[-3:]) + " ") if prefix_words else ""
+        html_parts.append(
+            f"🪞 {ctx_lead}<s>{exact_matched_span}</s> → <b>{rep}</b>\n↳ {why}"
+        )
+        valid_edits.append(
+            MirrorEdit(span=exact_matched_span, replacement=rep, trigger=ed.trigger, why=why)
+        )
+
+    orig_word_count = len(_word_tokens(orig))
+    composed_word_count = len(_word_tokens(composed))
+    if composed_word_count > orig_word_count + 2:
+        return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="composed_sentence_too_long")
+
+    return Mirror(
+        verdict="fix",
+        edits=valid_edits,
+        vetoed=False,
+        veto_reason=None,
+        composed_text=composed,
+        html_render="\n".join(html_parts),
+    )
+
+
+class Chunk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turn: int = Field(..., ge=0, le=3)
+    expression: str
+    base_pattern: str
+    kind: Literal["move", "phrasal", "chunk"]
+    does: str
+    say_it_when: str
+    ar: str
+
+    @model_validator(mode="after")
+    def _validate_chunk_fields(self) -> "Chunk":
+        bp_words = [
+            w for w in (self.base_pattern or "").strip().split()
+            if w.lower().strip(".,!?") not in _FILLER_INTENSIFIER_ADVERBS
+        ]
+        bp_clean = " ".join(bp_words)
+        bp_clean = re.sub(r"\b(it|them)\b", "[something]", bp_clean)
+        bp_clean = re.sub(r"\b(him|her)\b", "[someone]", bp_clean)
+        self.base_pattern = bp_clean.strip()
+
+        if not self.expression.strip() or not self.base_pattern:
+            raise ValueError("Chunk expression and base_pattern cannot be empty.")
+        if len(_word_tokens(self.does)) > 14:
+            raise ValueError("Chunk.does must be <= 14 words.")
+        if len(_word_tokens(self.say_it_when)) > 16:
+            raise ValueError("Chunk.say_it_when must be <= 16 words.")
+        if not re.search(r"[\u0600-\u06FF]", self.ar or ""):
+            raise ValueError("Chunk.ar must contain natural Arabic script.")
+        return self
+
+
+class CoachResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mirror: Mirror = Field(default_factory=Mirror)
+    chunks: List[Chunk] = Field(..., min_length=1, max_length=2)
+
+    def validate_and_guard(
+        self,
+        turns: Sequence[Turn],
+        learner_text: str,
+        recent_chunks: Sequence[str] = (),
+    ) -> "CoachResponse":
+        self.mirror = apply_mirror_guards(self.mirror, learner_text)
+        recent_low = {c.lower().strip() for c in recent_chunks if c}
+
+        verified_chunks: List[Chunk] = []
+        for idx, ch in enumerate(self.chunks):
+            if ch.turn < 0 or ch.turn >= len(turns):
+                raise ValueError(f"chunks[{idx}].turn={ch.turn} is out of range for {len(turns)} turns.")
+            turn_text = turns[ch.turn].text
+            if not (
+                verify_contiguous_expression_in_sentence(ch.expression, turn_text)
+                or verify_contiguous_expression_in_sentence(ch.base_pattern, turn_text)
+            ):
+                raise ValueError(
+                    f"chunks[{idx}] ('{ch.expression}') does not occur contiguously in turns[{ch.turn}]: '{turn_text}'"
+                )
+            if ch.base_pattern.lower() in recent_low and len(self.chunks) > 1:
+                continue
+            verified_chunks.append(ch)
+
+        if not verified_chunks:
+            verified_chunks = [self.chunks[0]]
+
+        if self.mirror.verdict == "fix":
+            self.chunks = verified_chunks[:1]
+        else:
+            self.chunks = verified_chunks[:2]
+        return self
+
+
+class Reading(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cue: str
+    meaning: str
+    ar: Optional[str] = None
+
+
+class Move(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["ask", "go_along", "name_it"]
+    line: str
+    when_to_use: str
+    risk: Literal["low", "mid", "high"]
+
+    @model_validator(mode="after")
+    def _check_move_line(self) -> "Move":
+        w_cnt = len(_word_tokens(self.line))
+        if w_cnt < 2 or w_cnt > 16:
+            raise ValueError(f"Move.line must be 2 to 16 words (got {w_cnt}).")
+        return self
+
+
+class YourTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    counterpart: Literal["Marcus", "Chloe", "Jake"]
+    their_line: str
+    hidden_reading: int = Field(..., ge=0, le=2)
+    goal: str
+    prompt: str
+
+
+class ReadTheRoom(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    surface_point: str
+    readings: List[Reading] = Field(..., min_length=2, max_length=3)
+    moves: List[Move] = Field(..., min_length=3, max_length=3)
+    lounge_take: List[Turn] = Field(..., min_length=1, max_length=2)
+    your_turn: YourTurn
+    chunks: List[Chunk] = Field(..., min_length=1, max_length=2)
+
+    @model_validator(mode="after")
+    def _validate_rtr_contract(self) -> "ReadTheRoom":
+        if self.moves[0].kind != "ask":
+            raise ValueError("The first Move in ReadTheRoom must always be kind='ask' (non-presumptive clarifying move).")
+        if self.your_turn.hidden_reading >= len(self.readings):
+            raise ValueError("your_turn.hidden_reading index is out of bounds for readings.")
+        for idx, ch in enumerate(self.chunks):
+            if ch.turn < 0 or ch.turn >= len(self.lounge_take):
+                raise ValueError(f"ReadTheRoom chunks[{idx}].turn out of bounds for lounge_take.")
+            t_txt = self.lounge_take[ch.turn].text
+            if not (
+                verify_contiguous_expression_in_sentence(ch.expression, t_txt)
+                or verify_contiguous_expression_in_sentence(ch.base_pattern, t_txt)
+            ):
+                raise ValueError(
+                    f"ReadTheRoom chunks[{idx}] ('{ch.expression}') not found in lounge_take[{ch.turn}]."
+                )
+        return self
+
+
+class PracticeEval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Literal["attempt", "off_topic"]
+    lands_as: Optional[str] = None
+    tweak: Optional[MirrorEdit] = None
+    reply: Optional[Turn] = None
+    done: bool = False
+
+    def validate_with_learner_reply(self, learner_text: str) -> "PracticeEval":
+        if self.intent == "off_topic":
+            self.lands_as = None
+            self.tweak = None
+            self.reply = None
+            self.done = True
+            return self
+        if not self.lands_as or len(_word_tokens(self.lands_as)) > 24:
+            raise ValueError("PracticeEval.lands_as is required for 'attempt' and must be <= 24 words.")
+        if self.reply is None:
+            raise ValueError("PracticeEval.reply is required when intent='attempt'.")
+        if self.tweak is not None:
+            guarded = apply_mirror_guards(Mirror(verdict="fix", edits=[self.tweak]), learner_text)
+            if guarded.verdict != "fix" or not guarded.edits:
+                self.tweak = None
+            else:
+                self.tweak = guarded.edits[0]
+        return self
+
+
 class TestLoungeValidationLayer(unittest.TestCase):
     def test_01_valid_situation_strategy_payload_passes(self):
         model = LoungeTurnResponse.model_validate(make_valid_strategy_payload(), context=make_trusted_ctx())
@@ -996,3 +1372,167 @@ class TestLoungeValidationLayer(unittest.TestCase):
         p2['lexical_items'][0]['expression'] = 'masking resentment'
         with self.assertRaises(ValidationError):
             LoungeTurnResponse.model_validate(p2, context={'active_mode': 'banter', 'learner_input_text': p1['learner_input_text'], 'runtime_has_audio_bytes': False})
+
+    def test_31_claude_turn_speaker_word_limits(self):
+        ok_jake = Turn(speaker="Jake", text="Hard pass on that—let's just cut to the chase before we waste all afternoon.")
+        self.assertEqual(ok_jake.speaker, "Jake")
+        with self.assertRaises(ValidationError):
+            Turn(speaker="Jake", text=" ".join(["word"] * 25))
+
+    def test_32_claude_turn_britishism_and_cliche_denylist(self):
+        with self.assertRaises(ValidationError):
+            Turn(speaker="Jake", text="No kidding, he has totally lost the plot on work-life balance.")
+        with self.assertRaises(ValidationError):
+            Turn(speaker="Marcus", text="Look, that phrase is the ultimate linguistic shield in meetings.")
+
+    def test_33_claude_dialogue_only_response_flow_and_single_question_guard(self):
+        d = DialogueOnlyResponse(turns=[
+            Turn(speaker="Chloe", text="Wait, hold on—you actually agreed to run that meeting on Friday?"),
+            Turn(speaker="Jake", text="Not a chance, I pushed it to Monday morning."),
+        ])
+        self.assertEqual(len(d.turns), 2)
+        with self.assertRaises(ValidationError):
+            DialogueOnlyResponse(turns=[
+                Turn(speaker="Marcus", text="Why did you say yes to that?"),
+                Turn(speaker="Chloe", text="And when are you going to tell them?"),
+            ])
+
+    def test_34_claude_mirror_silent_on_natural_and_trivial_contraction_edits(self):
+        learner = "What's your favorite English expression, guys, and why?"
+        m_trivial = Mirror(verdict="fix", edits=[
+            MirrorEdit(span="What's", replacement="What is", trigger="register", why="Full form.")
+        ])
+        res = apply_mirror_guards(m_trivial, learner)
+        self.assertEqual(res.verdict, "natural")
+        self.assertTrue(res.vetoed)
+
+    def test_35_claude_mirror_surgical_span_replacement_and_html_diff(self):
+        learner = "Ok I hear you, now each one of you tell me a proverb that makes sense for him or her"
+        m = Mirror(verdict="fix", edits=[
+            MirrorEdit(
+                span="makes sense for him or her",
+                replacement="fits you",
+                trigger="reference",
+                why="After 'each of you', stay in 'you' instead of shifting to 'him or her'."
+            )
+        ])
+        res = apply_mirror_guards(m, learner)
+        self.assertEqual(res.verdict, "fix")
+        self.assertFalse(res.vetoed)
+        self.assertIn("<s>makes sense for him or her</s> → <b>fits you</b>", res.html_render)
+        self.assertTrue(res.composed_text.endswith("that fits you"))
+
+    def test_36_claude_mirror_allows_phrasal_verb_plus_two_words(self):
+        learner = "I can't tolerate his excuses anymore."
+        m = Mirror(verdict="fix", edits=[
+            MirrorEdit(
+                span="tolerate",
+                replacement="put up with",
+                trigger="register",
+                why="In spoken American English, 'put up with' is much more natural than 'tolerate'."
+            )
+        ])
+        res = apply_mirror_guards(m, learner)
+        self.assertEqual(res.verdict, "fix")
+        self.assertEqual(res.composed_text, "I can't put up with his excuses anymore.")
+
+    def test_37_claude_mirror_vetoes_academic_inflation(self):
+        learner = "What's your favorite expression guys, and why?"
+        m = Mirror(verdict="fix", edits=[
+            MirrorEdit(
+                span="and why",
+                replacement="and why is that the case",
+                trigger="register",
+                why="More complete question."
+            )
+        ])
+        res = apply_mirror_guards(m, learner)
+        self.assertEqual(res.verdict, "natural")
+        self.assertTrue(res.vetoed)
+
+    def test_38_claude_mirror_vetoes_non_verbatim_hallucinated_span(self):
+        learner = "What have you been up to everybody?"
+        m = Mirror(verdict="fix", edits=[
+            MirrorEdit(
+                span="what have you guys",
+                replacement="what have you all",
+                trigger="wordy",
+                why="Cleaner phrasing."
+            )
+        ])
+        res = apply_mirror_guards(m, learner)
+        self.assertEqual(res.verdict, "natural")
+        self.assertTrue(res.vetoed)
+        self.assertEqual(res.veto_reason, "span_not_found_verbatim")
+
+    def test_39_claude_coach_response_verifies_chunks_and_caps_cognitive_load(self):
+        turns = [
+            Turn(speaker="Marcus", text="I see the appeal, Musa, but I'm not sold on the timeline yet."),
+            Turn(speaker="Chloe", text="Fair enough, we can figure it out before Monday."),
+        ]
+        learner = "Each one of you tell me a proverb that makes sense for him or her"
+        coach = CoachResponse(
+            mirror=Mirror(verdict="fix", edits=[
+                MirrorEdit(span="makes sense for him or her", replacement="fits you", trigger="reference", why="Stay in second person 'you'.")
+            ]),
+            chunks=[
+                Chunk(turn=0, expression="not sold on", base_pattern="not sold on [something]", kind="move", does="Expresses hesitation without a hard no.", say_it_when="You have doubts about a plan.", ar="غير مقتنع تماماً بـ"),
+                Chunk(turn=1, expression="figure it out", base_pattern="figure it out", kind="phrasal", does="Find a practical solution.", say_it_when="Sorting out a problem.", ar="يجد حلاً للمشكلة"),
+            ]
+        ).validate_and_guard(turns=turns, learner_text=learner)
+        self.assertEqual(coach.mirror.verdict, "fix")
+        self.assertEqual(len(coach.chunks), 1)
+        self.assertEqual(coach.chunks[0].base_pattern, "not sold on [something]")
+
+    def test_40_claude_read_the_room_contract_and_first_move_ask(self):
+        rtr = ReadTheRoom(
+            surface_point="Acknowledges your method without endorsing it.",
+            readings=[
+                Reading(cue="Warm tone, nodding", meaning="Genuine appreciation for a creative workaround.", ar="إعجاب صادق بطريقة مبتكرة"),
+                Reading(cue="Flat tone, slight pause", meaning="Polite skepticism that your approach is inefficient.", ar="تشكيك مهذب في كفاءة طريقتك"),
+            ],
+            moves=[
+                Move(kind="ask", line="Do you have a cleaner way in mind?", when_to_use="You want to check their intent constructively.", risk="low"),
+                Move(kind="go_along", line="Yeah, it gets the job done for now.", when_to_use="You want to keep things moving.", risk="low"),
+                Move(kind="name_it", line="Wait, is that your polite way of saying it's awful?", when_to_use="You know them well and want to surface the dig.", risk="mid"),
+            ],
+            lounge_take=[
+                Turn(speaker="Marcus", text="People use that line to hold back approval until they see how you react."),
+                Turn(speaker="Chloe", text="Exactly, so don't get defensive—just put them on the spot politely."),
+            ],
+            your_turn=YourTurn(
+                counterpart="Chloe",
+                their_line="Well, that's certainly one way to organize the client deck.",
+                hidden_reading=1,
+                goal="Invite her actual suggestion without sounding defensive.",
+                prompt="Chloe just dropped that line in rehearsal. What do you say back?"
+            ),
+            chunks=[
+                Chunk(turn=0, expression="hold back", base_pattern="hold back [something]", kind="phrasal", does="Refrain from giving approval.", say_it_when="Someone stays noncommittal.", ar="يحجم عن إبداء الموافقة"),
+            ]
+        )
+        self.assertEqual(rtr.moves[0].kind, "ask")
+
+    def test_41_claude_practice_eval_attempt_with_guarded_tweak(self):
+        learner_reply = "I would like to know what exactly you are implying right now."
+        pe = PracticeEval(
+            intent="attempt",
+            lands_as="Sounds stiff and confrontational—'implying' puts her on trial.",
+            tweak=MirrorEdit(
+                span="what exactly you are implying",
+                replacement="what you mean",
+                trigger="pragmatic",
+                why="Much calmer and less accusatory in spoken American English."
+            ),
+            reply=Turn(speaker="Chloe", text="Whoa, relax—I just think the second slide needs a cleaner hook."),
+            done=False
+        ).validate_with_learner_reply(learner_reply)
+        self.assertEqual(pe.intent, "attempt")
+        self.assertIsNotNone(pe.tweak)
+        self.assertEqual(pe.tweak.replacement, "what you mean")
+
+    def test_42_claude_practice_eval_off_topic_clears_cleanly(self):
+        pe = PracticeEval(intent="off_topic").validate_with_learner_reply("Hey guys, let's talk about NYC pizza instead.")
+        self.assertTrue(pe.done)
+        self.assertIsNone(pe.reply)
+
