@@ -382,8 +382,10 @@ Return ONLY valid JSON matching `CoachResponse`:
 }
 
 GATE FOR NATIVE MIRROR (JUDGE BY THE EAR, NOT THE EYE):
-1. Would a native American in a casual NYC lounge say the learner's sentence like this (ignoring punctuation, capitalization, contractions, or sentence fragments)? If YES -> set `"verdict": "natural"` and `"edits": []`.
-2. NEVER rewrite the full sentence. Only isolate the exact awkward contiguous `span` (<= 8 words) and replace it with a brisk spoken American `replacement` (<= span words + 2).
+1. Would a native American in a casual NYC lounge say the learner's sentence like this (ignoring punctuation, capitalization, contractions, or missing commas)?
+   - If YES (e.g., "What's your favorite English expression guys, and why?" or "What have you been up to everybody?") -> set `"verdict": "natural"` and `"edits": []`.
+   - If NO because of a real spoken-ear issue—such as shifting person/pronouns mid-sentence (e.g., addressing "each one of you" then saying "makes sense for him or her" instead of "fits you"), a literal translation calque, or stiff written phrasing -> set `"verdict": "fix"` and isolate ONLY the awkward `span` (<= 10 words) and its brisk spoken American `replacement`.
+2. NEVER rewrite the full sentence. Only isolate the exact contiguous `span` and replace it with a shorter or equal spoken `replacement`.
 3. NEVER inflate a short phrase into formal/academic wording (never use "why is that the case", "resonates with", "personal approach").
 
 RULES FOR SPOKEN CHUNKS (1 TO 2 ITEMS):
@@ -428,7 +430,11 @@ Given either a spoken quote someone said to the learner OR a social/workplace sc
     }
   ]
 }
-CRITICAL: `moves[0].kind` MUST be `"ask"` (clarifying intent without assuming hostility). `lounge_take` must talk about the people, NEVER about "the phrase" or "linguistic shields".
+CRITICAL:
+1. Provide 3 distinct `readings`: Reading 1 MUST be a sincere/neutral/good-faith reading; Reading 2 a hedged/skeptical reading; Reading 3 a pointed/indirectly critical reading. Keep `surface_point` neutral without assuming hostility.
+2. `moves[0].kind` MUST be `"ask"` (clarifying intent without assuming hostility).
+3. In `your_turn.their_line`, use the target utterance itself in a natural spoken sentence (or a realistic spoken line if the input was a scenario).
+4. In `chunks`, extract ONLY genuine idiomatic phrasal verbs, idioms, or conversational moves from `lounge_take` (e.g., "call [someone's] bluff", "put [someone] on the spot")—NEVER extract literal adverb+verb combinations like "secretly think".
 """.strip()
 
 CLAUDE_PRACTICE_EVAL_PROMPT = """

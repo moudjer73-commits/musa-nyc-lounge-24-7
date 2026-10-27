@@ -810,7 +810,7 @@ def apply_mirror_guards(mirror: Mirror, learner_text: str) -> Mirror:
         rep_words = _word_tokens(rep)
         why_words = _word_tokens(why)
 
-        if not sp_words or len(sp_words) > 8:
+        if not sp_words or len(sp_words) > 12:
             return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="span_length_invalid")
         if not rep_words:
             return Mirror(verdict="natural", edits=[], vetoed=True, veto_reason="empty_replacement")
@@ -910,19 +910,26 @@ class CoachResponse(BaseModel):
 
         verified_chunks: List[Chunk] = []
         for idx, ch in enumerate(self.chunks):
-            if ch.turn < 0 or ch.turn >= len(turns):
-                raise ValueError(f"chunks[{idx}].turn={ch.turn} is out of range for {len(turns)} turns.")
-            turn_text = turns[ch.turn].text
-            if not (
-                verify_contiguous_expression_in_sentence(ch.expression, turn_text)
-                or verify_contiguous_expression_in_sentence(ch.base_pattern, turn_text)
-            ):
-                raise ValueError(
-                    f"chunks[{idx}] ('{ch.expression}') does not occur contiguously in turns[{ch.turn}]: '{turn_text}'"
-                )
+            matched_turn_idx = None
+            # Check declared turn first, then auto-scan all turns if index was off
+            candidate_indices = ([ch.turn] if 0 <= ch.turn < len(turns) else []) + [i for i in range(len(turns)) if i != ch.turn]
+            for t_idx in candidate_indices:
+                t_txt = turns[t_idx].text
+                if (
+                    verify_contiguous_expression_in_sentence(ch.expression, t_txt)
+                    or verify_contiguous_expression_in_sentence(ch.base_pattern, t_txt)
+                ):
+                    matched_turn_idx = t_idx
+                    break
+            if matched_turn_idx is None:
+                continue
+            ch.turn = matched_turn_idx
             if ch.base_pattern.lower() in recent_low and len(self.chunks) > 1:
                 continue
             verified_chunks.append(ch)
+
+        if not verified_chunks:
+            raise ValueError("None of the extracted chunks matched contiguously in the generated turns.")
 
         if not verified_chunks:
             verified_chunks = [self.chunks[0]]
@@ -984,17 +991,22 @@ class ReadTheRoom(BaseModel):
             raise ValueError("The first Move in ReadTheRoom must always be kind='ask' (non-presumptive clarifying move).")
         if self.your_turn.hidden_reading >= len(self.readings):
             raise ValueError("your_turn.hidden_reading index is out of bounds for readings.")
+        valid_rtr_chunks: List[Chunk] = []
         for idx, ch in enumerate(self.chunks):
-            if ch.turn < 0 or ch.turn >= len(self.lounge_take):
-                raise ValueError(f"ReadTheRoom chunks[{idx}].turn out of bounds for lounge_take.")
-            t_txt = self.lounge_take[ch.turn].text
-            if not (
-                verify_contiguous_expression_in_sentence(ch.expression, t_txt)
-                or verify_contiguous_expression_in_sentence(ch.base_pattern, t_txt)
-            ):
-                raise ValueError(
-                    f"ReadTheRoom chunks[{idx}] ('{ch.expression}') not found in lounge_take[{ch.turn}]."
-                )
+            matched_t = None
+            for t_i, t_obj in enumerate(self.lounge_take):
+                if (
+                    verify_contiguous_expression_in_sentence(ch.expression, t_obj.text)
+                    or verify_contiguous_expression_in_sentence(ch.base_pattern, t_obj.text)
+                ):
+                    matched_t = t_i
+                    break
+            if matched_t is not None:
+                ch.turn = matched_t
+                valid_rtr_chunks.append(ch)
+        if not valid_rtr_chunks:
+            raise ValueError("ReadTheRoom chunks did not match any sentence in lounge_take.")
+        self.chunks = valid_rtr_chunks
         return self
 
 
