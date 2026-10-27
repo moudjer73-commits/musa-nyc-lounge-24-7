@@ -924,7 +924,7 @@ class CoachResponse(BaseModel):
             if matched_turn_idx is None:
                 continue
             ch.turn = matched_turn_idx
-            if ch.base_pattern.lower() in recent_low and len(self.chunks) > 1:
+            if ch.base_pattern.lower() in recent_low or ch.expression.lower().strip() in recent_low:
                 continue
             verified_chunks.append(ch)
 

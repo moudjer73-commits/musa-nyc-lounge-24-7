@@ -2036,47 +2036,107 @@ def format_v2_practice_eval_html(pe, learner_text: str) -> str:
     return "\n".join(lines)
 
 
-def handle_claude_v2_turn(bot_send_fn, ai_inst, db_inst, chat_id: int, user: dict, text: str, active_mode: str) -> bool:
+def handle_claude_v2_turn(chat_id: int, user_id: int, user: dict, text: str, active_mode: str) -> bool:
     """
-    Executes Claude's V2 architecture in live Telegram chat:
-    1. Checks /skip command to exit pending practice.
-    2. Checks pending_practice in DB for stateful Turn-2 Read the Room feedback.
-    3. Routes read_the_room / subtext / what_to_say to ReadTheRoom V2.
-    4. Routes banter / devils_advocate to Two-Call architecture (Message 1: Dialogue @ T=0.8 -> Message 2: Coach @ T=0.15).
+    Live Telegram handler for Claude V2 Architecture:
+    - Handles /skip to exit pending Read the Room roleplay.
+    - Routes active pending_practice replies to PracticeEval (Turn-2 feedback loop).
+    - Routes Read the Room (subtext / what_to_say) to streamlined 4-part ReadTheRoom V2.
+    - Routes Banter & Devil's Advocate to Two-Call Engine (Message 1: Dialogue @ T=0.8 -> Message 2: Coach @ T=0.15)
+      with full support for Trio Voice, Hear My Recast, and Phrase Vault saving.
     """
-    uid = int(user.get("user_id", chat_id)) if isinstance(user, dict) else int(chat_id)
+    from validation_layer import (
+        format_v2_dialogue_html,
+        format_v2_coach_html,
+        format_v2_read_the_room_html,
+        format_v2_practice_eval_html,
+    )
     clean_t = (text or "").strip()
     if not clean_t:
         return False
 
     if clean_t.lower() in ("/skip", "skip", "تخطي"):
-        db_inst.clear_pending_practice(uid)
-        bot_send_fn(chat_id, "✅ <b>Exited practice mode.</b> Back to normal Lounge conversation!")
+        db.clear_pending_practice(user_id)
+        send_clean_message(chat_id, "✅ <b>Exited roleplay practice.</b> Back to open NYC Lounge conversation!", reply_markup=get_main_ReplyKeyboard(user_id))
         return True
 
-    # Priority 1: Active pending practice in DB
-    pending = db_inst.get_pending_practice(uid)
+    # 1. Check active Turn-2 pending practice in SQLite
+    pending = db.get_pending_practice(user_id)
     if pending and active_mode not in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
-        pe = ai_inst.practice_reply_v2(user=user, learner_reply=clean_t, pending_state=pending)
+        bot.send_chat_action(chat_id, "typing")
+        pe = ai.practice_reply_v2(user=user, learner_reply=clean_t, pending_state=pending)
         if pe.intent == "attempt":
-            bot_send_fn(chat_id, format_v2_practice_eval_html(pe, clean_t))
+            eval_html = format_v2_practice_eval_html(pe, clean_t)
+            still_pending = db.get_pending_practice(user_id)
+            if not still_pending:
+                eval_html += "\n\n✅ <i>Roleplay round complete! Send any message to continue chatting or drop a new line to analyze.</i>"
+            send_clean_message(chat_id, eval_html, reply_markup=get_main_ReplyKeyboard(user_id))
             return True
-        # If off_topic, practice_reply_v2 already cleared pending_practice -> fall through to normal Banter!
+        # If intent == 'off_topic', practice_reply_v2 cleared pending_practice; continue to normal mode below!
 
-    # Priority 2: Read the Room V2 (merged Subtext + What to Say)
+    # 2. Unified Read the Room Mode (Subtext & Nuance + What to Say When)
     if active_mode in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
-        rtr = ai_inst.read_the_room_v2(user=user, user_text=clean_t)
-        bot_send_fn(chat_id, format_v2_read_the_room_html(rtr, clean_t))
+        bot.send_chat_action(chat_id, "typing")
+        rtr = ai.read_the_room_v2(user=user, user_text=clean_t)
+        rtr_html = format_v2_read_the_room_html(rtr, clean_t)
+
+        # Save chunks for Phrase Vault & Trio Voice
+        expr_list = [
+            {"expression": ch.base_pattern, "meaning": f"{ch.ar} — {ch.does}", "example": ch.say_it_when}
+            for ch in rtr.chunks
+        ]
+        trio_Save = {t.speaker.lower(): t.text for t in rtr.lounge_take}
+        db.save_turn_context(user_id, clean_t, trio_Save, expr_list, "")
+
+        markup = InlineKeyboardMarkup(row_width=2)
+        btns = [InlineKeyboardButton(f"⭐ Save {i}", callback_data=f"save_expr_{i-1}") for i in range(1, len(expr_list) + 1)]
+        if btns:
+            markup.add(*btns)
+        markup.add(InlineKeyboardButton("🔊 Hear Lounge Take", callback_data="tts_trio"))
+        send_clean_message(chat_id, rtr_html, reply_markup=markup)
         return True
 
-    # Priority 3: Two-Call Banter & Devil's Advocate
+    # 3. Two-Call Banter & Devil's Advocate
     if active_mode in ("banter", "devils_advocate"):
-        d_res = ai_inst.generate_dialogue(user=user, user_text=clean_t, mode=active_mode)
-        bot_send_fn(chat_id, format_v2_dialogue_html(d_res))
-        c_res = ai_inst.coach_turn(user=user, user_text=clean_t, turns=d_res.turns)
-        coach_html = format_v2_coach_html(c_res)
-        if coach_html:
-            bot_send_fn(chat_id, coach_html)
+        bot.send_chat_action(chat_id, "typing")
+        recent_turns = db.get_recent_conversation(user_id, limit=6) if hasattr(db, "get_recent_conversation") else []
+        hist_lines = []
+        for rt in recent_turns:
+            if isinstance(rt, dict):
+                hist_lines.append(f"Learner: {rt.get('user_text', '')}")
+
+        # Call A: Immediate Free Dialogue @ T=0.8
+        d_res = ai.generate_dialogue(user=user, user_text=clean_t, mode=active_mode, history_lines=hist_lines)
+        msg1_html = format_v2_dialogue_html(d_res)
+        send_clean_message(chat_id, msg1_html, reply_markup=get_main_ReplyKeyboard(user_id))
+
+        # Call B: Precision Spoken Coach @ T=0.15
+        c_res = ai.coach_turn(user=user, user_text=clean_t, turns=d_res.turns)
+        trio_dict = {t.speaker.lower(): t.text for t in d_res.turns}
+        expr_list = []
+        recast_str = ""
+        if c_res:
+            expr_list = [
+                {"expression": ch.base_pattern, "meaning": f"{ch.ar} — {ch.does}", "example": ch.say_it_when}
+                for ch in c_res.chunks
+            ]
+            if c_res.mirror and c_res.mirror.verdict == "fix" and c_res.mirror.composed_text:
+                recast_str = c_res.mirror.composed_text
+
+        db.save_turn_context(user_id, clean_t, trio_dict, expr_list, recast_str)
+
+        if c_res:
+            msg2_html = format_v2_coach_html(c_res)
+            if msg2_html:
+                markup = InlineKeyboardMarkup(row_width=2)
+                btns = [InlineKeyboardButton(f"⭐ Save {i}", callback_data=f"save_expr_{i-1}") for i in range(1, len(expr_list) + 1)]
+                if btns:
+                    markup.add(*btns)
+                audio_btns = [InlineKeyboardButton("🎙️ Trio Voice", callback_data="tts_trio")]
+                if recast_str:
+                    audio_btns.append(InlineKeyboardButton("🔊 Hear My Fix", callback_data="tts_recast"))
+                markup.add(*audio_btns)
+                send_clean_message(chat_id, msg2_html, reply_markup=markup)
         return True
 
     return False

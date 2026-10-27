@@ -342,7 +342,7 @@ def _auto_clean_base_patterns(payload_dict: dict) -> dict:
 # === CLAUDE V2 TWO-CALL ENGINE & STATEFUL PRACTICE ===
 CLAUDE_BEHAVIORAL_PERSONAS = """
 BEHAVIORAL RULES FOR THE NYC TRIO (NO ADJECTIVE CLICHES, NO META-LANGUAGE):
-- Marcus (<= 35 words): Picks up on trade-offs and concrete details. Concedes a fair point before pushing back ("Fair point, though..."). Uses complete, measured sentences. Asks about the specific condition, cost, or number. Never uses sarcasm.
+- Marcus (<= 35 words): Picks up on trade-offs and concrete details. Acknowledges what makes sense in the other person's view before pointing out the hidden cost or trade-off (vary his openings naturally every turn; never repeat a fixed opener). Uses complete, measured sentences. Asks about the specific condition, cost, or number. Never uses sarcasm.
 - Chloe (<= 28 words): Picks up on what is left unsaid (awkwardness, motive, social friction). Reframes what others said sharply. Uses crisp sentences and pointed questions. Never lectures or explains.
 - Jake (<= 18 words): Cuts straight to the practical bottom line (time, effort, what we actually do next). Uses punchy spoken fragments, interrupts lightly, and avoids abstract words.
 
@@ -385,7 +385,7 @@ GATE FOR NATIVE MIRROR (JUDGE BY THE EAR, NOT THE EYE):
 1. Would a native American in a casual NYC lounge say the learner's sentence like this (ignoring punctuation, capitalization, contractions, or missing commas)?
    - If YES (e.g., "What's your favorite English expression guys, and why?" or "What have you been up to everybody?") -> set `"verdict": "natural"` and `"edits": []`.
    - If NO because of a real spoken-ear issue—such as shifting person/pronouns mid-sentence (e.g., addressing "each one of you" then saying "makes sense for him or her" instead of "fits you"), a literal translation calque, or stiff written phrasing -> set `"verdict": "fix"` and isolate ONLY the awkward `span` (<= 10 words) and its brisk spoken American `replacement`.
-2. NEVER rewrite the full sentence. Only isolate the exact contiguous `span` and replace it with a shorter or equal spoken `replacement`.
+2. NEVER rewrite the full sentence. Isolate ONLY the exact contiguous `span` where the spoken friction or grammar/pronoun mismatch occurs (for example, if the learner addresses 'each one of you' and then shifts to third-person 'makes sense for him or her', your `span` MUST be 'makes sense for him or her' and `replacement` MUST be 'fits you'—do NOT leave 'for him or her' unfixed at the end of the sentence!).
 3. NEVER inflate a short phrase into formal/academic wording (never use "why is that the case", "resonates with", "personal approach").
 
 RULES FOR SPOKEN CHUNKS (1 TO 2 ITEMS):
@@ -2448,7 +2448,7 @@ class NYCLoungeAI:
             )
             if self.db and uid:
                 self.db.log_mirror_event(uid, coach.mirror.verdict, coach.mirror.vetoed, coach.mirror.veto_reason)
-                self.db.log_shown_chunks(uid, [c.base_pattern for c in coach.chunks])
+                self.db.log_shown_chunks(uid, [c.base_pattern for c in coach.chunks] + [c.expression for c in coach.chunks])
             return coach
         except Exception as e:
             logger.warning(f"Coach Call B skipped after retries (dialogue unaffected): {e}")
