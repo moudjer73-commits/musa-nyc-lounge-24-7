@@ -2031,3 +2031,49 @@ def format_v2_practice_eval_html(pe, learner_text: str) -> str:
         lines.append(f"\n{badge} \"{_e(pe.reply.text)}\"")
     return "\n".join(lines)
 
+
+def handle_claude_v2_turn(bot_send_fn, ai_inst, db_inst, chat_id: int, user: dict, text: str, active_mode: str) -> bool:
+    """
+    Executes Claude's V2 architecture in live Telegram chat:
+    1. Checks /skip command to exit pending practice.
+    2. Checks pending_practice in DB for stateful Turn-2 Read the Room feedback.
+    3. Routes read_the_room / subtext / what_to_say to ReadTheRoom V2.
+    4. Routes banter / devils_advocate to Two-Call architecture (Message 1: Dialogue @ T=0.8 -> Message 2: Coach @ T=0.15).
+    """
+    uid = int(user.get("user_id", chat_id)) if isinstance(user, dict) else int(chat_id)
+    clean_t = (text or "").strip()
+    if not clean_t:
+        return False
+
+    if clean_t.lower() in ("/skip", "skip", "تخطي"):
+        db_inst.clear_pending_practice(uid)
+        bot_send_fn(chat_id, "✅ <b>Exited practice mode.</b> Back to normal Lounge conversation!")
+        return True
+
+    # Priority 1: Active pending practice in DB
+    pending = db_inst.get_pending_practice(uid)
+    if pending and active_mode not in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
+        pe = ai_inst.practice_reply_v2(user=user, learner_reply=clean_t, pending_state=pending)
+        if pe.intent == "attempt":
+            bot_send_fn(chat_id, format_v2_practice_eval_html(pe, clean_t))
+            return True
+        # If off_topic, practice_reply_v2 already cleared pending_practice -> fall through to normal Banter!
+
+    # Priority 2: Read the Room V2 (merged Subtext + What to Say)
+    if active_mode in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
+        rtr = ai_inst.read_the_room_v2(user=user, user_text=clean_t)
+        bot_send_fn(chat_id, format_v2_read_the_room_html(rtr, clean_t))
+        return True
+
+    # Priority 3: Two-Call Banter & Devil's Advocate
+    if active_mode in ("banter", "devils_advocate"):
+        d_res = ai_inst.generate_dialogue(user=user, user_text=clean_t, mode=active_mode)
+        bot_send_fn(chat_id, format_v2_dialogue_html(d_res))
+        c_res = ai_inst.coach_turn(user=user, user_text=clean_t, turns=d_res.turns)
+        coach_html = format_v2_coach_html(c_res)
+        if coach_html:
+            bot_send_fn(chat_id, coach_html)
+        return True
+
+    return False
+
