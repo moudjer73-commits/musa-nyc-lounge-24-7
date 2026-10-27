@@ -1461,12 +1461,12 @@ if bot:
 
         user = db.get_user(uid, uname, fname)
         mode = user.get("current_mode", "spontaneous_chat")
+        # [CLAUDE V2 LIVE HOOK]
+        import validation_layer as _vl
+        if mode not in ('admin_add_user', 'admin_del_user') and _vl.handle_claude_v2_turn(bot, ai, db, message.chat.id, uid, user, text, message.message_id):
+            return
 
         # --- A. Host Member Management ---
-    # [CLAUDE V2 LIVE HOOK]
-    import validation_layer as _vl
-    if mode not in ('admin_add_user', 'admin_del_user') and _vl.handle_claude_v2_turn(bot, ai, db, message.chat.id, uid, user, text, message.message_id):
-        return
         if uid == ADMIN_ID and mode in ("admin_add_user", "admin_del_user"):
             digits = "".join([c for c in text if c.isdigit()])
             if not digits:

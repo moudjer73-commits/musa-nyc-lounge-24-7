@@ -1709,9 +1709,12 @@ def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int
         u_dict["user_id"] = user_id
         active_mode = str(u_dict.get("current_mode") or "spontaneous_chat").strip().lower()
 
+        rtr_modes = ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room", "nuance")
+        banter_modes = ("spontaneous_chat", "banter", "nyc_banter", "devils_advocate", "devil", "debate", "default", "")
+
         # 1. Check active pending practice (Turn-2 Roleplay Feedback)
         pending = db_inst.get_pending_practice(user_id)
-        if pending and active_mode not in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
+        if pending and active_mode not in rtr_modes:
             try:
                 bot_inst.send_chat_action(chat_id, "typing")
             except Exception:
@@ -1723,7 +1726,7 @@ def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int
                 return True
 
         # 2. Read the Room V2 (Unified Subtext & What to Say)
-        if active_mode in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
+        if active_mode in rtr_modes:
             try:
                 bot_inst.send_chat_action(chat_id, "typing")
             except Exception:
@@ -1738,7 +1741,7 @@ def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int
             return True
 
         # 3. Two-Call Lounge Banter & Devil's Advocate
-        if active_mode in ("spontaneous_chat", "banter", "nyc_banter", "devils_advocate", "devil", "debate"):
+        if active_mode in banter_modes:
             try:
                 bot_inst.send_chat_action(chat_id, "typing")
             except Exception:
@@ -1754,7 +1757,8 @@ def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int
             except Exception:
                 pass
 
-            d_res = ai_inst.generate_dialogue(user=u_dict, user_text=clean_t, mode=active_mode, history_lines=hist_rows)
+            call_mode = "devils_advocate" if "devil" in active_mode else "banter"
+            d_res = ai_inst.generate_dialogue(user=u_dict, user_text=clean_t, mode=call_mode, history_lines=hist_rows)
             msg1_html = format_v2_dialogue_html(d_res)
             sent_msg1 = bot_inst.send_message(chat_id, msg1_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
 
