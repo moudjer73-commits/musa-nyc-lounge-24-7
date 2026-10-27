@@ -2327,12 +2327,37 @@ class NYCLoungeAI:
             'Return ONLY valid JSON: {"turns": [{"speaker": "Marcus"|"Chloe"|"Jake", "text": "..."}]}',
         ])
         u_prompt = f"RECENT DIALOGUE CONTEXT:\n{hist_block}\n\nLEARNER MESSAGE:\n{user_text}"
+        def _validate_dlg_with_repair(d: dict):
+            try:
+                return DialogueOnlyResponse.model_validate(d)
+            except Exception:
+                # Auto-repair minor stylistic overflows (e.g. rhetorical '?' in early turns or slight word overflow)
+                raw_turns = d.get("turns") if isinstance(d, dict) else None
+                if not raw_turns or not isinstance(raw_turns, list):
+                    raise
+                repaired = []
+                for idx, t_item in enumerate(raw_turns[:4]):
+                    spk = str(t_item.get("speaker", "Marcus")).strip().capitalize()
+                    if spk not in ("Marcus", "Chloe", "Jake"):
+                        spk = "Marcus"
+                    txt = str(t_item.get("text", "")).strip()
+                    # Keep '?' only on the last turn that has one
+                    if idx < len(raw_turns) - 1 and "?" in txt:
+                        txt = txt.replace("?", ".")
+                    words = txt.split()
+                    limit_map = {"Jake": 22, "Chloe": 33, "Marcus": 40}
+                    max_w = limit_map.get(spk, 40)
+                    if len(words) > max_w:
+                        txt = " ".join(words[:max_w]).rstrip(",;:") + "."
+                    repaired.append({"speaker": spk, "text": txt})
+                return DialogueOnlyResponse.model_validate({"turns": repaired})
+
         return self._call_gemini_json(
             system_prompt=sys_prompt,
             user_prompt=u_prompt,
             temperature=0.8,
-            max_tries=5,
-            validator_fn=lambda d: DialogueOnlyResponse.model_validate(d),
+            max_tries=4,
+            validator_fn=_validate_dlg_with_repair,
         )
 
     def coach_turn(self, user: Dict[str, Any], user_text: str, turns: List[Any]) -> Optional[Any]:

@@ -1464,9 +1464,7 @@ if bot:
 
         # --- A. Host Member Management ---
         # [CLAUDE V2 LIVE HOOK]
-        _v2_u_dict = dict(user) if user else {'user_id': message.from_user.id}
-        _v2_active_mode = (_v2_u_dict.get('current_mode') or 'banter')
-        if handle_claude_v2_turn(bot, ai, db, message, _v2_u_dict, text, _v2_active_mode):
+        if handle_claude_v2_turn(bot, ai, db, message.chat.id, message.from_user.id, user, text, message.message_id):
             return
         if uid == ADMIN_ID and mode in ("admin_add_user", "admin_del_user"):
             digits = "".join([c for c in text if c.isdigit()])
@@ -2041,75 +2039,101 @@ def format_v2_practice_eval_html(pe, learner_text: str) -> str:
     return "\n".join(lines)
 
 
-def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, message, user: dict, text: str, active_mode: str) -> bool:
-    from validation_layer import (
-        format_v2_dialogue_html,
-        format_v2_coach_html,
-        format_v2_read_the_room_html,
-        format_v2_practice_eval_html,
-    )
-    chat_id = message.chat.id
-    uid = int(user.get("user_id", message.from_user.id)) if isinstance(user, dict) else int(message.from_user.id)
-    clean_t = (text or "").strip()
-    if not clean_t:
-        return False
+def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int, user_obj, text: str, reply_to_id: int = None) -> bool:
+    try:
+        from validation_layer import (
+            format_v2_dialogue_html,
+            format_v2_coach_html,
+            format_v2_read_the_room_html,
+            format_v2_practice_eval_html,
+        )
+        clean_t = (text or "").strip()
+        if not clean_t:
+            return False
 
-    if clean_t.lower() in ("/skip", "skip", "تخطي"):
-        db_inst.clear_pending_practice(uid)
-        bot_inst.send_message(chat_id, "✅ <b>Exited roleplay practice.</b> Back to normal Lounge conversation!", parse_mode="HTML")
-        return True
-
-    pending = db_inst.get_pending_practice(uid)
-    if pending and active_mode not in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
-        bot_inst.send_chat_action(chat_id, "typing")
-        pe = ai_inst.practice_reply_v2(user=user, learner_reply=clean_t, pending_state=pending)
-        if pe.intent == "attempt":
-            eval_html = format_v2_practice_eval_html(pe, clean_t)
-            bot_inst.send_message(chat_id, eval_html, parse_mode="HTML", reply_to_message_id=message.message_id)
+        if clean_t.lower() in ("/skip", "skip", "تخطي"):
+            db_inst.clear_pending_practice(user_id)
+            bot_inst.send_message(chat_id, "✅ <b>Exited roleplay practice.</b> Back to Lounge Banter!", parse_mode="HTML")
             return True
 
-    if active_mode in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
-        bot_inst.send_chat_action(chat_id, "typing")
-        rtr = ai_inst.read_the_room_v2(user=user, user_text=clean_t)
-        rtr_html = format_v2_read_the_room_html(rtr, clean_t)
-        bot_inst.send_message(chat_id, rtr_html, parse_mode="HTML", reply_to_message_id=message.message_id)
-        try:
-            db_inst.update_user_mode(uid, "banter")
-        except Exception:
-            pass
-        return True
+        if clean_t.startswith("/"):
+            return False
 
-    if active_mode in ("banter", "devils_advocate"):
-        bot_inst.send_chat_action(chat_id, "typing")
-        hist_rows = []
-        try:
-            raw_h = db_inst.get_recent_messages(uid, limit=6)
-            for r in raw_h:
-                role_lbl = "Learner" if r["role"] == "user" else "Lounge"
-                hist_rows.append(f"{role_lbl}: {r['content'][:160]}")
-        except Exception:
-            pass
+        if isinstance(user_obj, dict):
+            u_dict = dict(user_obj)
+        elif user_obj is not None and hasattr(user_obj, "keys"):
+            u_dict = {k: user_obj[k] for k in user_obj.keys()}
+        else:
+            u_dict = {"user_id": user_id}
+        u_dict["user_id"] = user_id
+        active_mode = str(u_dict.get("current_mode") or "banter").strip().lower()
 
-        d_res = ai_inst.generate_dialogue(user=user, user_text=clean_t, mode=active_mode, history_lines=hist_rows)
-        msg1_html = format_v2_dialogue_html(d_res)
-        sent_msg1 = bot_inst.send_message(chat_id, msg1_html, parse_mode="HTML", reply_to_message_id=message.message_id)
+        # 1. Check active pending practice (Turn-2 Roleplay Feedback)
+        pending = db_inst.get_pending_practice(user_id)
+        if pending and active_mode not in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
+            try:
+                bot_inst.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            pe = ai_inst.practice_reply_v2(user=u_dict, learner_reply=clean_t, pending_state=pending)
+            if pe.intent == "attempt":
+                eval_html = format_v2_practice_eval_html(pe, clean_t)
+                bot_inst.send_message(chat_id, eval_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
+                return True
 
-        try:
-            db_inst.add_message(uid, "user", clean_t)
-            db_inst.add_message(uid, "assistant", "\n".join(f"{t.speaker}: {t.text}" for t in d_res.turns))
-        except Exception:
-            pass
+        # 2. Read the Room V2 (Unified Subtext & What to Say)
+        if active_mode in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
+            try:
+                bot_inst.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            rtr = ai_inst.read_the_room_v2(user=u_dict, user_text=clean_t)
+            rtr_html = format_v2_read_the_room_html(rtr, clean_t)
+            bot_inst.send_message(chat_id, rtr_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
+            try:
+                db_inst.update_user_mode(user_id, "banter")
+            except Exception:
+                pass
+            return True
 
-        c_res = ai_inst.coach_turn(user=user, user_text=clean_t, turns=d_res.turns)
-        msg2_html = format_v2_coach_html(c_res)
-        if msg2_html:
-            bot_inst.send_message(
-                chat_id,
-                msg2_html,
-                parse_mode="HTML",
-                reply_to_message_id=sent_msg1.message_id if sent_msg1 else message.message_id,
-            )
-        return True
+        # 3. Two-Call Lounge Banter & Devil's Advocate
+        if active_mode in ("banter", "devils_advocate"):
+            try:
+                bot_inst.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            hist_rows = []
+            try:
+                raw_h = db_inst.get_recent_messages(user_id, limit=6)
+                for r in raw_h:
+                    r_role = r["role"] if isinstance(r, dict) or hasattr(r, "__getitem__") else "user"
+                    r_cont = r["content"] if isinstance(r, dict) or hasattr(r, "__getitem__") else ""
+                    role_lbl = "Learner" if r_role == "user" else "Lounge"
+                    hist_rows.append(f"{role_lbl}: {str(r_cont)[:160]}")
+            except Exception:
+                pass
 
+            d_res = ai_inst.generate_dialogue(user=u_dict, user_text=clean_t, mode=active_mode, history_lines=hist_rows)
+            msg1_html = format_v2_dialogue_html(d_res)
+            sent_msg1 = bot_inst.send_message(chat_id, msg1_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
+
+            try:
+                db_inst.add_message(user_id, "user", clean_t)
+                db_inst.add_message(user_id, "assistant", "\n".join(f"{t.speaker}: {t.text}" for t in d_res.turns))
+            except Exception:
+                pass
+
+            try:
+                bot_inst.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            c_res = ai_inst.coach_turn(user=u_dict, user_text=clean_t, turns=d_res.turns)
+            msg2_html = format_v2_coach_html(c_res)
+            if msg2_html:
+                m1_id = getattr(sent_msg1, "message_id", None) or reply_to_id
+                bot_inst.send_message(chat_id, msg2_html, parse_mode="HTML", reply_to_message_id=m1_id)
+            return True
+    except Exception as e:
+        logger.error(f"ClaudeV2 live handler error: {e}", exc_info=True)
     return False
 
