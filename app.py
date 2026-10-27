@@ -1365,6 +1365,10 @@ if bot:
                     return
 
             # --- Reset static text-only submodes if user sends a voice note ---
+            # [CLAUDE V2 LIVE HOOK]
+            _v2_mode = (user['current_mode'] if (user and 'current_mode' in user and user['current_mode']) else 'banter')
+            if handle_claude_v2_turn(bot, ai, db, message, dict(user) if user else {'user_id': message.from_user.id}, text, _v2_mode):
+                return
             if mode in ("fast_lookup", "chunk_miner", "podcast_custom_topic", "admin_add_user", "admin_del_user"):
                 db.update_user(uid, current_mode="spontaneous_chat")
                 user = db.get_user(uid)
