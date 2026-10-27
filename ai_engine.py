@@ -316,6 +316,28 @@ CRITICAL COACHING, REGISTER COHERENCE & PRAGMATIC MIRROR RULES (MUST OBEY):
 """
 
 
+
+def _auto_clean_base_patterns(payload_dict: dict) -> dict:
+    fillers = {'entirely', 'completely', 'totally', 'really', 'actually', 'simply', 'merely', 'literally', 'definitely', 'certainly'}
+    keep_ing = {'nothing', 'something', 'anything', 'everything', 'bring', 'spring', 'sing', 'ring', 'cling', 'swing', 'sting', 'wing'}
+    items = payload_dict.get('lexical_items') if isinstance(payload_dict, dict) else None
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict) and isinstance(it.get('expression'), str):
+                words = [w for w in it['expression'].split() if w.lower().strip('.,!?') not in fillers]
+                if words:
+                    w0 = words[0].lower()
+                    if w0.endswith('ing') and w0 not in keep_ing and len(w0) > 4:
+                        stem = w0[:-3]
+                        if len(stem) >= 2 and stem[-1] == stem[-2] and stem[-1] not in 'aeioulsz':
+                            words[0] = stem[:-1]
+                        elif stem.endswith(('at', 'iz', 'us', 'iv', 'ag', 'ak', 'am', 'ap', 'av', 'id', 'it', 'od', 'ok', 'on', 'op', 'ot', 'ov', 'ul', 'um', 'un', 'up', 'ur', 'ut')):
+                            words[0] = stem + 'e'
+                        else:
+                            words[0] = stem
+                    it['expression'] = ' '.join(words)
+    return payload_dict
+
 class NYCLoungeAI:
     def __init__(self, api_key: str, db: LoungeDatabase):
         self.db = db
@@ -1211,7 +1233,7 @@ class NYCLoungeAI:
                         contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt,
-                            temperature=0.25 if tries_done == 1 else 0.15,
+                            temperature=0.75 if tries_done == 1 else 0.55,
                             response_mime_type="application/json",
                             max_output_tokens=4096,
                         ),
@@ -1219,7 +1241,7 @@ class NYCLoungeAI:
                     raw_text = (getattr(resp, "text", "") or "").strip()
                     if raw_text.startswith("```"):
                         raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
-                    payload_dict = json.loads(raw_text)
+                    payload_dict = _auto_clean_base_patterns(json.loads(raw_text))
                     validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
                         payload_dict,
                         context=trusted_context
@@ -1451,7 +1473,7 @@ class NYCLoungeAI:
             f'1. Set `learner_input_text` to the exact string: {json.dumps(clean_user_text)}',
             '2. HIERARCHY OF PRAGMATIC EVIDENCE (`evidence_to_watch`): Teach the learner to weigh clues in this order: (1) Situational Context (what happened or was proposed right before the remark), (2) Relationship & History (trust vs. rivalry/frustration), (3) Vocal Delivery (stress, pitch contour, pauses—always frame vocal cues as probabilistic possibilities using "can" or "may", never as fixed deterministic proof), and (4) Repeated Pattern.',
             '3. UTTERANCE-SPECIFIC `escalation_options`: Every `exact_wording` MUST directly respond to the specific phrase in `learner_input_text` in natural, everyday spoken American English (use contractions like "I\'m", "that\'s", "you\'ve"; avoid defensive over-explaining or stiff textbook sentences; keep between 4 and 16 words).',
-            '4. GROUNDED HOST DIALOGUE: Keep Marcus and Chloe natural and direct—do NOT use overwritten metaphors like "passive-aggressive static" or "linguistic chameleon".',
+            '4. NATURAL HOST DIALOGUE: Let Marcus and Chloe speak freely, naturally, and reactively in their authentic voices.',
             '5. STRICT LEXICAL CLASSIFICATION & CANONICAL FRAMES: Strip optional intensifier adverbs (do NOT include words like "entirely", "completely", "really", "actually", "simply" inside `expression`). Never select a bare `-ing` free combination (like "masking resentment") as a target expression; choose a genuine `idiom`, `phrasal_verb`, or `conversational_frame` in base form and label its type in `register_and_usage`.',
         ]
         system_prompt = '\n\n'.join(rules_list)
@@ -1488,7 +1510,7 @@ class NYCLoungeAI:
                         contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt,
-                            temperature=0.25 if tries_done == 1 else 0.15,
+                            temperature=0.75 if tries_done == 1 else 0.55,
                             response_mime_type='application/json',
                             max_output_tokens=8192,
                         ),
@@ -1496,7 +1518,7 @@ class NYCLoungeAI:
                     raw_text = (getattr(resp, 'text', '') or '').strip()
                     if raw_text.startswith('```'):
                         raw_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_text, flags=re.DOTALL).strip()
-                    payload_dict = json.loads(raw_text)
+                    payload_dict = _auto_clean_base_patterns(json.loads(raw_text))
                     validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
                         payload_dict,
                         context=trusted_context
@@ -1658,7 +1680,7 @@ class NYCLoungeAI:
                         contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt,
-                            temperature=0.25 if tries_done == 1 else 0.15,
+                            temperature=0.75 if tries_done == 1 else 0.55,
                             response_mime_type='application/json',
                             max_output_tokens=4096,
                         ),
@@ -1666,7 +1688,7 @@ class NYCLoungeAI:
                     raw_text = (getattr(resp, 'text', '') or '').strip()
                     if raw_text.startswith('```'):
                         raw_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_text, flags=re.DOTALL).strip()
-                    payload_dict = json.loads(raw_text)
+                    payload_dict = _auto_clean_base_patterns(json.loads(raw_text))
                     validated: LoungeTurnResponse = LoungeTurnResponse.model_validate(
                         payload_dict,
                         context=trusted_context
