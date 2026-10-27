@@ -1685,20 +1685,57 @@ def format_v2_practice_eval_html(pe, learner_text: str) -> str:
     return "\n".join(lines)
 
 
-def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int, user_obj, text: str, reply_to_id: int = None) -> bool:
+_V2_AI_SINGLETON = None
+_V2_PENDING_PRACTICE_MEM = {}
+
+def _get_v2_ai_instance(g_dict: dict, l_dict: dict, db_inst):
+    global _V2_AI_SINGLETON
+    if _V2_AI_SINGLETON is not None:
+        return _V2_AI_SINGLETON
+
+    cand = l_dict.get("ai") or g_dict.get("ai") or l_dict.get("ai_engine") or g_dict.get("ai_engine")
+    if cand is not None and hasattr(cand, "generate_dialogue") and hasattr(cand, "coach_turn"):
+        _V2_AI_SINGLETON = cand
+        return _V2_AI_SINGLETON
+
+    import config, ai_engine as _ae_mod
+    api_k = getattr(config, "GEMINI_API_KEY", None) or os.environ.get("GEMINI_API_KEY", "")
+    _V2_AI_SINGLETON = _ae_mod.NYCLoungeAI(api_key=api_k, db=db_inst)
+    return _V2_AI_SINGLETON
+
+
+def handle_claude_v2_turn_safe(g_dict: dict, l_dict: dict, message_obj, override_text: str = None, override_chat_id: int = None, override_uid: int = None) -> bool:
     import logging, traceback
+    bot_inst = l_dict.get("bot") or g_dict.get("bot")
+    db_inst = l_dict.get("db") or g_dict.get("db")
+    chat_id = override_chat_id or (message_obj.chat.id if message_obj else None)
+    user_id = override_uid or l_dict.get("uid") or (message_obj.from_user.id if message_obj else None)
+    reply_to_id = getattr(message_obj, "message_id", None) if message_obj else None
+
     try:
-        clean_t = (text or "").strip()
-        if not clean_t:
+        clean_t = (override_text if override_text is not None else (l_dict.get("text") or (message_obj.text if message_obj else "") or "")).strip()
+        if not clean_t or not bot_inst or not chat_id or not user_id:
             return False
 
         if clean_t.lower() in ("/skip", "skip", "تخطي"):
-            db_inst.clear_pending_practice(user_id)
+            _V2_PENDING_PRACTICE_MEM.pop(user_id, None)
+            if hasattr(db_inst, "clear_pending_practice"):
+                try:
+                    db_inst.clear_pending_practice(user_id)
+                except Exception:
+                    pass
             bot_inst.send_message(chat_id, "✅ <b>Exited roleplay practice.</b> Back to Lounge Banter!", parse_mode="HTML")
             return True
 
         if clean_t.startswith("/"):
             return False
+
+        user_obj = l_dict.get("user")
+        if user_obj is None and db_inst and hasattr(db_inst, "get_user"):
+            try:
+                user_obj = db_inst.get_user(user_id)
+            except Exception:
+                user_obj = {"user_id": user_id}
 
         if isinstance(user_obj, dict):
             u_dict = dict(user_obj)
@@ -1707,19 +1744,41 @@ def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int
         else:
             u_dict = {"user_id": user_id}
         u_dict["user_id"] = user_id
-        active_mode = str(u_dict.get("current_mode") or "spontaneous_chat").strip().lower()
 
+        # Map legacy DB fields (e.g. vibe / style) to preferred_register if needed
+        if "preferred_register" not in u_dict or not u_dict.get("preferred_register"):
+            u_dict["preferred_register"] = str(u_dict.get("vibe") or u_dict.get("register") or "articulate").strip().lower()
+
+        active_mode = str(l_dict.get("mode") or u_dict.get("current_mode") or "spontaneous_chat").strip().lower()
+
+        # Pass through specialized legacy modes (admin, SRS drill, podcast topic)
+        passthrough_modes = (
+            "admin_add_user", "admin_del_user", "srs_active_practice",
+            "fast_lookup", "chunk_miner", "podcast_custom_trio",
+            "podcast_custom_duo", "podcast_custom_topic",
+            "weakness_drill", "shadowing_drill"
+        )
+        if active_mode in passthrough_modes:
+            return False
+
+        ai_inst = _get_v2_ai_instance(g_dict, l_dict, db_inst)
         rtr_modes = ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room", "nuance")
-        banter_modes = ("spontaneous_chat", "banter", "nyc_banter", "devils_advocate", "devil", "debate", "default", "")
 
         # 1. Check active pending practice (Turn-2 Roleplay Feedback)
-        pending = db_inst.get_pending_practice(user_id)
+        pending = _V2_PENDING_PRACTICE_MEM.get(user_id)
+        if not pending and hasattr(db_inst, "get_pending_practice"):
+            try:
+                pending = db_inst.get_pending_practice(user_id)
+            except Exception:
+                pending = None
+
         if pending and active_mode not in rtr_modes:
             try:
                 bot_inst.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             pe = ai_inst.practice_reply_v2(user=u_dict, learner_reply=clean_t, pending_state=pending)
+            _V2_PENDING_PRACTICE_MEM.pop(user_id, None)
             if pe.intent == "attempt":
                 eval_html = format_v2_practice_eval_html(pe, clean_t)
                 bot_inst.send_message(chat_id, eval_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
@@ -1732,59 +1791,69 @@ def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int
             except Exception:
                 pass
             rtr = ai_inst.read_the_room_v2(user=u_dict, user_text=clean_t)
+            _V2_PENDING_PRACTICE_MEM[user_id] = {
+                "counterpart": rtr.your_turn.counterpart,
+                "their_line": rtr.your_turn.their_line,
+                "goal": rtr.your_turn.goal,
+            }
             rtr_html = format_v2_read_the_room_html(rtr, clean_t)
             bot_inst.send_message(chat_id, rtr_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
             try:
-                db_inst.update_user_mode(user_id, "spontaneous_chat")
+                if hasattr(db_inst, "update_user"):
+                    db_inst.update_user(user_id, current_mode="spontaneous_chat")
+                elif hasattr(db_inst, "update_user_mode"):
+                    db_inst.update_user_mode(user_id, "spontaneous_chat")
             except Exception:
                 pass
             return True
 
-        # 3. Two-Call Lounge Banter & Devil's Advocate
-        if active_mode in banter_modes:
-            try:
-                bot_inst.send_chat_action(chat_id, "typing")
-            except Exception:
-                pass
-            hist_rows = []
-            try:
+        # 3. Two-Call Lounge Banter & Devil's Advocate (Default for spontaneous_chat / banter / etc.)
+        try:
+            bot_inst.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+
+        hist_rows = []
+        try:
+            if hasattr(db_inst, "get_recent_messages"):
                 raw_h = db_inst.get_recent_messages(user_id, limit=6)
-                for r in raw_h:
+                for r in (raw_h or []):
                     r_role = r["role"] if isinstance(r, dict) or hasattr(r, "__getitem__") else "user"
                     r_cont = r["content"] if isinstance(r, dict) or hasattr(r, "__getitem__") else ""
                     role_lbl = "Learner" if r_role == "user" else "Lounge"
                     hist_rows.append(f"{role_lbl}: {str(r_cont)[:160]}")
-            except Exception:
-                pass
-
-            call_mode = "devils_advocate" if "devil" in active_mode else "banter"
-            d_res = ai_inst.generate_dialogue(user=u_dict, user_text=clean_t, mode=call_mode, history_lines=hist_rows)
-            msg1_html = format_v2_dialogue_html(d_res)
-            sent_msg1 = bot_inst.send_message(chat_id, msg1_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
-
-            try:
-                db_inst.add_message(user_id, "user", clean_t)
-                db_inst.add_message(user_id, "assistant", "\n".join(f"{t.speaker}: {t.text}" for t in d_res.turns))
-            except Exception:
-                pass
-
-            try:
-                bot_inst.send_chat_action(chat_id, "typing")
-            except Exception:
-                pass
-            c_res = ai_inst.coach_turn(user=u_dict, user_text=clean_t, turns=d_res.turns)
-            msg2_html = format_v2_coach_html(c_res)
-            if msg2_html:
-                m1_id = getattr(sent_msg1, "message_id", None) or reply_to_id
-                bot_inst.send_message(chat_id, msg2_html, parse_mode="HTML", reply_to_message_id=m1_id)
-            return True
-    except Exception as e:
-        err_msg = f"⚠️ <b>Debug Notice:</b> <code>{_e(str(e)[:220])}</code>"
-        logging.error(f"ClaudeV2 live handler error: {e}\n{traceback.format_exc()}")
-        try:
-            bot_inst.send_message(chat_id, err_msg, parse_mode="HTML")
         except Exception:
             pass
+
+        call_mode = "devils_advocate" if "devil" in active_mode else "banter"
+        d_res = ai_inst.generate_dialogue(user=u_dict, user_text=clean_t, mode=call_mode, history_lines=hist_rows)
+        msg1_html = format_v2_dialogue_html(d_res)
+        sent_msg1 = bot_inst.send_message(chat_id, msg1_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
+
+        try:
+            if hasattr(db_inst, "add_message"):
+                db_inst.add_message(user_id, "user", clean_t)
+                db_inst.add_message(user_id, "assistant", "\n".join(f"{t.speaker}: {t.text}" for t in d_res.turns))
+        except Exception:
+            pass
+
+        try:
+            bot_inst.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        c_res = ai_inst.coach_turn(user=u_dict, user_text=clean_t, turns=d_res.turns)
+        msg2_html = format_v2_coach_html(c_res)
+        if msg2_html:
+            m1_id = getattr(sent_msg1, "message_id", None) or reply_to_id
+            bot_inst.send_message(chat_id, msg2_html, parse_mode="HTML", reply_to_message_id=m1_id)
         return True
-    return False
+
+    except Exception as e:
+        logging.error(f"ClaudeV2 live handler error: {e}\n{traceback.format_exc()}")
+        if bot_inst and chat_id:
+            try:
+                bot_inst.send_message(chat_id, f"⚠️ <b>Engine Error:</b> <code>{_e(str(e)[:240])}</code>", parse_mode="HTML")
+            except Exception:
+                pass
+        return True
 
