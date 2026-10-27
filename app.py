@@ -1432,104 +1432,6 @@ if bot:
     # =====================================================================
     # 4. Text Input Handler (Banter, Collocation Explorer, Custom Podcasts)
     # =====================================================================
-    def handle_claude_v2_turn(bot_inst, ai_inst, db_inst, chat_id: int, user_id: int, user_obj, text: str, reply_to_id: int = None) -> bool:
-        try:
-            from validation_layer import (
-                format_v2_dialogue_html,
-                format_v2_coach_html,
-                format_v2_read_the_room_html,
-                format_v2_practice_eval_html,
-            )
-            clean_t = (text or "").strip()
-            if not clean_t:
-                return False
-
-            if clean_t.lower() in ("/skip", "skip", "تخطي"):
-                db_inst.clear_pending_practice(user_id)
-                bot_inst.send_message(chat_id, "✅ <b>Exited roleplay practice.</b> Back to Lounge Banter!", parse_mode="HTML")
-                return True
-
-            if clean_t.startswith("/"):
-                return False
-
-            if isinstance(user_obj, dict):
-                u_dict = dict(user_obj)
-            elif user_obj is not None and hasattr(user_obj, "keys"):
-                u_dict = {k: user_obj[k] for k in user_obj.keys()}
-            else:
-                u_dict = {"user_id": user_id}
-            u_dict["user_id"] = user_id
-            active_mode = str(u_dict.get("current_mode") or "spontaneous_chat").strip().lower()
-
-            # 1. Check active pending practice (Turn-2 Roleplay Feedback)
-            pending = db_inst.get_pending_practice(user_id)
-            if pending and active_mode not in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
-                try:
-                    bot_inst.send_chat_action(chat_id, "typing")
-                except Exception:
-                    pass
-                pe = ai_inst.practice_reply_v2(user=u_dict, learner_reply=clean_t, pending_state=pending)
-                if pe.intent == "attempt":
-                    eval_html = format_v2_practice_eval_html(pe, clean_t)
-                    bot_inst.send_message(chat_id, eval_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
-                    return True
-
-            # 2. Read the Room V2 (Unified Subtext & What to Say)
-            if active_mode in ("subtext", "subtext_decoder", "what_to_say", "social_strategy", "read_the_room"):
-                try:
-                    bot_inst.send_chat_action(chat_id, "typing")
-                except Exception:
-                    pass
-                rtr = ai_inst.read_the_room_v2(user=u_dict, user_text=clean_t)
-                rtr_html = format_v2_read_the_room_html(rtr, clean_t)
-                bot_inst.send_message(chat_id, rtr_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
-                try:
-                    db_inst.update_user_mode(user_id, "spontaneous_chat")
-                except Exception:
-                    pass
-                return True
-
-            # 3. Two-Call Lounge Banter & Devil's Advocate
-            if active_mode in ("spontaneous_chat", "banter", "nyc_banter", "devils_advocate", "devil", "debate"):
-                try:
-                    bot_inst.send_chat_action(chat_id, "typing")
-                except Exception:
-                    pass
-                hist_rows = []
-                try:
-                    raw_h = db_inst.get_recent_messages(user_id, limit=6)
-                    for r in raw_h:
-                        r_role = r["role"] if isinstance(r, dict) or hasattr(r, "__getitem__") else "user"
-                        r_cont = r["content"] if isinstance(r, dict) or hasattr(r, "__getitem__") else ""
-                        role_lbl = "Learner" if r_role == "user" else "Lounge"
-                        hist_rows.append(f"{role_lbl}: {str(r_cont)[:160]}")
-                except Exception:
-                    pass
-
-                d_res = ai_inst.generate_dialogue(user=u_dict, user_text=clean_t, mode=active_mode, history_lines=hist_rows)
-                msg1_html = format_v2_dialogue_html(d_res)
-                sent_msg1 = bot_inst.send_message(chat_id, msg1_html, parse_mode="HTML", reply_to_message_id=reply_to_id)
-
-                try:
-                    db_inst.add_message(user_id, "user", clean_t)
-                    db_inst.add_message(user_id, "assistant", "\n".join(f"{t.speaker}: {t.text}" for t in d_res.turns))
-                except Exception:
-                    pass
-
-                try:
-                    bot_inst.send_chat_action(chat_id, "typing")
-                except Exception:
-                    pass
-                c_res = ai_inst.coach_turn(user=u_dict, user_text=clean_t, turns=d_res.turns)
-                msg2_html = format_v2_coach_html(c_res)
-                if msg2_html:
-                    m1_id = getattr(sent_msg1, "message_id", None) or reply_to_id
-                    bot_inst.send_message(chat_id, msg2_html, parse_mode="HTML", reply_to_message_id=m1_id)
-                return True
-        except Exception as e:
-            logger.error(f"ClaudeV2 live handler error: {e}", exc_info=True)
-        return False
-
     @bot.message_handler(content_types=["text"])
     def handle_text_input(message):
         uid = message.from_user.id
@@ -1559,11 +1461,12 @@ if bot:
 
         user = db.get_user(uid, uname, fname)
         mode = user.get("current_mode", "spontaneous_chat")
-        # [CLAUDE V2 LIVE HOOK]
-        if mode not in ('admin_add_user', 'admin_del_user') and handle_claude_v2_turn(bot, ai, db, message.chat.id, uid, user, text, message.message_id):
-            return
 
         # --- A. Host Member Management ---
+    # [CLAUDE V2 LIVE HOOK]
+    import validation_layer as _vl
+    if mode not in ('admin_add_user', 'admin_del_user') and _vl.handle_claude_v2_turn(bot, ai, db, message.chat.id, uid, user, text, message.message_id):
+        return
         if uid == ADMIN_ID and mode in ("admin_add_user", "admin_del_user"):
             digits = "".join([c for c in text if c.isdigit()])
             if not digits:
@@ -1935,6 +1838,14 @@ def main():
 
 
 if __name__ == "__main__":
+    # [CLAUDE V2 AUTO-REPLY ON BOOT]
+    try:
+        import validation_layer as _vl_boot
+        _u_boot = db.get_user(ADMIN_ID, "", "Musa")
+        _test_line = "Honestly, Chloe, you might be onto something. If I ditch my morning routine, I lose my favorite excuse for putting off the heavy writing until noon."
+        _vl_boot.handle_claude_v2_turn(bot, ai, db, ADMIN_ID, ADMIN_ID, _u_boot, _test_line, None)
+    except Exception as _be:
+        logger.error(f"Boot auto-reply error: {_be}")
     main()
 
 
