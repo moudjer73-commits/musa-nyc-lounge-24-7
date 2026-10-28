@@ -777,17 +777,15 @@ class MirrorEdit(BaseModel):
 
     span: str
     replacement: str
-    trigger: Literal["register", "calque", "wordy", "reference", "pragmatic", "error", "us_preference"] = "calque"
+    trigger: Literal["register", "calque", "wordy", "reference", "pragmatic", "error"] = "calque"
     why: str
 
     @field_validator("trigger", mode="before")
     @classmethod
     def _norm_trigger(cls, v: Any) -> str:
         s = str(v or "").strip().lower()
-        if s in ("register", "calque", "wordy", "reference", "pragmatic", "error", "us_preference"):
+        if s in ("register", "calque", "wordy", "reference", "pragmatic", "error"):
             return s
-        if "us_" in s or "american" in s or "brit" in s or "prefer" in s or "idiom" in s:
-            return "us_preference"
         if "colloc" in s or "interf" in s or "literal" in s:
             return "calque"
         if "gramm" in s or "tense" in s or "prepos" in s:
@@ -1860,14 +1858,17 @@ def handle_claude_v2_turn_safe(g_dict: dict, l_dict: dict, message_obj, override
         return True
 
 
+
+
 # ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (DIRECT BOT METHOD HOOK)
+# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (SELF-CONTAINED ON b2f0cf2)
 # ==============================================================================
 _B2F_ORIG_HANDLER = handle_claude_v2_turn_safe
 _V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
 _V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
 _V3_ACTIVE_LEARNER_TEXT: Dict[int, str] = {}
 _V3_PATCHED_BOT_IDS: set = set()
+_V3_PATCHED_AI_IDS: set = set()
 
 
 def detect_metalinguistic_inquiry(text: str) -> bool:
@@ -2036,65 +2037,117 @@ def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
     )
 
 
+def _clean_dialogue_openers_in_html(raw_html: str) -> str:
+    """Strip mechanical openers ('Look,', 'The thing is,') and fix '?' turned into '.' in dialogue lines."""
+    for opener in ("Look, ", "The thing is, ", "Honestly, "):
+        raw_html = re.sub(
+            rf"(<b>(?:Marcus|Chloe|Jake):?</b>\s*){re.escape(opener)}",
+            lambda m: m.group(1),
+            raw_html,
+        )
+    # Capitalize first letter after speaker tag if needed
+    def _cap_after_tag(m):
+        return m.group(1) + m.group(2).upper()
+    raw_html = re.sub(r"(<b>(?:Marcus|Chloe|Jake):?</b>\s*)([a-z])", _cap_after_tag, raw_html)
+    return raw_html
+
+
 def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
-    if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html or "🟢" in raw_html:
+    if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html or "🟢" in raw_html or "📊" in raw_html:
         return raw_html
 
-    # Match 💎 Spoken American Moves in any HTML variation
+    raw_html = _clean_dialogue_openers_in_html(raw_html)
+
+    # If this message does not contain 💎 Spoken American Moves, return it cleaned
     if "💎" not in raw_html:
         return raw_html
 
     idx_diamond = raw_html.find("💎")
-    # Cut cleanly right before the newline preceding 💎
     cut_pos = raw_html.rfind("\n", 0, idx_diamond)
     before_diamond = (raw_html[:cut_pos] if cut_pos != -1 else raw_html[:idx_diamond]).strip()
 
-    has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
-    if has_mirror_fix:
-        # Priority 1: Surgical Mirror only (0 chunks)
-        return before_diamond
-
+    # Check Active Uptake first (Message 4) so clean target production is rewarded with the Evidence Ledger
     uptake_event = detect_active_uptake_event(learner_text)
     if uptake_event is not None:
-        # Priority 2: Active Uptake & Evidence Ledger
         ledger_block = (
             "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
             f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
             f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
             f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>"
         )
-        return f"{before_diamond}\n\n{ledger_block}"
+        # Strip any accidental minor mirror nitpick on an Active Uptake turn
+        only_dialogue_lines = [
+            ln for ln in before_diamond.splitlines()
+            if not any(m in ln for m in ("🪞", "🇺🇸", "🎙️", "↳"))
+        ]
+        clean_before = "\n".join(only_dialogue_lines).strip()
+        return f"{clean_before}\n\n{ledger_block}".strip()
 
+    # Priority 1: Surgical Mirror Fix exists (Message 2) -> keep Mirror ONLY, strip 💎 Spoken American Moves
+    has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
+    if has_mirror_fix:
+        return before_diamond
+
+    # Priority 3: Textbook-stiff phrasing -> keep Spoken Move
     stiff_markers = (
         "cannot accept", "additional task", "completely full", "do not think",
         "do not have enough", "in order to", "it is necessary",
     )
     if any(sm in (learner_text or "").lower() for sm in stiff_markers):
-        # Priority 3: Textbook-stiff input -> keep Spoken Move as Recast/Alternative
         return raw_html
 
-    # Priority 4: Clean natural English -> Complete Coaching Silence (no_coaching_needed)!
+    # Priority 4: Clean natural English (Message 1) -> return before_diamond (which is "" if coaching was a separate 2nd message)
     return before_diamond
 
 
+def _ensure_ai_grounding_hooked(ai_obj: Any):
+    """Hooks _call_gemini_json on the AI instance so Call A never invents fake workplace obligations."""
+    if not ai_obj or id(ai_obj) in _V3_PATCHED_AI_IDS or not hasattr(ai_obj, "_call_gemini_json"):
+        return
+    orig_call = ai_obj._call_gemini_json
+
+    def _hooked_call_gemini_json(system_prompt: str, user_prompt: str, *a, **kw):
+        if "Marcus" in str(system_prompt) and "Chloe" in str(system_prompt):
+            system_prompt = str(system_prompt) + (
+                "\n\nCRITICAL CONTEXT GROUNDING RULES (MANDATORY):\n"
+                "1. Respond ONLY to facts the learner explicitly stated in their message.\n"
+                "2. NEVER invent workplace obligations, 'billables', 'client syncs', 'sending files', 'decks', 'audits', or 'project backlogs' unless the learner explicitly mentioned a work project or report.\n"
+                "3. When the learner talks about taking Friday off to hang out at home and have a quiet day, respond as supportive NYC friends talking naturally about recharging, unplugging, and enjoying a quiet day at home—do NOT act like their boss or coworker!\n"
+                "4. Never start a turn with 'Look,' or 'The thing is,'. Always end questions with '?'.\n"
+            )
+        return orig_call(system_prompt, user_prompt, *a, **kw)
+
+    ai_obj._call_gemini_json = _hooked_call_gemini_json
+    _V3_PATCHED_AI_IDS.add(id(ai_obj))
+
+
 def _ensure_bot_method_hooked(bot_obj: Any):
-    """Hooks `bot.send_message` and `bot.reply_to` directly on the TeleBot instance so NO call can bypass the V3 filter."""
+    """Hooks `bot.send_message` and `bot.reply_to` and skips empty filtered messages so Telegram never throws 400."""
     if not bot_obj or id(bot_obj) in _V3_PATCHED_BOT_IDS:
         return
     orig_send = bot_obj.send_message
     orig_reply = getattr(bot_obj, "reply_to", None)
 
     def _hooked_send_message(chat_id: Any, text: str, *a, **kw):
+        # Suppress any internal 400 error message from reaching the user
+        if "message text is empty" in str(text):
+            return None
         l_txt = _V3_ACTIVE_LEARNER_TEXT.get(int(chat_id) if str(chat_id).lstrip("-").isdigit() else 0, "")
         filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt)
+        if not filtered or not filtered.strip():
+            return None  # True Call B Silence: do NOT call Telegram API with an empty string!
         return orig_send(chat_id, filtered, *a, **kw)
 
     bot_obj.send_message = _hooked_send_message
     if orig_reply:
         def _hooked_reply_to(msg_obj: Any, text: str, *a, **kw):
+            if "message text is empty" in str(text):
+                return None
             cid = getattr(getattr(msg_obj, "chat", None), "id", 0)
             l_txt = _V3_ACTIVE_LEARNER_TEXT.get(int(cid) if str(cid).lstrip("-").isdigit() else 0, "")
             filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt)
+            if not filtered or not filtered.strip():
+                return None
             return orig_reply(msg_obj, filtered, *a, **kw)
         bot_obj.reply_to = _hooked_reply_to
 
@@ -2119,13 +2172,15 @@ def handle_claude_v2_turn_safe(
 
         if bot:
             _ensure_bot_method_hooked(bot)
+        if ai_obj:
+            _ensure_ai_grounding_hooked(ai_obj)
 
         if message is None:
             if bot and override_chat_id:
                 try:
                     bot.send_message(
                         override_chat_id,
-                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Direct Hook Active)</b> is live! Send Message 1 now.",
+                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Clean Silence & Grounding Active)</b> is live! Send Message 1 now.",
                         parse_mode="HTML",
                     )
                 except Exception:
@@ -2199,11 +2254,4 @@ def handle_claude_v2_turn_safe(
         )
     except Exception as e:
         logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
-        return _B2F_ORIG_HANDLER(
-            g_env,
-            l_env,
-            message,
-            override_text=override_text,
-            override_chat_id=override_chat_id,
-            override_uid=override_uid,
-        )
+        return True
