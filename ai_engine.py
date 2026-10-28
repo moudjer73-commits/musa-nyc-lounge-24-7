@@ -2350,7 +2350,7 @@ class NYCLoungeAI:
                     repaired.append({"speaker": spk, "text": txt})
                 q_idxs = [i for i, t in enumerate(repaired) if "?" in t["text"]]
                 for i in q_idxs[:-1]:
-                    repaired[i]["text"] = repaired[i]["text"]
+                    repaired[i]["text"] = repaired[i]["text"].replace("?", ".")
                 return DialogueOnlyResponse.model_validate({"turns": repaired})
 
         return self._call_gemini_json(
