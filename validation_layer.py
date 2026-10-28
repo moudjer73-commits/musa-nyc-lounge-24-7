@@ -1861,14 +1861,144 @@ def handle_claude_v2_turn_safe(g_dict: dict, l_dict: dict, message_obj, override
 
 
 # ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (SELF-CONTAINED ON b2f0cf2)
+# CLAUDE V3.1 — POST-AUDIT CALIBRATED ROUTER & SQLITE EVIDENCE LEDGER
 # ==============================================================================
+import sqlite3
+import uuid
+
 _B2F_ORIG_HANDLER = handle_claude_v2_turn_safe
 _V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
 _V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
 _V3_ACTIVE_LEARNER_TEXT: Dict[int, str] = {}
+_V3_ACTIVE_UID: Dict[int, int] = {}
 _V3_PATCHED_BOT_IDS: set = set()
 _V3_PATCHED_AI_IDS: set = set()
+
+
+def _get_v3_db_path(db_obj: Any = None) -> str:
+    """Resolve the active SQLite database file path used by the bot."""
+    for attr in ("db_path", "path", "database", "db_name", "filename"):
+        val = getattr(db_obj, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    env_p = os.environ.get("CLUB_VAULT_DB") or os.environ.get("DB_PATH")
+    if env_p:
+        return env_p
+    default_p = Path(__file__).resolve().parent / "club_vault.db"
+    return str(default_p)
+
+
+def init_v3_evidence_table(db_path: Optional[str] = None) -> str:
+    """Priority 4: Create persistent SQLite table for Evidence Ledger with scene_id & deduplication constraint."""
+    target_path = db_path or _get_v3_db_path()
+    with sqlite3.connect(target_path, timeout=10) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS v3_evidence_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                scene_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                functional_category TEXT NOT NULL,
+                target_key TEXT NOT NULL,
+                provenance TEXT NOT NULL,
+                attempt_number INTEGER DEFAULT 1,
+                outcome TEXT NOT NULL,
+                evidence_stage TEXT NOT NULL,
+                learner_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, scene_id, event_type, target_key, attempt_number)
+            )
+            """
+        )
+        conn.commit()
+    return target_path
+
+
+def record_v3_evidence_event(
+    user_id: int,
+    scene_id: str,
+    event_type: str,
+    functional_category: str,
+    target_key: str,
+    provenance: str,
+    attempt_number: int,
+    outcome: str,
+    evidence_stage: str,
+    learner_text: str,
+    db_path: Optional[str] = None,
+) -> bool:
+    """
+    Writes an evidence event to SQLite using INSERT OR IGNORE so the same achievement
+    in the same scene_id is NEVER double-counted. Returns True if newly inserted, False if duplicate.
+    """
+    target_path = init_v3_evidence_table(db_path)
+    with sqlite3.connect(target_path, timeout=10) as conn:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO v3_evidence_ledger (
+                user_id, scene_id, event_type, functional_category,
+                target_key, provenance, attempt_number, outcome,
+                evidence_stage, learner_text
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(user_id),
+                str(scene_id),
+                str(event_type),
+                str(functional_category),
+                str(target_key),
+                str(provenance),
+                int(attempt_number),
+                str(outcome),
+                str(evidence_stage),
+                str(learner_text),
+            ),
+        )
+        conn.commit()
+        return cur.rowcount == 1
+
+
+def check_target_provenance_in_sqlite(user_id: int, target_key: str, db_path: Optional[str] = None) -> str:
+    """
+    Priority 3: Check SQLite to see whether `target_key` was previously introduced by the bot
+    (as an `exposure` event or saved expression in `club_vault.db`) vs. produced spontaneously.
+    """
+    target_path = init_v3_evidence_table(db_path)
+    norm_target = target_key.split("[")[0].strip().lower()
+    with sqlite3.connect(target_path, timeout=10) as conn:
+        # 1. Check v3_evidence_ledger for prior exposure
+        row = conn.execute(
+            """
+            SELECT id FROM v3_evidence_ledger
+            WHERE user_id = ? AND event_type = 'exposure' AND lower(target_key) LIKE ?
+            LIMIT 1
+            """,
+            (int(user_id), f"%{norm_target}%"),
+        ).fetchone()
+        if row:
+            return "Prior Coaching Exposure Verified in SQLite (`v3_evidence_ledger`)"
+
+        # 2. Check legacy vault tables if present
+        tables = [
+            r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        ]
+        for tbl in tables:
+            if tbl in ("vault", "saved_expressions", "expressions", "user_vault"):
+                try:
+                    cols = [c[1] for c in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
+                    text_col = next((c for c in cols if c in ("expression", "phrase", "chunk", "text")), None)
+                    if text_col:
+                        found = conn.execute(
+                            f"SELECT 1 FROM {tbl} WHERE lower({text_col}) LIKE ? LIMIT 1",
+                            (f"%{norm_target}%",),
+                        ).fetchone()
+                        if found:
+                            return f"Prior Vault Entry Verified in SQLite (`{tbl}`)"
+                except Exception:
+                    pass
+
+    return "Spontaneous Learner Repertoire (unprompted; no prior bot exposure logged in DB)"
 
 
 def detect_metalinguistic_inquiry(text: str) -> bool:
@@ -1889,19 +2019,38 @@ def detect_metalinguistic_inquiry(text: str) -> bool:
     return any(re.search(p, t) for p in meta_patterns)
 
 
+def sanitize_metalinguistic_explanation(text: str) -> str:
+    """Priority 2: Strip stigmatizing identity judgments or overly absolute claims from LLM output."""
+    t = text or ""
+    t = re.sub(
+        r"\s*and\s+marks\s+you\s+as\s+a\s+non-native\s+speaker\.?",
+        ".",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = re.sub(
+        r"marks\s+you\s+as\s+a\s+non-native\s+speaker",
+        "is less idiomatic in everyday American speech",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = t.replace("غير مستخدمة", "ليست الصياغة الاصطلاحية المعتادة في الإنجليزية الأمريكية لهذا المعنى")
+    return t
+
+
 def build_metalinguistic_response_v3(ai_obj: Any, question_text: str, scene_topic: str, counterpart: str = "Marcus") -> str:
     sys_prompt = (
         "You are the Precision C1/C2 Spoken American English Coach in 'Musa's NYC Lounge'.\n"
         "The learner paused the conversation to ask a direct metalinguistic question.\n"
-        "Follow the 4-Step Nuance Calibration Protocol strictly:\n"
+        "Follow the 4-Step Nuance Calibration Protocol strictly (Priority 2 Audit Rules):\n"
         "1. Distinguish comprehensibility/meaning from natural American collocation or usage preference.\n"
         "2. Validate that the learner's meaning is clear, while explaining why the recommended form is the idiomatic US choice.\n"
-        "3. Contrast the exact nuance between the expressions (e.g., 'put in a lot of effort' emphasizes the energy invested; 'make a big effort' focuses on the attempt; whereas 'do an effort' is a non-idiomatic calque in standard English).\n"
-        "4. NEVER invent corpus percentages or fake statistics.\n\n"
+        "3. Contrast the practical nuance between alternatives (e.g., 'put in a lot of effort' often highlights the sustained energy/time invested, while 'make a big effort' highlights the conscious attempt—noting that both are natural idiomatic choices, whereas 'do an effort' is simply not the standard collocation in American English).\n"
+        "4. STRICT TONE RULE: NEVER say an expression 'marks you as a non-native speaker' and NEVER say in Arabic that it is 'غير مستخدمة' (impossible/unused); instead say in Arabic: 'ليست الصياغة الاصطلاحية المعتادة في الإنجليزية الأمريكية لهذا المعنى'. NEVER invent statistics.\n\n"
         "Return ONLY valid JSON with two keys:\n"
         "{\n"
-        '  "coach_explanation": "Concise 3-4 sentence explanation in clear English + a 1-line Arabic summary.",\n'
-        f'  "scene_resume_line": "A natural 1-2 sentence in-character line from {counterpart} addressing the learner directly as \'you\' (NEVER say \'I put in effort\' as if {counterpart} wrote the learner\'s report) and resuming the previous topic ({scene_topic})."\n'
+        '  "coach_explanation": "Concise 3-4 sentence calibrated explanation in English + 1 accurate Arabic sentence.",\n'
+        f'  "scene_resume_line": "A natural 1-2 sentence in-character line from {counterpart} addressing the learner directly as \'you\' and resuming the previous topic ({scene_topic})."\n'
         "}"
     )
     u_prompt = (
@@ -1920,20 +2069,21 @@ def build_metalinguistic_response_v3(ai_obj: Any, question_text: str, scene_topi
                 max_tries=2,
                 validator_fn=lambda d: d if isinstance(d, dict) and d.get("coach_explanation") and d.get("scene_resume_line") else (_ for _ in ()).throw(ValueError("Missing keys")),
             )
-            coach_exp = _e(str(res["coach_explanation"]).strip())
+            raw_exp = sanitize_metalinguistic_explanation(str(res["coach_explanation"]).strip())
+            coach_exp = _e(raw_exp)
             resume_ln = _e(str(res["scene_resume_line"]).strip().strip('"“”'))
         except Exception:
             pass
 
     if not coach_exp or not resume_ln:
         coach_exp = (
-            "Your meaning in “do a big effort” is completely clear, so it doesn't break communication. "
-            "However, in standard American English, it's a collocation issue (calque) rather than a logic rule: "
-            "“effort” naturally pairs with “put in” (emphasizing the time and energy invested: “put in a lot of effort”) "
-            "or “make” (focusing on the attempt itself: “make a big effort”), rather than “do”.\n"
-            "↳ بالعربية: المعنى مفهوم تماماً، لكن الفرق يتعلق بالتلازم اللفظي؛ فكلمة effort تقترن في الإنجليزية الأمريكية بالفعل put in (لإبراز الجهد المبذول) أو make، وليس do."
+            "Your meaning in “do a big effort” is completely clear, so communication doesn't break down. "
+            "The distinction here is about idiomatic collocation rather than grammar logic: in American English, "
+            "“effort” naturally pairs with “put in” (“put in a lot of effort,” often highlighting the time and energy invested) "
+            "or “make” (“make a big effort,” focusing on the conscious attempt), whereas “do an effort” isn't the conventional pairing.\n"
+            "↳ بالعربية: المعنى واضح ومفهوم تماماً، لكن صياغة 'do an effort' ليست الصياغة الاصطلاحية المعتادة في الإنجليزية الأمريكية لهذا المعنى؛ والأكثر طبيعية هو استخدام 'put in effort' أو 'make an effort'."
         )
-        resume_ln = "Anyway, back to that report—what's the main bottleneck keeping you behind right now?"
+        resume_ln = "I hear you, man. You clearly put in a lot of effort on that report—what's the main piece still holding you up?"
 
     return (
         "🧭 <b>Linguistic Consultation (Scene Paused)</b>\n"
@@ -1943,34 +2093,56 @@ def build_metalinguistic_response_v3(ai_obj: Any, question_text: str, scene_topi
     )
 
 
-def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
+def detect_active_uptake_event(text: str, user_id: int = 0, scene_id: str = "default_scene", db_path: Optional[str] = None) -> Optional[Dict[str, str]]:
     t = (text or "").strip()
     tl = t.lower()
+    matched_data = None
     if re.search(r"\bnot\s+(quite\s+|entirely\s+|fully\s+)?sold\s+on\b", tl):
-        return {
+        matched_data = {
+            "event_type": "lexical_production",
             "function": "Diplomatic Disagreement / Calibrated Reservation",
             "functional_result": "Successful (expressed reservation while justifying the constraint)",
             "target_move": "I'm not quite sold on [something]",
-            "verbatim_match": "Yes (adapted naturally to context)",
-            "stage": "Production (1st independent contextual use; Stabilization requires delayed transfer across sessions)",
+            "verbatim_match": "Yes (target collocation produced naturally in context)",
+            "stage": "Contextual Production (1st observed contextual use; Stabilization requires delayed transfer across sessions)",
         }
-    if re.search(r"\bi\s+see\s+where\s+you're\s+coming\s+from\b.*\bbut\b", tl) or re.search(r"\bnot\s+sure\s+that\s+holds\s+up\b", tl):
-        return {
+    elif re.search(r"\bi\s+see\s+where\s+you're\s+coming\s+from\b.*\bbut\b", tl) or re.search(r"\bnot\s+sure\s+that\s+holds\s+up\b", tl):
+        matched_data = {
+            "event_type": "functional_production",
             "function": "Diplomatic Disagreement / Calibrated Reservation",
             "functional_result": "Successful (achieved diplomatic pushback naturally)",
             "target_move": "I'm not quite sold on [something]",
-            "verbatim_match": "No — Functional Success achieved via natural alternative phrasing",
-            "stage": "Production (Functional Success recorded; target collocation remains eligible for future retrieval)",
+            "verbatim_match": "No — Functional Strategy Success achieved via alternative phrasing",
+            "stage": "Functional Production (target collocation itself remains unproduced)",
         }
-    if re.search(r"\block\s+in\s+(a|the)\b", tl):
-        return {
+    elif re.search(r"\block\s+in\s+(a|the)\b", tl):
+        matched_data = {
+            "event_type": "lexical_production",
             "function": "Commitment & Follow-Through",
             "functional_result": "Successful (turned a plan into a concrete commitment)",
             "target_move": "lock in [a time / deadline]",
-            "verbatim_match": "Yes (used naturally in context)",
-            "stage": "Production (Contextual retrieval recorded; Stabilization requires delayed transfer)",
+            "verbatim_match": "Yes (target phrasal verb produced naturally in context)",
+            "stage": "Contextual Production (Stabilization requires delayed transfer)",
         }
-    return None
+
+    if matched_data is not None:
+        prov = check_target_provenance_in_sqlite(user_id, matched_data["target_move"], db_path=db_path)
+        matched_data["provenance"] = prov
+        newly_logged = record_v3_evidence_event(
+            user_id=user_id,
+            scene_id=scene_id,
+            event_type=matched_data["event_type"],
+            functional_category=matched_data["function"],
+            target_key=matched_data["target_move"],
+            provenance=prov,
+            attempt_number=1,
+            outcome="success",
+            evidence_stage=matched_data["stage"],
+            learner_text=t,
+            db_path=db_path,
+        )
+        matched_data["db_persisted"] = "Logged to SQLite (`v3_evidence_ledger`)" if newly_logged else "Deduplicated in SQLite (already logged for this scene)"
+    return matched_data
 
 
 def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional[str]:
@@ -1996,14 +2168,29 @@ def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional
     return None
 
 
-def format_v3_negotiation_cavein(user_id: int, learner_text: str) -> str:
+def format_v3_negotiation_cavein(user_id: int, learner_text: str, db_path: Optional[str] = None) -> str:
+    existing_scene = _V3_SCENE_MEMORY.get(user_id, {}).get("scene_id") or f"scene_{uuid.uuid4().hex[:8]}"
     _V3_NEGOTIATION_STATE[user_id] = {
         "active": True,
+        "scene_id": existing_scene,
         "counterpart": "Marcus",
         "constraint": "Shorten the report while preserving the essential background points",
         "attempt_1": learner_text,
         "beat": 1,
     }
+    record_v3_evidence_event(
+        user_id=user_id,
+        scene_id=existing_scene,
+        event_type="pragmatic_negotiation",
+        functional_category="Scope & Priority Negotiation",
+        target_key="preserve_core_constraint_under_time_pressure",
+        provenance="Task Constraint Scenario",
+        attempt_number=1,
+        outcome="premature_cave_in",
+        evidence_stage="Attempt 1: Constraint Surrendered (Retry Triggered)",
+        learner_text=learner_text,
+        db_path=db_path,
+    )
     return (
         "🎭 <b>Read the Room — Beat 1 Evaluation</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -2018,8 +2205,23 @@ def format_v3_negotiation_cavein(user_id: int, learner_text: str) -> str:
     )
 
 
-def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
-    _V3_NEGOTIATION_STATE.pop(user_id, None)
+def format_v3_negotiation_debrief(user_id: int, learner_text: str, db_path: Optional[str] = None) -> str:
+    st = _V3_NEGOTIATION_STATE.pop(user_id, {}) or {}
+    scene_id = st.get("scene_id") or _V3_SCENE_MEMORY.get(user_id, {}).get("scene_id") or f"scene_{uuid.uuid4().hex[:8]}"
+    newly_logged = record_v3_evidence_event(
+        user_id=user_id,
+        scene_id=scene_id,
+        event_type="pragmatic_negotiation",
+        functional_category="Scope & Priority Negotiation",
+        target_key="preserve_core_constraint_under_time_pressure",
+        provenance="Task Constraint Scenario (Linked to Beat 1)",
+        attempt_number=2,
+        outcome="compromise_achieved",
+        evidence_stage="Pragmatic Strategy Production (Functional Success — single-scenario)",
+        learner_text=learner_text,
+        db_path=db_path,
+    )
+    db_status_str = f"SQLite Persisted (scene_id=<code>{scene_id}</code>, attempt=2)" if newly_logged else f"SQLite Deduplicated (scene_id=<code>{scene_id}</code>)"
     return (
         "🧔‍♂️ <b>Marcus:</b> “That works. Keep the key background points in one tight paragraph, "
         "cut the secondary details, and send me the shorter draft by four.”\n\n"
@@ -2032,16 +2234,20 @@ def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
         "  └ Acknowledgment of constraint: ✅ Clear\n"
         "  └ Position preservation: ✅ Maintained essential points\n"
         "  └ Specificity & Adaptation: ✅ Actionable trade-off (short paragraph vs. minor details)\n"
-        "• <b>📋 Evidence Ledger:</b> Recorded <code>Production (Functional Success)</code> in "
-        "<i>Scope & Priority Negotiation</i> for this task (single-scenario evidence; not generalized to permanent mastery)."
+        "• <b>📋 Evidence Ledger:</b> Recorded <code>Pragmatic Strategy Production (Functional Success)</code> in "
+        "<i>Scope & Priority Negotiation</i> — distinct from verbatim phrase production; single-scenario evidence, not generalized to permanent mastery "
+        f"[{db_status_str}]."
     )
 
 
 def _clean_dialogue_openers_in_html(raw_html: str) -> str:
     """
+    Priority 1 (Natural Dialogue Quality):
     1. Strips mechanical openers ('Look,', 'The thing is,').
     2. Restores '?' on syntactic questions that ended with '.'.
-    3. Caps speaker dialogue blocks at 3 (prevents duplicate 6-turn output).
+    3. Caps speaker dialogue blocks at 3 turns max.
+    4. Eliminates the '3-Way Interview Effect': if multiple speakers ask questions in the same reply,
+       keeps declarative commentary in earlier turns so at most ONE speaker asks a question!
     """
     for opener in ("Look, ", "The thing is, ", "Honestly, "):
         raw_html = re.sub(
@@ -2055,7 +2261,7 @@ def _clean_dialogue_openers_in_html(raw_html: str) -> str:
 
     raw_html = re.sub(r"(<b>(?:Marcus|Chloe|Jake):?</b>\s*)([a-z])", _cap_after_tag, raw_html)
 
-    # Restore '?' when a sentence starts with an auxiliary/question word or ends with a tag question like ", aren't you."
+    # Restore '?' when a sentence starts with an auxiliary/question word or ends with a tag question
     q_starters = r"(?:Are|Is|Was|Were|Do|Does|Did|Can|Could|Will|Would|Should|Have|Has|Why|How|What|Where|When|Who)"
     raw_html = re.sub(
         rf"((?:^|(?<=[.!?]\s)){q_starters}\b[^.!?\n]{{8,160}})\.",
@@ -2069,44 +2275,86 @@ def _clean_dialogue_openers_in_html(raw_html: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Cap dialogue blocks at max 3 turns so a double-generated 6-turn block never reaches Telegram
     paragraphs = [p.strip() for p in raw_html.split("\n\n") if p.strip()]
     kept_paragraphs = []
-    speaker_count = 0
+    speaker_indices = []
     for p in paragraphs:
         if any(spk in p for spk in ("🧔‍♂️", "👩🏼‍💼", "🧢")) and "<b>" in p:
-            speaker_count += 1
-            if speaker_count > 3:
+            if len(speaker_indices) >= 3:
                 continue
+            speaker_indices.append(len(kept_paragraphs))
         kept_paragraphs.append(p)
 
+    # Enforce MAX 1 QUESTION across all speaker turns (anti-interrogation filter)
+    q_spk_positions = [idx for idx in speaker_indices if "?" in kept_paragraphs[idx]]
+    if len(q_spk_positions) > 1:
+        # Keep the question ONLY in the last questioning speaker turn; strip or convert earlier questions into natural declarative observations
+        for idx in q_spk_positions[:-1]:
+            p_txt = kept_paragraphs[idx]
+            m_tag = re.match(r"^((?:🧔‍♂️|👩🏼‍💼|🧢)\s*<b>[^<]+</b>\s*)(.*)$", p_txt, flags=re.DOTALL)
+            if m_tag:
+                header_part, body_part = m_tag.group(1), m_tag.group(2).strip()
+                sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body_part) if s.strip()]
+                decl_sents = [s for s in sents if not s.endswith("?")]
+                if decl_sents:
+                    kept_paragraphs[idx] = header_part + " ".join(decl_sents)
+                else:
+                    # If the entire turn was a single question, drop the redundant interrogation turn so the remaining turns flow naturally
+                    kept_paragraphs[idx] = ""
+
+    kept_paragraphs = [p for p in kept_paragraphs if p.strip()]
     return "\n\n".join(kept_paragraphs)
 
 
-def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
+def _apply_v3_cognitive_cap_to_html(
+    raw_html: str,
+    learner_text: str,
+    user_id: int = 0,
+    scene_id: str = "default_scene",
+    db_path: Optional[str] = None,
+) -> str:
     if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html or "🟢" in raw_html or "📊" in raw_html:
         return raw_html
 
     raw_html = _clean_dialogue_openers_in_html(raw_html)
 
-    # If this message does not contain 💎 Spoken American Moves, return it cleaned
+    # Calibrate narrow mirror explanation if present
+    raw_html = raw_html.replace(
+        "Americans say 'put in effort' rather than 'do an effort'.",
+        "In American English, 'effort' pairs with 'put in' (put in a lot of effort) or 'make' (make a big effort) rather than 'do'.",
+    )
+
     if "💎" not in raw_html:
+        # Check if Active Uptake happened when no 💎 block was attached
+        if any(spk in raw_html for spk in ("🧔‍♂️", "👩🏼‍💼", "🧢")) and not any(m in raw_html for m in ("🪞", "🇺🇸", "🎙️", "🎯")):
+            uptake_event = detect_active_uptake_event(learner_text, user_id=user_id, scene_id=scene_id, db_path=db_path)
+            if uptake_event is not None:
+                ledger_block = (
+                    "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
+                    f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
+                    f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
+                    f"• <b>Provenance:</b> {_e(uptake_event['provenance'])}\n"
+                    f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>\n"
+                    f"• <b>DB Audit:</b> {_e(uptake_event['db_persisted'])}"
+                )
+                return f"{raw_html}\n\n{ledger_block}"
         return raw_html
 
     idx_diamond = raw_html.find("💎")
     cut_pos = raw_html.rfind("\n", 0, idx_diamond)
     before_diamond = (raw_html[:cut_pos] if cut_pos != -1 else raw_html[:idx_diamond]).strip()
 
-    # Check Active Uptake first (Message 4) so clean target production is rewarded with the Evidence Ledger
-    uptake_event = detect_active_uptake_event(learner_text)
+    # Check Active Uptake (Message 4)
+    uptake_event = detect_active_uptake_event(learner_text, user_id=user_id, scene_id=scene_id, db_path=db_path)
     if uptake_event is not None:
         ledger_block = (
             "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
             f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
             f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
-            f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>"
+            f"• <b>Provenance:</b> {_e(uptake_event['provenance'])}\n"
+            f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>\n"
+            f"• <b>DB Audit:</b> {_e(uptake_event['db_persisted'])}"
         )
-        # Strip any accidental minor mirror nitpick on an Active Uptake turn
         only_dialogue_lines = [
             ln for ln in before_diamond.splitlines()
             if not any(m in ln for m in ("🪞", "🇺🇸", "🎙️", "↳"))
@@ -2114,25 +2362,40 @@ def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
         clean_before = "\n".join(only_dialogue_lines).strip()
         return f"{clean_before}\n\n{ledger_block}".strip()
 
-    # Priority 1: Surgical Mirror Fix exists (Message 2) -> keep Mirror ONLY, strip 💎 Spoken American Moves
+    # Priority 1: Surgical Mirror Fix exists (Message 2) -> keep Mirror ONLY, strip 💎 Spoken Moves
     has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
     if has_mirror_fix:
         return before_diamond
 
-    # Priority 3: Textbook-stiff phrasing -> keep Spoken Move
+    # Priority 3: Textbook-stiff phrasing -> log Exposure to SQLite and keep Spoken Move
     stiff_markers = (
         "cannot accept", "additional task", "completely full", "do not think",
         "do not have enough", "in order to", "it is necessary",
     )
     if any(sm in (learner_text or "").lower() for sm in stiff_markers):
+        m_chunk = re.search(r"🧩\s*<b>([^<]+)</b>", raw_html)
+        if m_chunk:
+            record_v3_evidence_event(
+                user_id=user_id,
+                scene_id=scene_id,
+                event_type="exposure",
+                functional_category="Spoken Register Upgrade",
+                target_key=m_chunk.group(1).strip(),
+                provenance="Bot Coaching Exposure",
+                attempt_number=1,
+                outcome="exposed",
+                evidence_stage="Exposure (hearing/reading does not count as production)",
+                learner_text=learner_text,
+                db_path=db_path,
+            )
         return raw_html
 
-    # Priority 4: Clean natural English (Message 1) -> return before_diamond (which is "" if coaching was a separate 2nd message)
+    # Priority 4: Clean natural English -> Complete Coaching Silence
     return before_diamond
 
 
 def _ensure_ai_grounding_hooked(ai_obj: Any):
-    """Hooks _call_gemini_json on the AI instance so Call A never invents fake workplace obligations."""
+    """Priority 1 Audit Hook: Natural spoken American register, zero theatrical metaphors, max 1 question total."""
     if not ai_obj or id(ai_obj) in _V3_PATCHED_AI_IDS or not hasattr(ai_obj, "_call_gemini_json"):
         return
     orig_call = ai_obj._call_gemini_json
@@ -2140,11 +2403,14 @@ def _ensure_ai_grounding_hooked(ai_obj: Any):
     def _hooked_call_gemini_json(system_prompt: str, user_prompt: str, *a, **kw):
         if "Marcus" in str(system_prompt) and "Chloe" in str(system_prompt):
             system_prompt = str(system_prompt) + (
-                "\n\nCRITICAL CONTEXT GROUNDING RULES (MANDATORY):\n"
-                "1. Respond ONLY to facts the learner explicitly stated in their message.\n"
-                "2. NEVER invent workplace obligations, 'billables', 'client syncs', 'sending files', 'decks', 'audits', or 'project backlogs' unless the learner explicitly mentioned a work project or report.\n"
-                "3. When the learner talks about taking Friday off to hang out at home and have a quiet day, respond as supportive NYC friends talking naturally about recharging, unplugging, and enjoying a quiet day at home—do NOT act like their boss or coworker!\n"
-                "4. Never start a turn with 'Look,' or 'The thing is,'. Always end questions with '?'.\n"
+                "\n\nPRIORITY 1 NATURAL SPOKEN AMERICAN DIALOGUE RULES (MANDATORY):\n"
+                "1. NO 3-WAY INTERROGATION: Across the entire response, include AT MOST ONE question total! "
+                "The first speaker(s) MUST react with declarative observations, agreement, or brief personal perspective (ending with a period '.', NEVER a question). "
+                "Only the final speaker may ask a single natural follow-up question if appropriate.\n"
+                "2. EVERYDAY SPOKEN REGISTER (NO THEATRICAL OR PSEUDO-CORPORATE CLICHÉS): Speak like real people in NYC, NOT a scripted play or motivational poster. "
+                "NEVER use stiff/artificial phrases like 'the output trails the deadline', 'measuring your worth by the finish line rather than the quality of the sprint', or 'hard stop on the extra hours'. Use plain, natural spoken English ('still behind on the draft', 'burning yourself out', 'call it a day').\n"
+                "3. NO UNSOLICITED PSYCHOANALYSIS FROM CHLOE: Chloe must NEVER accuse the learner of hidden fear, anxiety, or avoidance (NEVER say 'Are you afraid...', 'Are you just nervous...', or 'Are you avoiding...'). She should comment on the practical situation or workflow.\n"
+                "4. STRICT FACTUAL GROUNDING: Respond ONLY to what the learner actually said. Do not invent fake workplace tasks, client syncs, or billables.\n"
             )
         return orig_call(system_prompt, user_prompt, *a, **kw)
 
@@ -2152,21 +2418,22 @@ def _ensure_ai_grounding_hooked(ai_obj: Any):
     _V3_PATCHED_AI_IDS.add(id(ai_obj))
 
 
-def _ensure_bot_method_hooked(bot_obj: Any):
-    """Hooks `bot.send_message` and `bot.reply_to` and skips empty filtered messages so Telegram never throws 400."""
+def _ensure_bot_method_hooked(bot_obj: Any, db_path: Optional[str] = None):
     if not bot_obj or id(bot_obj) in _V3_PATCHED_BOT_IDS:
         return
     orig_send = bot_obj.send_message
     orig_reply = getattr(bot_obj, "reply_to", None)
 
     def _hooked_send_message(chat_id: Any, text: str, *a, **kw):
-        # Suppress any internal 400 error message from reaching the user
         if "message text is empty" in str(text):
             return None
-        l_txt = _V3_ACTIVE_LEARNER_TEXT.get(int(chat_id) if str(chat_id).lstrip("-").isdigit() else 0, "")
-        filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt)
+        cid_int = int(chat_id) if str(chat_id).lstrip("-").isdigit() else 0
+        l_txt = _V3_ACTIVE_LEARNER_TEXT.get(cid_int, "")
+        uid_val = _V3_ACTIVE_UID.get(cid_int, cid_int)
+        sc_id = _V3_SCENE_MEMORY.get(uid_val, {}).get("scene_id", "default_scene")
+        filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt, user_id=uid_val, scene_id=sc_id, db_path=db_path)
         if not filtered or not filtered.strip():
-            return None  # True Call B Silence: do NOT call Telegram API with an empty string!
+            return None
         return orig_send(chat_id, filtered, *a, **kw)
 
     bot_obj.send_message = _hooked_send_message
@@ -2175,8 +2442,11 @@ def _ensure_bot_method_hooked(bot_obj: Any):
             if "message text is empty" in str(text):
                 return None
             cid = getattr(getattr(msg_obj, "chat", None), "id", 0)
-            l_txt = _V3_ACTIVE_LEARNER_TEXT.get(int(cid) if str(cid).lstrip("-").isdigit() else 0, "")
-            filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt)
+            cid_int = int(cid) if str(cid).lstrip("-").isdigit() else 0
+            l_txt = _V3_ACTIVE_LEARNER_TEXT.get(cid_int, "")
+            uid_val = _V3_ACTIVE_UID.get(cid_int, cid_int)
+            sc_id = _V3_SCENE_MEMORY.get(uid_val, {}).get("scene_id", "default_scene")
+            filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt, user_id=uid_val, scene_id=sc_id, db_path=db_path)
             if not filtered or not filtered.strip():
                 return None
             return orig_reply(msg_obj, filtered, *a, **kw)
@@ -2200,9 +2470,12 @@ def handle_claude_v2_turn_safe(
         l_dict = l_env if isinstance(l_env, dict) else {}
         bot = l_dict.get("bot") or g_dict.get("bot")
         ai_obj = l_dict.get("ai") or g_dict.get("ai") or l_dict.get("ai_engine") or g_dict.get("ai_engine")
+        db_obj = l_dict.get("db") or g_dict.get("db")
+        db_path = _get_v3_db_path(db_obj)
+        init_v3_evidence_table(db_path)
 
         if bot:
-            _ensure_bot_method_hooked(bot)
+            _ensure_bot_method_hooked(bot, db_path=db_path)
         if ai_obj:
             _ensure_ai_grounding_hooked(ai_obj)
 
@@ -2211,7 +2484,7 @@ def handle_claude_v2_turn_safe(
                 try:
                     bot.send_message(
                         override_chat_id,
-                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Clean Silence & Grounding Active)</b> is live! Send Message 1 now.",
+                        "🟢 <b>Musa’s NYC Lounge (Claude V3.1 — Audit-Calibrated + SQLite Ledger)</b> is live!",
                         parse_mode="HTML",
                     )
                 except Exception:
@@ -2229,6 +2502,7 @@ def handle_claude_v2_turn_safe(
 
         if chat_id:
             _V3_ACTIVE_LEARNER_TEXT[int(chat_id)] = clean_t
+            _V3_ACTIVE_UID[int(chat_id)] = int(uid)
 
         if clean_t.startswith("/"):
             return False
@@ -2238,6 +2512,10 @@ def handle_claude_v2_turn_safe(
         )
         if clean_t.startswith(menu_prefixes):
             return False
+
+        # Ensure an active scene_id exists for this user session
+        if uid not in _V3_SCENE_MEMORY or not _V3_SCENE_MEMORY[uid].get("scene_id"):
+            _V3_SCENE_MEMORY[uid] = {"scene_id": f"scene_{uuid.uuid4().hex[:8]}", "last_topic": clean_t}
 
         # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
         if bot and chat_id and detect_metalinguistic_inquiry(clean_t):
@@ -2262,7 +2540,7 @@ def handle_claude_v2_turn_safe(
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
-            out_html = format_v3_negotiation_cavein(uid, clean_t)
+            out_html = format_v3_negotiation_cavein(uid, clean_t, db_path=db_path)
             bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
         if bot and chat_id and neg_move == "beat2_solution":
@@ -2270,11 +2548,11 @@ def handle_claude_v2_turn_safe(
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
-            out_html = format_v3_negotiation_debrief(uid, clean_t)
+            out_html = format_v3_negotiation_debrief(uid, clean_t, db_path=db_path)
             bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
 
-        _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
+        _V3_SCENE_MEMORY[uid]["last_topic"] = clean_t
         return _B2F_ORIG_HANDLER(
             g_env,
             l_env,
@@ -2284,5 +2562,5 @@ def handle_claude_v2_turn_safe(
             override_uid=override_uid,
         )
     except Exception as e:
-        logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
+        logger.error(f"Claude V3.1 wrapper error: {e}", exc_info=True)
         return True
