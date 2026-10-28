@@ -3,7 +3,13 @@ import logging
 import re
 from typing import Any, Callable, Optional
 import requests
-from config import GEMINI_API_KEY, GEMINI_KEYS_LIST, GEMINI_MODEL, GEMINI_MODELS_CHAIN
+from config import (
+    GEMINI_API_KEY,
+    GEMINI_FLASH_TIER_CHAIN,
+    GEMINI_KEYS_LIST,
+    GEMINI_MODEL,
+    GEMINI_PRO_TIER_CHAIN,
+)
 from policy_engine import (
     DialogueController,
     validate_analyst_output_against_turn,
@@ -54,9 +60,9 @@ TARGET ELICITATION
 If a target opportunity is supplied, use it only when it fits the ongoing conversation naturally. Do not reveal the target phrase. Do not introduce unrelated events or manufacture an implausible social problem to elicit it. If it does not fit, continue naturally.
 
 OUTPUT
-Return only valid JSON matching ResponderOutput:
+Return ONLY valid JSON matching this exact structure:
 {
-  "reply_text": "string",
+  "reply_text": "Your natural in-character spoken reply (1-2 sentences)",
   "second_bubble_text": null,
   "recast_used": false,
   "elicitation_used": false
@@ -68,33 +74,70 @@ ANALYST_SYSTEM_PROMPT = """You are a linguistic diagnostic component for an adva
 Do not generate the conversational reply.
 Do not decide whether the bot should interrupt.
 Do not write to persistent storage.
-Do not infer acquisition from exposure, repetition after a model, or the presence of a phrase in the conversation.
 
-ANALYSIS DIMENSIONS
-Distinguish:
-- grammar: structural or construction errors (e.g., "discuss about", "many works", "must to")
-- collocation: unidiomatic verb-noun or preposition pairings (e.g., "do an effort", "take a decision", "open the light")
-- idiomaticity: grammatical but unconventional phrasing where a standard spoken form is strongly preferred
-- register: mismatch in formality/informality for the scene
-- pragmatics: socially risky bluntness, missing softener, or premature cave-in
-- optional_upgrade: learner phrasing is already natural and acceptable; alternative is optional enrichment
-- acceptable_variation: valid expression; no change needed
-- insufficient_context: not enough context to judge reliably
+ANALYSIS DIMENSIONS (`kind` enum values):
+- "grammar": structural or construction errors (e.g., "discuss about", "many works", "must to")
+- "collocation": unidiomatic verb-noun or preposition pairings (e.g., "do an effort", "take a decision", "open the light")
+- "idiomaticity": grammatical but unconventional phrasing where a standard spoken form is strongly preferred
+- "register": mismatch in formality/informality for the scene
+- "pragmatics": socially risky bluntness, missing softener, or premature cave-in
+- "optional_upgrade": learner phrasing is already natural and acceptable; alternative is optional enrichment
 
-VALIDATION RULES FOR EACH DIAGNOSTIC:
-1. Quote the smallest exact substring from the learner's message in `original_span`.
-2. Establish `intended_meaning`.
-3. Provide a natural spoken `alternative` that preserves `intended_meaning` (`preserves_intended_meaning = true`) and fits the context (`context_fit_verified = true`).
-4. Set `alternative_status` to "required" (only for genuine grammar/collocation errors), "recommended" (for register/pragmatics/idiomaticity), or "optional" (for optional_upgrade/acceptable_variation).
-5. In `explanation_en`, explain why the alternative works and its pragmatic effect concisely.
-6. In `explanation_ar` (max 160 chars, Modern Standard Arabic), explain the semantic or pragmatic nuance neutrally without false absolutes.
-7. Set `l1_transfer_likely = true` ONLY when supported by specific `l1_transfer_evidence`.
-8. Ensure `confidence_band` and `confidence_score` match strictly:
-   - "low": score < 0.65
-   - "medium": 0.65 <= score < 0.80
-   - "high": score >= 0.80
+STRICT FIELD RULES FOR EACH DIAGNOSTIC:
+- `original_span`: exact substring copied verbatim from `learner_message`.
+- `normalized_pattern_id`: canonical key like "grammar:discuss_about" or "collocation:do_effort".
+- `intended_meaning`: non-empty string explaining what the learner meant.
+- `alternative`: natural American spoken replacement (non-empty string).
+- `alternative_status`: "required" (for grammar/collocation), "recommended" (for pragmatics/register/idiomaticity), or "optional" (for optional_upgrade).
+- `preserves_intended_meaning`: true
+- `context_fit_verified`: true
+- `l1_transfer_likely`: boolean. If true, `l1_transfer_evidence` MUST be a non-empty string explaining the Arabic source pattern.
+- `confidence_band` & `confidence_score` MUST agree:
+  * "high" requires `confidence_score` >= 0.80 (e.g. 0.90)
+  * "medium" requires 0.65 <= `confidence_score` < 0.80 (e.g. 0.72)
+  * "low" requires `confidence_score` < 0.65 (e.g. 0.50)
 
-Return ONLY valid JSON matching the Analysis schema."""
+If the learner's message is already natural and idiomatic, return `"diagnostics": []`.
+
+Return ONLY valid JSON matching this EXACT schema:
+{
+  "communicative_intention": "share_comment",
+  "learner_invites_question": false,
+  "communicative_goal_achieved": true,
+  "requires_clarification": false,
+  "in_emotional_or_story_flow": false,
+  "diagnostics": [
+    {
+      "diagnostic_id": "d1",
+      "original_span": "exact substring from learner_message",
+      "normalized_pattern_id": "category:short_key",
+      "relevant_context_family": "global",
+      "intended_meaning": "what the learner intended to say",
+      "kind": "collocation",
+      "severity": "medium",
+      "alternative": "natural spoken American phrase",
+      "secondary_alternatives": [
+        {
+          "phrase": "alternative in another register",
+          "register_profile": "diplomatic",
+          "directness": "balanced",
+          "pragmatic_effect": "Polite and collaborative with a colleague"
+        }
+      ],
+      "alternative_status": "required",
+      "recast_candidate": "natural spoken American phrase",
+      "explanation_en": "Concise explanation of why the replacement works.",
+      "explanation_ar": "شرح عربي موجز ومحايد للفرق الدلالي أو السياقي.",
+      "l1_transfer_likely": true,
+      "l1_transfer_evidence": "Brief note on the Arabic transfer pattern",
+      "preserves_intended_meaning": true,
+      "context_fit_verified": true,
+      "confidence_band": "high",
+      "confidence_score": 0.92
+    }
+  ],
+  "target_assessments": []
+}"""
 
 
 def _deterministic_responder_repair(
@@ -110,7 +153,6 @@ def _deterministic_responder_repair(
         if non_q:
             sents = non_q
         elif sents:
-            # Convert the interrogative punctuation into a declarative clause if no other sentence exists
             sents = [sents[0].rstrip("?") + "."]
     elif len([s for s in sents if s.endswith("?")]) > 1:
         kept = []
@@ -149,6 +191,56 @@ class DualLLMEngine:
         self.keys = list(keys) if keys is not None else (list(GEMINI_KEYS_LIST) if GEMINI_KEYS_LIST else ([GEMINI_API_KEY] if GEMINI_API_KEY else []))
         self.key_idx = 0
         self.primary_model = primary_model
+        self.model_tier: str = "flash"  # "flash" (3.8/3.0/2.5 Flash) or "pro" (3.1/2.5 Pro)
+        self.http = requests.Session()
+        self.available_models_cache: set[str] = set()
+        self.dead_models_cache: set[str] = set()
+        self._discover_available_models()
+
+    def _discover_available_models(self) -> None:
+        """
+        Queries the Gemini API `models` endpoint once at startup to discover which exact
+        models (Gemini 3.8, 3.1 Pro, 3.0 Flash, 2.5 Pro, 2.5 Flash) are enabled on the user's API key.
+        """
+        if not self.keys or "DummyKey" in self.keys[0]:
+            return
+        for k in self.keys[:2]:
+            try:
+                r = self.http.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={k}",
+                    timeout=8,
+                )
+                if r.status_code == 200:
+                    items = r.json().get("models", [])
+                    for it in items:
+                        name = str(it.get("name", "")).replace("models/", "")
+                        methods = it.get("supportedGenerationMethods", [])
+                        if "generateContent" in methods and name:
+                            self.available_models_cache.add(name)
+                    if self.available_models_cache:
+                        logger.info(
+                            f"Discovered {len(self.available_models_cache)} supported Gemini models on key."
+                        )
+                        return
+            except Exception as e:
+                logger.warning(f"Model discovery notice: {e}")
+
+    def get_active_model_chain(self, prefer_pro: bool = False) -> list[str]:
+        base_chain = GEMINI_PRO_TIER_CHAIN if (prefer_pro or self.model_tier == "pro") else GEMINI_FLASH_TIER_CHAIN
+        filtered = [
+            m
+            for m in base_chain
+            if m not in self.dead_models_cache
+            and (not self.available_models_cache or m in self.available_models_cache)
+        ]
+        if not filtered:
+            filtered = [m for m in base_chain if m not in self.dead_models_cache] or ["gemini-2.5-flash"]
+        return filtered
+
+    def set_model_tier(self, tier: str) -> list[str]:
+        if tier in ("flash", "pro"):
+            self.model_tier = tier
+        return self.get_active_model_chain(prefer_pro=(self.model_tier == "pro"))
 
     def _call_gemini_json(
         self,
@@ -158,37 +250,57 @@ class DualLLMEngine:
         validator_fn: Callable[[dict[str, Any]], Any],
         temperature: float,
         max_tries: int = 2,
+        prefer_pro: bool = False,
     ) -> Any:
         if not self.keys:
             raise RuntimeError("No Gemini API keys configured in GEMINI_KEYS or GEMINI_API_KEY.")
 
-        models = [self.primary_model] + [m for m in GEMINI_MODELS_CHAIN if m != self.primary_model]
+        models = self.get_active_model_chain(prefer_pro=prefer_pro)
         last_err = None
 
         for m_name in models:
+            model_not_found = False
             for k_offset in range(len(self.keys)):
                 api_key = self.keys[(self.key_idx + k_offset) % len(self.keys)]
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={api_key}"
+
                 for attempt in range(max_tries):
                     prompt_body = user_prompt
                     if last_err and attempt > 0:
                         prompt_body += (
-                            f"\n\n[VALIDATION REPAIR NOTICE: Your previous output failed validation ({last_err}). "
-                            "Fix the violation and return strictly valid JSON.]"
+                            f"\n\n[VALIDATION REPAIR NOTICE: Your previous JSON failed validation ({last_err}). "
+                            "Fix the exact field violation and return valid JSON.]"
                         )
+                    gen_cfg: dict[str, Any] = {
+                        "temperature": temperature,
+                        "responseMimeType": "application/json",
+                    }
+                    # Disable slow thinking delay on Flash models for sub-second conversational response
+                    if "flash" in m_name and "pro" not in m_name:
+                        gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
+
                     payload = {
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
                         "contents": [{"role": "user", "parts": [{"text": prompt_body}]}],
-                        "generationConfig": {
-                            "temperature": temperature,
-                            "responseMimeType": "application/json",
-                        },
+                        "generationConfig": gen_cfg,
                     }
                     try:
-                        resp = requests.post(url, json=payload, timeout=25)
-                        if resp.status_code in (401, 403, 429):
-                            last_err = f"HTTP {resp.status_code}"
+                        resp = self.http.post(url, json=payload, timeout=12)
+                        if resp.status_code == 404:
+                            self.dead_models_cache.add(m_name)
+                            model_not_found = True
+                            last_err = f"Model {m_name} HTTP 404"
                             break
+                        if resp.status_code in (401, 403, 429):
+                            last_err = f"Key HTTP {resp.status_code} on {m_name}"
+                            # Rotate key index away from rate-limited key
+                            self.key_idx = (self.key_idx + k_offset + 1) % len(self.keys)
+                            break
+                        if resp.status_code == 400 and "thinkingConfig" in resp.text:
+                            # Fallback if a specific model endpoint doesn't accept thinkingConfig
+                            payload["generationConfig"].pop("thinkingConfig", None)
+                            resp = self.http.post(url, json=payload, timeout=12)
+
                         resp.raise_for_status()
                         data = resp.json()
                         raw_txt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -199,7 +311,15 @@ class DualLLMEngine:
                         return validated
                     except Exception as e:
                         last_err = str(e)
-                        logger.warning(f"Gemini call ({m_name}, attempt {attempt + 1}) error: {e}")
+                        logger.warning(f"Gemini validation/call ({m_name}, attempt {attempt + 1}) notice: {e}")
+
+                # CRITICAL OPTIMIZATION: If the HTTP request succeeded (not a 401/403/429 key error),
+                # do NOT loop across all other API keys for the same model!
+                if not model_not_found and last_err and not last_err.startswith("Key HTTP"):
+                    break
+            if model_not_found:
+                continue
+
         raise RuntimeError(f"All Gemini models/keys failed validation: {last_err}")
 
     def run_analyst(
@@ -318,6 +438,7 @@ class DualLLMEngine:
             )
 
         try:
+            # Responder always uses the fast Flash chain unless user explicitly forced Pro
             return self._call_gemini_json(
                 system_prompt=RESPONDER_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
@@ -339,40 +460,40 @@ class DualLLMEngine:
     def generate_register_shift_coaching(self, learner_text: str) -> RegisterShiftResult:
         sys_p = (
             "You are an expert Spoken American English Register Coach for L1 Arabic learners.\n"
-            "Take the learner's communicative intention or sentence and express it naturally across 3 distinct registers:\n"
-            "1. casual_friend_version (warm, relaxed, everyday spoken phrasing)\n"
-            "2. diplomatic_colleague_version (tactful, collaborative, softened phrasing)\n"
-            "3. executive_manager_version (crisp, bottom-line first, confident phrasing)\n"
-            "Explain the pragmatic distinction in English (`key_pragmatic_distinction_en`) and neutrally in Modern Standard Arabic (`key_pragmatic_distinction_ar`), then give a 1-sentence situational `practice_prompt`.\n"
-            "Return ONLY valid JSON matching RegisterShiftResult."
+            "Take the learner's communicative intention or sentence and express it naturally across 3 distinct registers.\n"
+            "Return ONLY valid JSON with these exact keys:\n"
+            "{\n"
+            '  "communicative_intention": "short description of intention",\n'
+            '  "casual_friend_version": "warm, relaxed everyday spoken phrasing",\n'
+            '  "diplomatic_colleague_version": "tactful, collaborative softened phrasing",\n'
+            '  "executive_manager_version": "crisp, bottom-line first confident phrasing",\n'
+            '  "key_pragmatic_distinction_en": "concise explanation of how tone shifts across the 3 versions",\n'
+            '  "key_pragmatic_distinction_ar": "شرح عربي موجز ومحايد للفرق التداولي بين المستويات الثلاثة",\n'
+            '  "practice_prompt": "1-sentence situational prompt inviting the learner to try one version"\n'
+            "}"
         )
         return self._call_gemini_json(
             system_prompt=sys_p,
             user_prompt=f"Learner's input to shift across registers: {learner_text}",
             validator_fn=RegisterShiftResult.model_validate,
-            temperature=0.45,
+            temperature=0.4,
             max_tries=2,
         )
 
     def generate_dynamic_dilemma_scene(self, register_profile: str = "diplomatic") -> DynamicDilemmaScene:
-        """
-        Generates a 100% spontaneous, non-repetitive real-life pragmatic dilemma across diverse
-        human settings (social, neighborhood, friendship, travel, service, or workplace).
-        """
         sys_p = (
             "You design realistic, unscripted Spoken American English pragmatic simulations.\n"
             "Generate a fresh, relatable real-life situation where the learner faces two competing social/pragmatic constraints "
             "(e.g., declining an invitation from a close friend without hurting feelings, addressing a neighbor's noise politely, "
             "renegotiating a shared plan, handling an awkward favor request, or pushing back on an unrealistic expectation).\n"
-            "Vary the setting and relationship naturally so it never feels like a repetitive corporate template.\n"
-            "Return ONLY valid JSON matching DynamicDilemmaScene:\n"
+            "Return ONLY valid JSON matching this exact structure:\n"
             "{\n"
-            '  "setting": "...",\n'
-            '  "relationship": "...",\n'
+            '  "setting": "Brief setting description",\n'
+            '  "relationship": "e.g., close friend, neighbor, peer colleague, client",\n'
             '  "register_profile": "casual" | "warm" | "diplomatic" | "executive",\n'
             '  "established_facts": ["fact 1", "fact 2"],\n'
-            '  "counterpart_goal": "...",\n'
-            '  "learner_pragmatic_goal": "...",\n'
+            '  "counterpart_goal": "What Alex wants in this interaction",\n'
+            '  "learner_pragmatic_goal": "What the learner needs to achieve while keeping rapport",\n'
             '  "opening_line": "Natural spoken line from Alex starting the interaction"\n'
             "}"
         )
@@ -380,24 +501,23 @@ class DualLLMEngine:
             system_prompt=sys_p,
             user_prompt=f"Preferred starting register profile: {register_profile}. Generate a fresh, spontaneous pragmatic dilemma scene.",
             validator_fn=DynamicDilemmaScene.model_validate,
-            temperature=0.85,
+            temperature=0.8,
             max_tries=2,
         )
 
     def generate_dynamic_workout_scenario(self, target_info: dict[str, str], register_profile: str = "casual") -> DynamicWorkoutScenario:
-        """
-        Generates a fresh situational retrieval prompt that naturally elicits `communicative_intention`
-        WITHOUT revealing or hinting at the exact words of `canonical_form`.
-        """
         forbidden_form = target_info.get("canonical_form", "")
         intention = target_info.get("communicative_intention", "express your point naturally")
         sys_p = (
             "You create short, realistic situational prompts for unaided spoken English retrieval.\n"
             f"Target communicative move: '{intention}'.\n"
             f"CRITICAL RULE: NEVER include or reveal the phrase '{forbidden_form}' or its key lexical words in `situation_setup` or `prompt_question`!\n"
-            "Describe a concrete 1-2 sentence everyday situation in `situation_setup` where the learner naturally needs to perform this communicative move, "
-            "and ask what they would say in `prompt_question`.\n"
-            "Return ONLY valid JSON matching DynamicWorkoutScenario."
+            "Return ONLY valid JSON with these exact keys:\n"
+            "{\n"
+            f'  "communicative_intention": "{intention}",\n'
+            '  "situation_setup": "1-2 sentence everyday scenario where the speaker needs to perform this move",\n'
+            '  "prompt_question": "What do you say naturally in this moment?"\n'
+            "}"
         )
 
         def _validate_workout(raw_d: dict[str, Any]) -> DynamicWorkoutScenario:
@@ -411,6 +531,6 @@ class DualLLMEngine:
             system_prompt=sys_p,
             user_prompt=f"Register context: {register_profile}. Create a spontaneous scenario for communicative move: {intention}",
             validator_fn=_validate_workout,
-            temperature=0.8,
+            temperature=0.75,
             max_tries=2,
         )

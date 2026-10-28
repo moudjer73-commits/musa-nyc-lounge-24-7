@@ -22,7 +22,7 @@ logger = logging.getLogger("SpokenEnglishLab")
 db = EventSourcedDatabase()
 ai = DualLLMEngine()
 orchestrator = TurnOrchestrator(db=db, ai=ai)
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=False) if TELEGRAM_BOT_TOKEN else None
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=True, num_threads=4) if TELEGRAM_BOT_TOKEN else None
 
 
 def _e(val) -> str:
@@ -30,14 +30,6 @@ def _e(val) -> str:
 
 
 def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -> dict:
-    """
-    Purges all legacy command scopes and language overrides in Telegram, then sets:
-    1. Luxury Bot Name (`setMyName`) across '', 'en', 'ar'
-    2. Short Description (`setMyShortDescription`) across '', 'en', 'ar'
-    3. Main Description (`setMyDescription`) across '', 'en', 'ar'
-    4. Bot Commands (`setMyCommands`) across default, all_private_chats, and target_chat_id
-    5. Menu Button (`setChatMenuButton` -> type='commands')
-    """
     report = {"ok": False, "steps": []}
     if not TELEGRAM_BOT_TOKEN:
         return report
@@ -54,7 +46,6 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
 
     lang_codes = ["", "en", "ar"]
 
-    # 1. Delete all old commands across every scope and language code so nothing overrides the new list
     for sc in scopes:
         for lc in lang_codes:
             payload = {"scope": sc}
@@ -65,10 +56,9 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
             except Exception:
                 pass
 
-    # 2. Set the clean 9 commands across default, all_private_chats, and specific chat for '', 'en', 'ar'
     commands_list = [
         {"command": "start", "description": "Start or refresh your Spoken English Lab"},
-        {"command": "settings", "description": "Adjust register, directness & coaching intensity"},
+        {"command": "settings", "description": "Adjust register, directness, engine & coaching"},
         {"command": "scene", "description": "Open spontaneous conversation scene"},
         {"command": "dilemma", "description": "Generate a live pragmatic dilemma"},
         {"command": "shift", "description": "Transform a thought across registers"},
@@ -92,7 +82,6 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
             except Exception as e:
                 report["steps"].append(f"setMyCommands err: {e}")
 
-    # 3. Force the chat menu button to show the Commands menu
     for cid in ([None, int(target_chat_id)] if target_chat_id else [None]):
         body = {"menu_button": {"type": "commands"}}
         if cid:
@@ -102,7 +91,6 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         except Exception:
             pass
 
-    # 4. Set Name, Short Description (About), and Description across '', 'en', 'ar'
     luxury_name = "𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️"
     short_bio = (
         "Master real Spoken American English across all registers 🎙️ "
@@ -148,10 +136,6 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
 
 
 def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup]:
-    """
-    Builds a live, persistent interactive control panel showing checkmarks (✅)
-    for Register, Directness, Coaching Intensity, and Arabic Support.
-    """
     sess = db.get_or_create_active_session(lid)
     cfg = db.get_learner_settings(lid)
 
@@ -161,6 +145,10 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     cur_ar = cfg.get("arabic_support") or "bilingual"
     cur_mode = sess.get("training_mode") or "open_scene"
 
+    cur_tier = getattr(ai, "model_tier", "flash")
+    active_chain = ai.get_active_model_chain(prefer_pro=(cur_tier == "pro"))
+    primary_m = active_chain[0] if active_chain else "gemini-2.5-flash"
+
     text_html = (
         "🎛️ <b>Spoken English Lab — Live Control Panel</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -168,6 +156,7 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
         f"• <b>Spoken Register:</b> <b>{_e(cur_reg.upper())}</b>\n"
         f"• <b>Pragmatic Directness:</b> <b>{_e(cur_dir.upper())}</b>\n"
         f"• <b>Coaching Intensity:</b> <b>{_e(cur_fb.upper())}</b>\n"
+        f"• <b>Gemini Engine:</b> <code>{_e(primary_m)}</code> (<b>{_e(cur_tier.upper())}</b>)\n"
         f"• <b>Arabic Nuance Notes:</b> <b>{_e(cur_ar.upper())}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<i>Tap any button below to switch immediately (changes persist across scenes):</i>"
@@ -226,6 +215,17 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
         for k, label in ars
     ]
     markup.row(*ar_btns)
+
+    # Row 6: Gemini Model Tier (Flash Speed vs Pro Deep Reasoning)
+    tiers = [("flash", "⚡ Flash (Fastest)"), ("pro", "🧠 Pro (Deepest)")]
+    tier_btns = [
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_tier == k else ''}{label}",
+            callback_data=f"setmodel:{k}",
+        )
+        for k, label in tiers
+    ]
+    markup.row(*tier_btns)
 
     return text_html, markup
 
@@ -291,7 +291,7 @@ if bot is not None:
 
     @bot.message_handler(commands=["sync_telegram"])
     def handle_sync_telegram_cmd(message):
-        rep = force_sync_all_telegram_scopes_and_profile(message.chat.id)
+        force_sync_all_telegram_scopes_and_profile(message.chat.id)
         bot.send_message(
             message.chat.id,
             "✅ <b>Telegram Profile, Scopes & Commands Force-Synced!</b>\n"
@@ -359,7 +359,6 @@ if bot is not None:
             "established_facts": dilemma.established_facts,
             "counterpart_goal": dilemma.counterpart_goal,
         }
-        # Preserve the learner's chosen register instead of overwriting it!
         db.update_session_settings(
             sid,
             lid,
@@ -452,7 +451,6 @@ if bot is not None:
     def handle_think_cmd(message):
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
-        # Keep learner's chosen register unless they haven't set one
         db.update_session_settings(str(sess["session_id"]), lid, training_mode="think_aloud", scene_mode="real_conversation")
         bot.send_message(
             message.chat.id,
@@ -560,7 +558,7 @@ if bot is not None:
                 logger.warning(f"TTS error: {e}")
             return
 
-        if data.startswith(("setreg:", "setdir:", "setfb:", "setar:")):
+        if data.startswith(("setreg:", "setdir:", "setfb:", "setar:", "setmodel:")):
             kind, val = data.split(":", 1)
             if kind == "setreg":
                 db.update_session_settings(sid, lid, register_profile=val)
@@ -573,9 +571,12 @@ if bot is not None:
             elif kind == "setfb":
                 db.update_learner_preference(lid, feedback_preference=val)
                 toast = f"Coaching → {val.upper()}"
-            else:
+            elif kind == "setar":
                 db.update_learner_preference(lid, arabic_support=val)
                 toast = f"Arabic Notes → {val.upper()}"
+            else:
+                chain = ai.set_model_tier(val)
+                toast = f"Engine → {chain[0] if chain else val.upper()}"
 
             panel_html, markup = build_live_settings_panel(lid)
             try:
@@ -716,16 +717,15 @@ if __name__ == "__main__":
     logger.info(f"Telegram sync report: {sync_rep}")
     if ADMIN_ID:
         try:
-            # 1. Refresh bottom keyboard and notify user
+            active_m = ai.get_active_model_chain()[0]
             bot.send_message(
                 ADMIN_ID,
-                "🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — All Settings & Scopes Force-Synced!</b>\n"
-                "• All legacy Telegram command scopes & language overrides purged.\n"
-                "• Live interactive Settings Panel (with ✅ checkmarks) is ready below:",
+                f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — Turbo Engine Live!</b>\n"
+                f"• Primary Discovered Model: <code>{_e(active_m)}</code>\n"
+                "• Zero-Retry JSON Schemas + Parallel Execution enabled.",
                 parse_mode="HTML",
                 reply_markup=build_reply_keyboard(),
             )
-            # 2. Send the Live Control Panel immediately so the user can test clicking ✅ buttons right away
             panel_html, panel_markup = build_live_settings_panel(ADMIN_ID)
             bot.send_message(
                 ADMIN_ID,
@@ -744,7 +744,7 @@ if __name__ == "__main__":
 
     while True:
         try:
-            bot.polling(none_stop=True, interval=1, timeout=25, long_polling_timeout=25)
+            bot.polling(none_stop=True, interval=0.2, timeout=20, long_polling_timeout=20)
         except Exception as poll_err:
             logger.error(f"Polling loop error: {poll_err}")
             time.sleep(3)

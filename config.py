@@ -44,12 +44,25 @@ def load_gemini_keys() -> list[str]:
 GEMINI_KEYS_LIST: list[str] = load_gemini_keys()
 GEMINI_API_KEY: str = GEMINI_KEYS_LIST[0] if GEMINI_KEYS_LIST else ""
 
-GEMINI_MODELS_CHAIN: list[str] = [
-    "gemini-2.5-flash",
+# 2026 Official Best-in-Class Gemini Model Tiers:
+GEMINI_FLASH_TIER_CHAIN: list[str] = [
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
     "gemini-3-flash-preview",
-    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-2.5-flash-lite",
 ]
-GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL") or GEMINI_MODELS_CHAIN[0]
+
+GEMINI_PRO_TIER_CHAIN: list[str] = [
+    "gemini-3.1-pro-preview",
+    "gemini-2.5-pro",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+]
+
+GEMINI_MODELS_CHAIN: list[str] = GEMINI_FLASH_TIER_CHAIN
+GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL") or GEMINI_FLASH_TIER_CHAIN[0]
 
 DEFAULT_VOICE: str = "en-US-AndrewMultilingualNeural"
