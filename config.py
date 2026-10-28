@@ -247,8 +247,19 @@ GUIDE_CHAPTERS: Dict[str, str] = {
 }
 
 
-# === CLEAN-SLATE V4 CONFIG EXPORTS ===
+# === CLEAN-SLATE V4 UNIFIED CONFIG EXPORTS ===
 import os as _os
-TELEGRAM_BOT_TOKEN = globals().get('TELEGRAM_BOT_TOKEN') or globals().get('BOT_TOKEN') or _os.environ.get('TELEGRAM_BOT_TOKEN') or _os.environ.get('BOT_TOKEN') or ''
+TELEGRAM_BOT_TOKEN = (
+    globals().get('TELEGRAM_TOKEN')
+    or globals().get('BOT_TOKEN')
+    or globals().get('TELEGRAM_BOT_TOKEN')
+    or _os.environ.get('TELEGRAM_TOKEN')
+    or _os.environ.get('BOT_TOKEN')
+    or _os.environ.get('TELEGRAM_BOT_TOKEN')
+    or ''
+).strip()
+TELEGRAM_TOKEN = TELEGRAM_BOT_TOKEN
+BOT_TOKEN = TELEGRAM_BOT_TOKEN
 ADMIN_ID = int(globals().get('ADMIN_ID') or _os.environ.get('ADMIN_ID', '0') or 0)
 DB_PATH = globals().get('DB_PATH') or _os.environ.get('CLUB_VAULT_DB') or _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'club_vault.db')
+GEMINI_MODEL = globals().get('GEMINI_MODEL') or _os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
