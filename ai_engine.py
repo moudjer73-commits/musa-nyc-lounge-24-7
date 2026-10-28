@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any, Callable, List
 import requests
-from config import GEMINI_API_KEY, GEMINI_MODEL
+from config import GEMINI_API_KEY, GEMINI_KEYS_LIST, GEMINI_MODEL, GEMINI_MODELS_CHAIN
 from schemas import (
     DevilsAdvocateOutput,
     MetalinguisticOutput,
@@ -42,12 +42,11 @@ def is_short_greeting(text: str) -> bool:
     return any(w.strip(".,!?") in greetings for w in words) and words[0].strip(".,!?") in {"hey", "hi", "hello", "yo", "sup", "good"}
 
 
-from transport_core import NYCLoungeAI as _WorkingTransport
-
-
 class CleanAIEngine:
-    def __init__(self, *args, **kwargs):
-        self._transport = _WorkingTransport()
+    def __init__(self):
+        self.keys = list(GEMINI_KEYS_LIST) if GEMINI_KEYS_LIST else ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
+        self.key_idx = 0
+        self.model_name = GEMINI_MODEL
 
     def _call_gemini_json(
         self,
@@ -57,13 +56,46 @@ class CleanAIEngine:
         temperature: float = 0.35,
         max_tries: int = 2,
     ) -> Any:
-        return self._transport._call_gemini_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=temperature,
-            max_tries=max_tries,
-            validator_fn=validator_fn,
-        )
+        if not self.keys:
+            raise RuntimeError("No Gemini API keys found in GEMINI_KEYS or GEMINI_API_KEY environment variables.")
+
+        models_to_try = [self.model_name] + list(GEMINI_MODELS_CHAIN)
+        seen_m = set()
+        ordered_models = [m for m in models_to_try if m and not (m in seen_m or seen_m.add(m))]
+
+        last_err = None
+        for m_name in ordered_models:
+            for k_offset in range(len(self.keys)):
+                api_key = self.keys[(self.key_idx + k_offset) % len(self.keys)]
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={api_key}"
+                for attempt in range(max_tries):
+                    prompt_body = user_prompt
+                    if last_err and attempt > 0:
+                        prompt_body += f"\n\n[SCHEMA REPAIR NOTICE: Previous JSON failed validation ({last_err}). Return strictly valid JSON matching all required keys.]"
+                    payload = {
+                        "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        "contents": [{"role": "user", "parts": [{"text": prompt_body}]}],
+                        "generationConfig": {
+                            "temperature": temperature,
+                            "responseMimeType": "application/json",
+                        },
+                    }
+                    try:
+                        resp = requests.post(url, json=payload, timeout=25)
+                        if resp.status_code in (401, 403, 429):
+                            last_err = f"HTTP {resp.status_code}: {resp.text[:120]}"
+                            break  # Rotate to next key immediately
+                        resp.raise_for_status()
+                        data = resp.json()
+                        raw_txt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        raw_txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_txt, flags=re.IGNORECASE).strip()
+                        parsed = json.loads(raw_txt)
+                        self.key_idx = (self.key_idx + k_offset) % len(self.keys)
+                        return validator_fn(parsed)
+                    except Exception as e:
+                        last_err = str(e)
+                        logger.warning(f"Gemini ({m_name}, key #{k_offset}) attempt {attempt + 1} failed: {e}")
+        raise RuntimeError(f"Gemini call failed across available keys/models: {last_err}")
 
     def generate_banter_turn(self, user_text: str, history_lines: List[str]) -> UnifiedBanterOutput:
         system_prompt = (
