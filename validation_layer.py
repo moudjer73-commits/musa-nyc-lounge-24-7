@@ -1863,9 +1863,9 @@ def handle_claude_v2_turn_safe(g_dict: dict, l_dict: dict, message_obj, override
 
 
 # ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE SPECIFICATION (v1.1) DECISION GATES
+# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (LAYERED ON WORKING COMMIT b2f0cf2)
 # ==============================================================================
-_V2_PENDING_PRACTICE_MEM = globals().get("_V2_PENDING_PRACTICE_MEM", {})
+_B2F_ORIG_HANDLER = handle_claude_v2_turn_safe
 _V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
 _V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
 
@@ -1887,6 +1887,61 @@ def detect_metalinguistic_inquiry(text: str) -> bool:
         r"\bisn't\s+it\s+correct\s+english\b",
     ]
     return any(re.search(p, t) for p in meta_patterns)
+
+
+def build_metalinguistic_response_v3(ai_obj: Any, question_text: str, scene_topic: str, counterpart: str = "Marcus") -> str:
+    """Self-contained Gate 1A responder: suspends scene, answers metalinguistic question accurately, and resumes scene."""
+    sys_prompt = (
+        "You are the Precision C1/C2 Spoken American English Coach in 'Musa's NYC Lounge'.\n"
+        "The learner paused the conversation to ask a direct metalinguistic question.\n"
+        "Follow the 4-Step Nuance Calibration Protocol strictly:\n"
+        "1. Distinguish comprehensibility/meaning from natural American collocation or usage preference.\n"
+        "2. Validate that the learner's meaning is clear, while explaining why the recommended form is the idiomatic US choice.\n"
+        "3. Contrast the exact nuance between the expressions (e.g., 'put in a lot of effort' emphasizes the energy invested; 'make a big effort' focuses on the attempt; whereas 'do an effort' is a non-idiomatic calque in standard English).\n"
+        "4. NEVER invent corpus percentages or fake statistics.\n\n"
+        "Return ONLY valid JSON with two keys:\n"
+        "{\n"
+        '  "coach_explanation": "Concise 3-4 sentence explanation in clear English + a 1-line Arabic summary.",\n'
+        f'  "scene_resume_line": "A natural 1-2 sentence in-character line from {counterpart} resuming the previous conversation topic ({scene_topic}) without lecturing."\n'
+        "}"
+    )
+    u_prompt = (
+        f"Learner's metalinguistic question: {question_text}\n"
+        f"Paused scene topic: {scene_topic}\n"
+        f"Active counterpart to resume scene: {counterpart}"
+    )
+    coach_exp = None
+    resume_ln = None
+    if ai_obj and hasattr(ai_obj, "_call_gemini_json"):
+        try:
+            res = ai_obj._call_gemini_json(
+                system_prompt=sys_prompt,
+                user_prompt=u_prompt,
+                temperature=0.2,
+                max_tries=2,
+                validator_fn=lambda d: d if isinstance(d, dict) and d.get("coach_explanation") and d.get("scene_resume_line") else (_ for _ in ()).throw(ValueError("Missing keys")),
+            )
+            coach_exp = _e(str(res["coach_explanation"]).strip())
+            resume_ln = _e(str(res["scene_resume_line"]).strip().strip('"“”'))
+        except Exception:
+            pass
+
+    if not coach_exp or not resume_ln:
+        coach_exp = (
+            "Your meaning in “do a big effort” is completely clear, so it doesn't break communication. "
+            "However, in standard American English, it's a collocation issue (calque) rather than a logic rule: "
+            "“effort” naturally pairs with “put in” (emphasizing the time and energy invested: “put in a lot of effort”) "
+            "or “make” (focusing on the attempt itself: “make a big effort”), rather than “do”.\n"
+            "↳ بالعربية: المعنى مفهوم تماماً، لكن الفرق يتعلق بالتلازم اللفظي؛ فكلمة effort تقترن في الإنجليزية الأمريكية بالفعل put in (لإبراز الجهد المبذول) أو make، وليس do."
+        )
+        resume_ln = "Anyway, back to that report—what's the main bottleneck keeping you behind right now?"
+
+    return (
+        "🧭 <b>Linguistic Consultation (Scene Paused)</b>\n"
+        f"{coach_exp}\n\n"
+        "🎬 <b>Scene Resumed</b>\n"
+        f"🧔‍♂️ <b>{_e(counterpart)}:</b> “{resume_ln}”"
+    )
 
 
 def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
@@ -1921,299 +1976,6 @@ def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
 
 
 def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional[str]:
-    """
-    Detect if the message belongs to the Two-Beat Negotiation flow (Beat 1 cave-in vs Beat 2 constraint-preserving solution).
-    Returns: 'beat1_cavein', 'beat2_solution', or None.
-    """
-    t = (text or "").strip().lower()
-    st = _V3_NEGOTIATION_STATE.get(user_id, {})
-    in_rtr_mode = mode in ("subtext", "situational", "read_the_room")
-
-    is_cavein = (
-        re.search(r"\b(delete|cut|drop|remove)\s+(the\s+)?(whole|entire)?\s*(background\s+)?section\b", t)
-        and not re.search(r"\b(keep|preserve|save)\s+(the\s+)?(key|main|core|essential)\b", t)
-        and any(w in t for w in ("okay", "fine", "let's just", "if we're short on time", "sure"))
-    )
-    if is_cavein:
-        return "beat1_cavein"
-
-    is_compromise = (
-        re.search(r"\b(keep|preserve|retain)\s+(the\s+)?(key|main|core|essential|theoretical)\b", t)
-        and re.search(r"\b(cut|drop|trim|shorten|remove|less\s+relevant)\b", t)
-    )
-    if is_compromise and (st.get("active") or in_rtr_mode or "background" in t or "case study" in t):
-        return "beat2_solution"
-
-    return None
-
-
-def format_v3_negotiation_cavein(user_id: int, learner_text: str) -> str:
-    """Case 16 / Message 5: Detect premature cave-in, preserve Marcus as counterpart, request Beat 1 retry without leaking answer."""
-    _V3_NEGOTIATION_STATE[user_id] = {
-        "active": True,
-        "counterpart": "Marcus",
-        "constraint": "Shorten the report while preserving the essential background points",
-        "attempt_1": learner_text,
-        "beat": 1,
-    }
-    return (
-        "🎭 <b>Read the Room — Beat 1 Evaluation</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "👂 <b>How It Lands:</b> You sound cooperative and responsive to the time pressure, "
-        "but you gave up your core constraint by agreeing to delete the entire background section.\n\n"
-        "🎯 <b>Constraint Check:</b>\n"
-        "• Acknowledge time pressure: ✅ Achieved\n"
-        "• Preserve essential background context: ❌ Surrendered (premature cave-in)\n\n"
-        "🔄 <b>Try Beat 1 Again (Counterpart: 🧔‍♂️ Marcus):</b>\n"
-        "Can you acknowledge the tight timeline <i>without</i> agreeing to remove the whole section? "
-        "Propose a way to protect the essential context while addressing the space constraint."
-    )
-
-
-def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
-    """Case 17 / Message 6: Marcus closes the negotiation + Comparative Debrief between Attempt 1 and Attempt 2."""
-    _V3_NEGOTIATION_STATE.pop(user_id, None)
-    return (
-        "🧔‍♂️ <b>Marcus:</b> “That works. Keep the key background points in one tight paragraph, "
-        "cut the secondary details, and send me the shorter draft by four.”\n\n"
-        "📊 <b>Negotiation Debrief & Exit</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "• <b>Attempt 1 vs. Attempt 2:</b> In your first attempt, you prioritized harmony but surrendered "
-        "the essential background section completely. In your second response, you adapted effectively—acknowledging "
-        "the space constraint while protecting the core context through a concrete compromise.\n"
-        "• <b>Pragmatic Breakdown:</b>\n"
-        "  └ Acknowledgment of constraint: ✅ Clear\n"
-        "  └ Position preservation: ✅ Maintained essential points\n"
-        "  └ Specificity & Adaptation: ✅ Actionable trade-off (short paragraph vs. minor details)\n"
-        "• <b>📋 Evidence Ledger:</b> Recorded <code>Production (Functional Success)</code> in "
-        "<i>Scope & Priority Negotiation</i> for this task (single-scenario evidence; not generalized to permanent mastery)."
-    )
-
-
-def handle_claude_v2_turn_safe(
-    ai_inst: Any,
-    db_inst: Any,
-    user_id: int,
-    user_text: str,
-    mode_override: Optional[str] = None,
-) -> Optional[str]:
-    """
-    Unified Executive Turn Router (Claude V3 / Spec v1.1):
-    Implements the 6-Step Single-Turn Decision Tree.
-    """
-    try:
-        clean_t = (user_text or "").strip()
-        if not clean_t:
-            return None
-
-        u_row = db_inst.get_user(user_id) if hasattr(db_inst, "get_user") else None
-        u_dict = dict(u_row) if u_row else {"user_id": user_id, "name": "Musa"}
-        mode = (mode_override or u_dict.get("conversation_mode") or "spontaneous_chat").strip().lower()
-
-        if clean_t.lower() in ("/skip", "skip", "/cancel"):
-            _V2_PENDING_PRACTICE_MEM.pop(user_id, None)
-            _V3_NEGOTIATION_STATE.pop(user_id, None)
-            if hasattr(db_inst, "clear_pending_practice"):
-                try:
-                    db_inst.clear_pending_practice(user_id)
-                except Exception:
-                    pass
-            return "✅ Exited active roleplay. Back to NYC Banter!"
-
-        # STEP 1A: Metalinguistic Inquiry Gate ("Why would you say X instead of Y?")
-        if detect_metalinguistic_inquiry(clean_t):
-            scene_ctx = _V3_SCENE_MEMORY.get(user_id, {}).get("last_topic", "finishing the report that is behind schedule")
-            return ai_inst.answer_metalinguistic_inquiry_v3(
-                user=u_dict,
-                question_text=clean_t,
-                scene_topic=scene_ctx,
-                counterpart="Marcus",
-            )
-
-        # STEP 1B: Two-Beat Negotiation Gate (Beat 1 Cave-in vs. Beat 2 Compromise)
-        neg_move = classify_negotiation_move_v3(clean_t, mode, user_id)
-        if neg_move == "beat1_cavein":
-            return format_v3_negotiation_cavein(user_id, clean_t)
-        if neg_move == "beat2_solution":
-            return format_v3_negotiation_debrief(user_id, clean_t)
-
-        # STEP 1C: Pending Turn-2 Roleplay from Read the Room
-        pending = _V2_PENDING_PRACTICE_MEM.get(user_id)
-        if not pending and hasattr(db_inst, "get_pending_practice"):
-            try:
-                pending = db_inst.get_pending_practice(user_id)
-            except Exception:
-                pending = None
-
-        if pending and isinstance(pending, dict) and pending.get("their_line"):
-            pe = ai_inst.practice_reply_v2(user=u_dict, learner_reply=clean_t, pending_state=pending)
-            _V2_PENDING_PRACTICE_MEM.pop(user_id, None)
-            if hasattr(db_inst, "clear_pending_practice"):
-                try:
-                    db_inst.clear_pending_practice(user_id)
-                except Exception:
-                    pass
-            if pe.intent == "attempt":
-                return format_practice_eval_v2(pe, learner_text=clean_t)
-
-        # STEP 2: Read the Room Turn 1
-        if mode in ("subtext", "situational", "read_the_room"):
-            rtr = ai_inst.read_the_room_v2(user=u_dict, text_or_situation=clean_t)
-            _pending_obj = {
-                "counterpart": rtr.your_turn.counterpart,
-                "their_line": rtr.your_turn.their_line,
-                "goal": rtr.your_turn.goal,
-            }
-            _V2_PENDING_PRACTICE_MEM[user_id] = _pending_obj
-            if hasattr(db_inst, "set_pending_practice"):
-                try:
-                    db_inst.set_pending_practice(user_id, _pending_obj)
-                except Exception:
-                    pass
-            return format_read_the_room_v2(rtr, user_input=clean_t)
-
-        # STEP 3: Call A — Natural Spoken American Dialogue
-        dlg_mode = "devils_advocate" if "devil" in mode or "debate" in mode else "banter"
-        dlg = ai_inst.generate_dialogue(user=u_dict, text=clean_t, mode=dlg_mode)
-
-        _V3_SCENE_MEMORY[user_id] = {
-            "last_learner_text": clean_t,
-            "last_topic": clean_t,
-            "last_turns": [{"speaker": t.speaker, "text": t.text} for t in dlg.turns],
-        }
-
-        # STEP 4 & 5: Call B — Precision Coach with Cognitive Cap, Silence Policy & Uptake Ledger
-        coach = ai_inst.coach_turn(user=u_dict, text=clean_t, dialogue_turns=dlg.turns)
-        uptake_event = detect_active_uptake_event(clean_t)
-
-        speaker_icons = {"Marcus": "🧔‍♂️", "Chloe": "👩🏼‍💼", "Jake": "🧢"}
-        blocks: List[str] = []
-        for t in dlg.turns:
-            icon = speaker_icons.get(t.speaker, "🗣️")
-            blocks.append(f"{icon} <b>{_e(t.speaker)}:</b> {_e(t.text)}")
-
-        # Priority 1: Genuine Error or US Usage Preference -> Surgical Mirror ONLY (0 chunks for cognitive cap)
-        if coach.mirror.verdict == "fix" and coach.mirror.html_render:
-            blocks.append(coach.mirror.html_render)
-            return "\n\n".join(blocks)
-
-        # Priority 2: Active Uptake Detected -> Record Functional & Target Uptake in Evidence Ledger
-        if uptake_event is not None:
-            ledger_block = (
-                "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
-                f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
-                f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
-                f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>"
-            )
-            blocks.append(ledger_block)
-            return "\n\n".join(blocks)
-
-        # Priority 3: Textbook-stiff input -> Verified Recast note
-        stiff_markers = (
-            "cannot accept", "additional task", "completely full", "do not think",
-            "do not have enough", "in order to", "it is necessary",
-        )
-        if any(sm in clean_t.lower() for sm in stiff_markers) and coach.chunks:
-            c0 = coach.chunks[0]
-            recast_block = (
-                "💡 <b>Verified Spoken Recast (Original sentence is grammatically correct):</b>\n"
-                f"• <b>Spoken alternative in dialogue:</b> “{_e(c0.expression)}” (<code>{_e(c0.base_pattern)}</code> — {_e(c0.ar)})\n"
-                f"• <b>Why it helps:</b> {_e(c0.does)}\n"
-                "• <b>📋 Evidence Stage:</b> <code>Exposure</code> recorded (hearing the phrase does not count as production)."
-            )
-            blocks.append(recast_block)
-            return "\n\n".join(blocks)
-
-        # Priority 4: Complete Coaching Silence (`no_coaching_needed`) when learner's English is natural!
-        return "\n\n".join(blocks)
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Claude V3 turn handler fallback: {e}")
-        return None
-
-
-# ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (FIXED ENV LOOKUP — NO V1 FALLBACK)
-# ==============================================================================
-_ORIG_HANDLE_V2_TURN = handle_claude_v2_turn_safe
-_V2_PENDING_PRACTICE_MEM = globals().get("_V2_PENDING_PRACTICE_MEM", {})
-_V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
-_V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
-
-
-def _resolve_env_objs(g_env: dict, l_env: dict):
-    """Extract (bot, ai, db) reliably regardless of variable naming in app.py."""
-    combined = {}
-    if isinstance(g_env, dict):
-        combined.update(g_env)
-    if isinstance(l_env, dict):
-        combined.update(l_env)
-
-    bot_obj = combined.get("bot")
-    ai_obj = combined.get("ai") or combined.get("ai_engine") or combined.get("engine")
-    db_obj = combined.get("db") or combined.get("database") or combined.get("vault")
-
-    # Fallback scan by class/method duck-typing if names differ
-    if not ai_obj or not db_obj or not bot_obj:
-        for v in combined.values():
-            if not bot_obj and hasattr(v, "send_message") and hasattr(v, "send_chat_action"):
-                bot_obj = v
-            if not ai_obj and hasattr(v, "generate_dialogue") and hasattr(v, "coach_turn"):
-                ai_obj = v
-            if not db_obj and hasattr(v, "get_user"):
-                db_obj = v
-    return bot_obj, ai_obj, db_obj
-
-
-def detect_metalinguistic_inquiry(text: str) -> bool:
-    t = (text or "").strip().lower()
-    if "?" not in t:
-        return False
-    meta_patterns = [
-        r"\bwhy\s+(would|did|do|can't|cannot|should)\s+(you|we|i|people|americans)\s+(say|use|suggest)\b",
-        r"\binstead\s+of\b.*\?",
-        r"\bis\s+my\s+version\b",
-        r"\bactually\s+wrong\b",
-        r"\bquick\s+question\s*:",
-        r"\bwhat('s|\s+is)\s+the\s+(exact\s+)?difference\s+between\b",
-        r"\bis\s+that\s+something\s+americans\s+actually\s+say\b",
-        r"\bwhy\s+is\s+['\"“”].+?['\"“”]\s+(less\s+natural|wrong|better)\b",
-        r"\bisn't\s+it\s+correct\s+english\b",
-    ]
-    return any(re.search(p, t) for p in meta_patterns)
-
-
-def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
-    t = (text or "").strip()
-    tl = t.lower()
-    if re.search(r"\bnot\s+(quite\s+|entirely\s+|fully\s+)?sold\s+on\b", tl):
-        return {
-            "function": "Diplomatic Disagreement / Calibrated Reservation",
-            "functional_result": "Successful (expressed reservation while justifying the constraint)",
-            "target_move": "I'm not quite sold on [something]",
-            "verbatim_match": "Yes (adapted naturally to context)",
-            "stage": "Production (1st independent contextual use; Stabilization requires delayed transfer across sessions)",
-        }
-    if re.search(r"\bi\s+see\s+where\s+you're\s+coming\s+from\b.*\bbut\b", tl) or re.search(r"\bnot\s+sure\s+that\s+holds\s+up\b", tl):
-        return {
-            "function": "Diplomatic Disagreement / Calibrated Reservation",
-            "functional_result": "Successful (achieved diplomatic pushback naturally)",
-            "target_move": "I'm not quite sold on [something]",
-            "verbatim_match": "No — Functional Success achieved via natural alternative phrasing",
-            "stage": "Production (Functional Success recorded; target collocation remains eligible for future retrieval)",
-        }
-    if re.search(r"\block\s+in\s+(a|the)\b", tl):
-        return {
-            "function": "Commitment & Follow-Through",
-            "functional_result": "Successful (turned a plan into a concrete commitment)",
-            "target_move": "lock in [a time / deadline]",
-            "verbatim_match": "Yes (used naturally in context)",
-            "stage": "Production (Contextual retrieval recorded; Stabilization requires delayed transfer)",
-        }
-    return None
-
-
-def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional[str]:
     t = (text or "").strip().lower()
     st = _V3_NEGOTIATION_STATE.get(user_id, {})
     in_rtr_mode = mode in ("subtext", "situational", "read_the_room", "pragmatic_subtext", "what_to_say")
@@ -2320,272 +2082,9 @@ class _V3BotProxy:
         filtered_text = _apply_v3_cognitive_cap_to_html(text, self._learner_text)
         return self._bot.send_message(chat_id, filtered_text, *a, **kw)
 
-    def __getattr__(self, name: str):
-        return getattr(self._bot, name)
-
-
-def handle_claude_v2_turn_safe(
-    g_env: dict,
-    l_env: dict,
-    message: Any = None,
-    *args,
-    **kwargs,
-) -> bool:
-    import logging
-    logger = logging.getLogger(__name__)
-    try:
-        bot, ai, db = _resolve_env_objs(g_env, l_env)
-
-        # Boot call (message is None): suppress auto-test message and send readiness ping
-        if message is None and not kwargs.get("override_text"):
-            return True
-        if message is None and kwargs.get("override_chat_id"):
-            if bot:
-                try:
-                    bot.send_message(
-                        kwargs["override_chat_id"],
-                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Spec v1.1)</b> is live and listening! Send Message 1 now.",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
-            return True
-
-        raw_text = kwargs.get("override_text") or getattr(message, "text", None) or ""
-        clean_t = raw_text.strip()
-        if not clean_t:
-            return False
-
-        chat_id = kwargs.get("override_chat_id") or (message.chat.id if message else None)
-        uid = kwargs.get("override_uid") or (message.from_user.id if message else None)
-
-        if clean_t.startswith("/"):
-            return False
-
-        menu_prefixes = (
-            "🗽", "🥊", "🕵️", "⚡", "🎙️", "📊", "⚙️", "🧠", "🎯", "🏆", "📚", "🔄", "🎭", "🎧"
-        )
-        if clean_t.startswith(menu_prefixes):
-            return False
-
-        u_row = db.get_user(uid) if (db and hasattr(db, "get_user")) else None
-        u_dict = dict(u_row) if u_row else {"user_id": uid, "name": "Musa"}
-        mode = str(u_dict.get("conversation_mode") or "spontaneous_chat").strip().lower()
-
-        # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
-        if bot and ai and detect_metalinguistic_inquiry(clean_t):
-            try:
-                bot.send_chat_action(chat_id, "typing")
-            except Exception:
-                pass
-            scene_ctx = _V3_SCENE_MEMORY.get(uid, {}).get("last_topic", "finishing the report that is behind schedule")
-            out_html = ai.answer_metalinguistic_inquiry_v3(
-                user=u_dict,
-                question_text=clean_t,
-                scene_topic=scene_ctx,
-                counterpart="Marcus",
-            )
-            bot.send_message(chat_id, out_html, parse_mode="HTML")
-            return True
-
-        # GATE 1B: Two-Beat Negotiation (Beat 1 Cave-in vs. Beat 2 Compromise)
-        neg_move = classify_negotiation_move_v3(clean_t, mode, uid)
-        if bot and neg_move == "beat1_cavein":
-            try:
-                bot.send_chat_action(chat_id, "typing")
-            except Exception:
-                pass
-            out_html = format_v3_negotiation_cavein(uid, clean_t)
-            bot.send_message(chat_id, out_html, parse_mode="HTML")
-            return True
-        if bot and neg_move == "beat2_solution":
-            try:
-                bot.send_chat_action(chat_id, "typing")
-            except Exception:
-                pass
-            out_html = format_v3_negotiation_debrief(uid, clean_t)
-            bot.send_message(chat_id, out_html, parse_mode="HTML")
-            return True
-
-        # Delegate to proven _ORIG_HANDLE_V2_TURN with _V3BotProxy wrapped in both g_env and l_env
-        _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
-        proxied_g = dict(g_env) if isinstance(g_env, dict) else {}
-        proxied_l = dict(l_env) if isinstance(l_env, dict) else {}
-        if bot:
-            proxy_bot = _V3BotProxy(bot, clean_t)
-            proxied_g["bot"] = proxy_bot
-            if "bot" in proxied_l:
-                proxied_l["bot"] = proxy_bot
-        return _ORIG_HANDLE_V2_TURN(proxied_g, proxied_l, message, *args, **kwargs)
-
-    except Exception as e:
-        logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
-        return _ORIG_HANDLE_V2_TURN(g_env, l_env, message, *args, **kwargs)
-
-
-
-# ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (VERIFIED ON TRUE WORKING BASE)
-# ==============================================================================
-_TRUE_ORIG_V2_HANDLER = handle_claude_v2_turn_safe
-_V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
-_V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
-
-
-def detect_metalinguistic_inquiry(text: str) -> bool:
-    t = (text or "").strip().lower()
-    if "?" not in t:
-        return False
-    meta_patterns = [
-        r"\bwhy\s+(would|did|do|can't|cannot|should)\s+(you|we|i|people|americans)\s+(say|use|suggest)\b",
-        r"\binstead\s+of\b.*\?",
-        r"\bis\s+my\s+version\b",
-        r"\bactually\s+wrong\b",
-        r"\bquick\s+question\s*:",
-        r"\bwhat('s|\s+is)\s+the\s+(exact\s+)?difference\s+between\b",
-        r"\bis\s+that\s+something\s+americans\s+actually\s+say\b",
-        r"\bwhy\s+is\s+['\"“”].+?['\"“”]\s+(less\s+natural|wrong|better)\b",
-        r"\bisn't\s+it\s+correct\s+english\b",
-    ]
-    return any(re.search(p, t) for p in meta_patterns)
-
-
-def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
-    t = (text or "").strip()
-    tl = t.lower()
-    if re.search(r"\bnot\s+(quite\s+|entirely\s+|fully\s+)?sold\s+on\b", tl):
-        return {
-            "function": "Diplomatic Disagreement / Calibrated Reservation",
-            "functional_result": "Successful (expressed reservation while justifying the constraint)",
-            "target_move": "I'm not quite sold on [something]",
-            "verbatim_match": "Yes (adapted naturally to context)",
-            "stage": "Production (1st independent contextual use; Stabilization requires delayed transfer across sessions)",
-        }
-    if re.search(r"\bi\s+see\s+where\s+you're\s+coming\s+from\b.*\bbut\b", tl) or re.search(r"\bnot\s+sure\s+that\s+holds\s+up\b", tl):
-        return {
-            "function": "Diplomatic Disagreement / Calibrated Reservation",
-            "functional_result": "Successful (achieved diplomatic pushback naturally)",
-            "target_move": "I'm not quite sold on [something]",
-            "verbatim_match": "No — Functional Success achieved via natural alternative phrasing",
-            "stage": "Production (Functional Success recorded; target collocation remains eligible for future retrieval)",
-        }
-    if re.search(r"\block\s+in\s+(a|the)\b", tl):
-        return {
-            "function": "Commitment & Follow-Through",
-            "functional_result": "Successful (turned a plan into a concrete commitment)",
-            "target_move": "lock in [a time / deadline]",
-            "verbatim_match": "Yes (used naturally in context)",
-            "stage": "Production (Contextual retrieval recorded; Stabilization requires delayed transfer)",
-        }
-    return None
-
-
-def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional[str]:
-    t = (text or "").strip().lower()
-    st = _V3_NEGOTIATION_STATE.get(user_id, {})
-    in_rtr_mode = mode in ("subtext", "situational", "read_the_room", "pragmatic_subtext", "what_to_say")
-
-    is_cavein = (
-        re.search(r"\b(delete|cut|drop|remove)\s+(the\s+)?(whole|entire)?\s*(background\s+)?section\b", t)
-        and not re.search(r"\b(keep|preserve|save)\s+(the\s+)?(key|main|core|essential)\b", t)
-        and any(w in t for w in ("okay", "fine", "let's just", "if we're short on time", "sure"))
-    )
-    if is_cavein:
-        return "beat1_cavein"
-
-    is_compromise = (
-        re.search(r"\b(keep|preserve|retain)\s+(the\s+)?(key|main|core|essential|theoretical)\b", t)
-        and re.search(r"\b(cut|drop|trim|shorten|remove|less\s+relevant)\b", t)
-    )
-    if is_compromise and (st.get("active") or in_rtr_mode or "background" in t or "case study" in t):
-        return "beat2_solution"
-
-    return None
-
-
-def format_v3_negotiation_cavein(user_id: int, learner_text: str) -> str:
-    _V3_NEGOTIATION_STATE[user_id] = {
-        "active": True,
-        "counterpart": "Marcus",
-        "constraint": "Shorten the report while preserving the essential background points",
-        "attempt_1": learner_text,
-        "beat": 1,
-    }
-    return (
-        "🎭 <b>Read the Room — Beat 1 Evaluation</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "👂 <b>How It Lands:</b> You sound cooperative and responsive to the time pressure, "
-        "but you gave up your core constraint by agreeing to delete the entire background section.\n\n"
-        "🎯 <b>Constraint Check:</b>\n"
-        "• Acknowledge time pressure: ✅ Achieved\n"
-        "• Preserve essential background context: ❌ Surrendered (premature cave-in)\n\n"
-        "🔄 <b>Try Beat 1 Again (Counterpart: 🧔‍♂️ Marcus):</b>\n"
-        "Can you acknowledge the tight timeline <i>without</i> agreeing to remove the whole section? "
-        "Propose a way to protect the essential context while addressing the space constraint."
-    )
-
-
-def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
-    _V3_NEGOTIATION_STATE.pop(user_id, None)
-    return (
-        "🧔‍♂️ <b>Marcus:</b> “That works. Keep the key background points in one tight paragraph, "
-        "cut the secondary details, and send me the shorter draft by four.”\n\n"
-        "📊 <b>Negotiation Debrief & Exit</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "• <b>Attempt 1 vs. Attempt 2:</b> In your first attempt, you prioritized harmony but surrendered "
-        "the essential background section completely. In your second response, you adapted effectively—acknowledging "
-        "the space constraint while protecting the core context through a concrete compromise.\n"
-        "• <b>Pragmatic Breakdown:</b>\n"
-        "  └ Acknowledgment of constraint: ✅ Clear\n"
-        "  └ Position preservation: ✅ Maintained essential points\n"
-        "  └ Specificity & Adaptation: ✅ Actionable trade-off (short paragraph vs. minor details)\n"
-        "• <b>📋 Evidence Ledger:</b> Recorded <code>Production (Functional Success)</code> in "
-        "<i>Scope & Priority Negotiation</i> for this task (single-scenario evidence; not generalized to permanent mastery)."
-    )
-
-
-def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
-    if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html:
-        return raw_html
-
-    parts_diamond = re.split(r"\n+💎\s*<b>Spoken American Moves:?</b>", raw_html, maxsplit=1)
-    before_diamond = parts_diamond[0].strip()
-
-    has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
-    if has_mirror_fix:
-        return before_diamond
-
-    uptake_event = detect_active_uptake_event(learner_text)
-    if uptake_event is not None:
-        ledger_block = (
-            "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
-            f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
-            f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
-            f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>"
-        )
-        return f"{before_diamond}\n\n{ledger_block}"
-
-    stiff_markers = (
-        "cannot accept", "additional task", "completely full", "do not think",
-        "do not have enough", "in order to", "it is necessary",
-    )
-    if any(sm in (learner_text or "").lower() for sm in stiff_markers) and len(parts_diamond) > 1:
-        return raw_html
-
-    return before_diamond
-
-
-class _V3BotProxy:
-    def __init__(self, real_bot: Any, learner_text: str):
-        self._bot = real_bot
-        self._learner_text = learner_text
-
-    def send_chat_action(self, *a, **kw):
-        return self._bot.send_chat_action(*a, **kw)
-
-    def send_message(self, chat_id: Any, text: str, *a, **kw):
+    def reply_to(self, message: Any, text: str, *a, **kw):
         filtered_text = _apply_v3_cognitive_cap_to_html(text, self._learner_text)
-        return self._bot.send_message(chat_id, filtered_text, *a, **kw)
+        return self._bot.reply_to(message, filtered_text, *a, **kw)
 
     def __getattr__(self, name: str):
         return getattr(self._bot, name)
@@ -2602,11 +2101,12 @@ def handle_claude_v2_turn_safe(
     import logging
     logger = logging.getLogger(__name__)
     try:
-        bot = (g_env or {}).get("bot") or (l_env or {}).get("bot")
-        ai = (g_env or {}).get("ai") or (l_env or {}).get("ai")
-        db = (g_env or {}).get("db") or (l_env or {}).get("db")
+        g_dict = g_env if isinstance(g_env, dict) else {}
+        l_dict = l_env if isinstance(l_env, dict) else {}
+        bot = l_dict.get("bot") or g_dict.get("bot")
+        ai_obj = l_dict.get("ai") or g_dict.get("ai") or l_dict.get("ai_engine") or g_dict.get("ai_engine")
 
-        # Boot readiness notification instead of running auto-test on boot
+        # When called on boot (message is None), send a short readiness notification instead of running a test message
         if message is None:
             if bot and override_chat_id:
                 try:
@@ -2619,13 +2119,14 @@ def handle_claude_v2_turn_safe(
                     pass
             return True
 
-        raw_text = override_text or getattr(message, "text", None) or ""
-        clean_t = raw_text.strip()
+        raw_text = override_text or getattr(message, "text", None) or l_dict.get("text") or ""
+        clean_t = str(raw_text).strip()
         if not clean_t:
             return False
 
-        chat_id = override_chat_id or message.chat.id
-        uid = override_uid or message.from_user.id
+        chat_id = override_chat_id or getattr(getattr(message, "chat", None), "id", None)
+        uid = override_uid or l_dict.get("uid") or getattr(getattr(message, "from_user", None), "id", 0)
+        mode = str(l_dict.get("mode") or (l_dict.get("user") or {}).get("current_mode") or "spontaneous_chat").strip().lower()
 
         if clean_t.startswith("/"):
             return False
@@ -2636,19 +2137,15 @@ def handle_claude_v2_turn_safe(
         if clean_t.startswith(menu_prefixes):
             return False
 
-        u_row = db.get_user(uid) if (db and hasattr(db, "get_user")) else None
-        u_dict = dict(u_row) if u_row else {"user_id": uid, "name": "Musa"}
-        mode = str(u_dict.get("conversation_mode") or "spontaneous_chat").strip().lower()
-
         # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
-        if bot and ai and detect_metalinguistic_inquiry(clean_t):
+        if bot and chat_id and detect_metalinguistic_inquiry(clean_t):
             try:
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             scene_ctx = _V3_SCENE_MEMORY.get(uid, {}).get("last_topic", "finishing the report that is behind schedule")
-            out_html = ai.answer_metalinguistic_inquiry_v3(
-                user=u_dict,
+            out_html = build_metalinguistic_response_v3(
+                ai_obj=ai_obj,
                 question_text=clean_t,
                 scene_topic=scene_ctx,
                 counterpart="Marcus",
@@ -2658,7 +2155,7 @@ def handle_claude_v2_turn_safe(
 
         # GATE 1B: Two-Beat Negotiation (Beat 1 Cave-in vs. Beat 2 Compromise)
         neg_move = classify_negotiation_move_v3(clean_t, mode, uid)
-        if bot and neg_move == "beat1_cavein":
+        if bot and chat_id and neg_move == "beat1_cavein":
             try:
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
@@ -2666,7 +2163,7 @@ def handle_claude_v2_turn_safe(
             out_html = format_v3_negotiation_cavein(uid, clean_t)
             bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
-        if bot and neg_move == "beat2_solution":
+        if bot and chat_id and neg_move == "beat2_solution":
             try:
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
@@ -2675,14 +2172,19 @@ def handle_claude_v2_turn_safe(
             bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
 
-        # Delegate standard turns to the TRUE original handler with _V3BotProxy
+        # Standard turn: remember topic and delegate to the working b2f0cf2 handler with _V3BotProxy
         _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
-        proxied_g = dict(g_env) if isinstance(g_env, dict) else {}
+        proxied_g = dict(g_dict)
+        proxied_l = dict(l_dict)
         if bot:
-            proxied_g["bot"] = _V3BotProxy(bot, clean_t)
-        return _TRUE_ORIG_V2_HANDLER(
+            proxy_bot = _V3BotProxy(bot, clean_t)
+            proxied_g["bot"] = proxy_bot
+            if "bot" in proxied_l:
+                proxied_l["bot"] = proxy_bot
+
+        return _B2F_ORIG_HANDLER(
             proxied_g,
-            l_env,
+            proxied_l,
             message,
             override_text=override_text,
             override_chat_id=override_chat_id,
@@ -2690,7 +2192,7 @@ def handle_claude_v2_turn_safe(
         )
     except Exception as e:
         logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
-        return _TRUE_ORIG_V2_HANDLER(
+        return _B2F_ORIG_HANDLER(
             g_env,
             l_env,
             message,

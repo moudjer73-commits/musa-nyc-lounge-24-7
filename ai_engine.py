@@ -2308,65 +2308,6 @@ class NYCLoungeAI:
                 break
         raise RuntimeError(f"ClaudeV2 call failed after {tries_done} tries: {last_err}")
 
-
-    def answer_metalinguistic_inquiry_v3(
-        self,
-        user: dict,
-        question_text: str,
-        scene_topic: str = "finishing the report",
-        counterpart: str = "Marcus",
-    ) -> str:
-        """
-        Gate 1A: Metalinguistic Inquiry Mode (Spec v1.1 Section 1).
-        Suspends the active scene, answers the learner's linguistic question with
-        4-step Nuance Calibration, and resumes the scene in-character.
-        """
-        sys_prompt = (
-            "You are the Precision C1/C2 Spoken American English Coach in 'Musa's NYC Lounge'.\n"
-            "The learner just paused the conversation to ask a direct metalinguistic question.\n"
-            "Follow the 4-Step Nuance Calibration Protocol strictly:\n"
-            "1. Identify the nature of the issue (distinguish grammaticality/comprehensibility from natural collocation, idiom, or regional US preference).\n"
-            "2. Validate what is understandable in the learner's phrasing, while explaining clearly why the recommended phrasing is the natural default in American English.\n"
-            "3. Contrast the exact nuance between the alternatives (e.g., 'put in a lot of effort' emphasizes the energy/work invested; 'make a big effort' focuses on the attempt itself; whereas 'do an effort' is a non-idiomatic calque in standard English even though the meaning is clear).\n"
-            "4. NEVER invent corpus percentages or fake statistics.\n\n"
-            "Return ONLY valid JSON with two keys:\n"
-            "{\n"
-            '  "coach_explanation": "Concise 3-4 sentence explanation in clear English + a 1-line Arabic summary.",\n'
-            f'  "scene_resume_line": "A natural 1-2 sentence in-character line from {counterpart} resuming the previous conversation topic ({scene_topic}) without lecturing."\n'
-            "}"
-        )
-        u_prompt = (
-            f"Learner's metalinguistic question: {question_text}\n"
-            f"Paused scene topic: {scene_topic}\n"
-            f"Active counterpart to resume scene: {counterpart}"
-        )
-        try:
-            res = self._call_gemini_json(
-                system_prompt=sys_prompt,
-                user_prompt=u_prompt,
-                temperature=0.2,
-                max_tries=3,
-                validator_fn=lambda d: d if isinstance(d, dict) and d.get("coach_explanation") and d.get("scene_resume_line") else (_ for _ in ()).throw(ValueError("Missing keys")),
-            )
-            coach_exp = html.escape(str(res["coach_explanation"]).strip())
-            resume_ln = html.escape(str(res["scene_resume_line"]).strip().strip('"“”'))
-        except Exception:
-            coach_exp = (
-                "Your meaning in “do a big effort” is completely understandable, so it doesn't break communication. "
-                "However, in standard American English, it's a collocation issue (calque) rather than a logic rule: "
-                "“effort” naturally pairs with “put in” (emphasizing the time and energy invested: “put in a lot of effort”) "
-                "or “make” (focusing on the attempt itself: “make a big effort”), rather than “do”.\n"
-                "↳ بالعربية: المعنى مفهوم تماماً، لكن القضية تتعلق بالتلازم اللفظي؛ فكلمة effort تقترن في الإنجليزية الأمريكية بالفعل put in (للتركيز على الطاقة المبذولة) أو make، وليس do."
-            )
-            resume_ln = "Anyway, back to that report—what's the main bottleneck holding you up right now?"
-
-        return (
-            "🧭 <b>Linguistic Consultation (Scene Paused)</b>\n"
-            f"{coach_exp}\n\n"
-            "🎬 <b>Scene Resumed</b>\n"
-            f"🧔‍♂️ <b>{html.escape(counterpart)}:</b> “{resume_ln}”"
-        )
-
     def generate_dialogue(self, user: Dict[str, Any], user_text: str, mode: str = "banter", history_lines: Optional[List[str]] = None) -> Any:
         from validation_layer import DialogueOnlyResponse
         pref_reg = (user.get("preferred_register") if isinstance(user, dict) else None) or "witty"
@@ -2387,53 +2328,30 @@ class NYCLoungeAI:
         ])
         u_prompt = f"RECENT DIALOGUE CONTEXT:\n{hist_block}\n\nLEARNER MESSAGE:\n{user_text}"
         def _validate_dlg_with_repair(d: dict):
-            raw_turns = d.get("turns") if isinstance(d, dict) else None
-            if not raw_turns or not isinstance(raw_turns, list):
+            try:
                 return DialogueOnlyResponse.model_validate(d)
-
-            recent_joined = " ".join(history_lines or [])
-            cleaned_turns = []
-            for idx, t_item in enumerate(raw_turns[:3]):
-                spk = str(t_item.get("speaker", "Marcus")).strip().capitalize()
-                if spk not in ("Marcus", "Chloe", "Jake"):
-                    spk = "Marcus"
-                txt = str(t_item.get("text", "")).strip()
-
-                for opener in ("Look,", "The thing is,", "Honestly,", "Frankly,"):
-                    if txt.startswith(opener) and (opener in recent_joined or (spk == "Marcus" and opener == "Look,")):
-                        rest = txt[len(opener):].lstrip()
-                        if rest:
-                            txt = rest[0].upper() + rest[1:]
-
-                cleaned_turns.append({"speaker": spk, "text": txt})
-
-            q_turn_indices = [i for i, t in enumerate(cleaned_turns) if "?" in t["text"]]
-            if len(q_turn_indices) > 1:
-                for i in q_turn_indices[:-1]:
-                    sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', cleaned_turns[i]["text"]) if s.strip()]
-                    decl_sents = [s for s in sents if not s.endswith("?") and not re.match(r'^(Can|Could|Will|Would|Do|Does|Did|Are|Is|Was|Were|Have|Has|Why|How|What|Where|When|Who)\b', s, re.I)]
-                    if decl_sents:
-                        cleaned_turns[i]["text"] = " ".join(decl_sents)
-
-            for t_item in cleaned_turns:
-                spk = t_item["speaker"]
-                txt = t_item["text"]
-                limit_map = {"Jake": 22, "Chloe": 33, "Marcus": 40}
-                max_w = limit_map.get(spk, 40)
-                words = txt.split()
-                if len(words) > max_w:
-                    sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', txt) if s.strip()]
-                    kept = []
-                    for s in sents:
-                        if len((" ".join(kept + [s])).split()) <= max_w:
-                            kept.append(s)
-                    if kept:
-                        t_item["text"] = " ".join(kept)
-                    else:
-                        term = "?" if txt.endswith("?") else "."
-                        t_item["text"] = " ".join(words[:max_w]).rstrip(",;:.!?") + term
-
-            return DialogueOnlyResponse.model_validate({"turns": cleaned_turns})
+            except Exception:
+                # Auto-repair minor stylistic overflows (e.g. rhetorical '?' in early turns or slight word overflow)
+                raw_turns = d.get("turns") if isinstance(d, dict) else None
+                if not raw_turns or not isinstance(raw_turns, list):
+                    raise
+                repaired = []
+                for idx, t_item in enumerate(raw_turns[:4]):
+                    spk = str(t_item.get("speaker", "Marcus")).strip().capitalize()
+                    if spk not in ("Marcus", "Chloe", "Jake"):
+                        spk = "Marcus"
+                    txt = str(t_item.get("text", "")).strip()
+                    # Question marks will be deduplicated after collecting all turns
+                    words = txt.split()
+                    limit_map = {"Jake": 22, "Chloe": 33, "Marcus": 40}
+                    max_w = limit_map.get(spk, 40)
+                    if len(words) > max_w:
+                        txt = " ".join(words[:max_w]).rstrip(",;:") + "."
+                    repaired.append({"speaker": spk, "text": txt})
+                q_idxs = [i for i, t in enumerate(repaired) if "?" in t["text"]]
+                for i in q_idxs[:-1]:
+                    repaired[i]["text"] = repaired[i]["text"].replace("?", ".")
+                return DialogueOnlyResponse.model_validate({"turns": repaired})
 
         return self._call_gemini_json(
             system_prompt=sys_prompt,
