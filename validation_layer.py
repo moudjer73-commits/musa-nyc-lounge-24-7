@@ -1863,8 +1863,10 @@ def handle_claude_v2_turn_safe(g_dict: dict, l_dict: dict, message_obj, override
 # ==============================================================================
 # CLAUDE V3.2 — BOUNDARY-VERIFIED SQLITE LEDGER & NATURAL RIFF CALIBRATION
 # ==============================================================================
+import os
 import sqlite3
 import uuid
+from pathlib import Path
 
 _B2F_ORIG_HANDLER = handle_claude_v2_turn_safe
 _V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
@@ -2599,4 +2601,11 @@ def handle_claude_v2_turn_safe(
         )
     except Exception as e:
         logger.error(f"Claude V3.2 wrapper error: {e}", exc_info=True)
-        return True
+        return _B2F_ORIG_HANDLER(
+            g_env,
+            l_env,
+            message,
+            override_text=override_text,
+            override_chat_id=override_chat_id,
+            override_uid=override_uid,
+        )
