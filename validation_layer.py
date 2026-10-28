@@ -2459,6 +2459,14 @@ def _ensure_ai_grounding_hooked(ai_obj: Any):
     _V3_PATCHED_AI_IDS.add(id(ai_obj))
 
 
+class _DummyTelebotMsg:
+    message_id = 0
+    date = 0
+    text = ""
+    class chat:
+        id = 0
+
+
 def _ensure_bot_method_hooked(bot_obj: Any, db_path: Optional[str] = None):
     if not bot_obj or id(bot_obj) in _V3_PATCHED_BOT_IDS:
         return
@@ -2467,14 +2475,14 @@ def _ensure_bot_method_hooked(bot_obj: Any, db_path: Optional[str] = None):
 
     def _hooked_send_message(chat_id: Any, text: str, *a, **kw):
         if "message text is empty" in str(text):
-            return None
+            return _DummyTelebotMsg()
         cid_int = int(chat_id) if str(chat_id).lstrip("-").isdigit() else 0
         l_txt = _V3_ACTIVE_LEARNER_TEXT.get(cid_int, "")
         uid_val = _V3_ACTIVE_UID.get(cid_int, cid_int)
         sc_id = _V3_SCENE_MEMORY.get(uid_val, {}).get("scene_id", "default_scene")
         filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt, user_id=uid_val, scene_id=sc_id, db_path=db_path)
         if not filtered or not filtered.strip():
-            return None
+            return _DummyTelebotMsg()
         return orig_send(chat_id, filtered, *a, **kw)
 
     bot_obj.send_message = _hooked_send_message
