@@ -1901,7 +1901,7 @@ def build_metalinguistic_response_v3(ai_obj: Any, question_text: str, scene_topi
         "Return ONLY valid JSON with two keys:\n"
         "{\n"
         '  "coach_explanation": "Concise 3-4 sentence explanation in clear English + a 1-line Arabic summary.",\n'
-        f'  "scene_resume_line": "A natural 1-2 sentence in-character line from {counterpart} resuming the previous conversation topic ({scene_topic}) without lecturing."\n'
+        f'  "scene_resume_line": "A natural 1-2 sentence in-character line from {counterpart} addressing the learner directly as \'you\' (NEVER say \'I put in effort\' as if {counterpart} wrote the learner\'s report) and resuming the previous topic ({scene_topic})."\n'
         "}"
     )
     u_prompt = (
@@ -2038,18 +2038,49 @@ def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
 
 
 def _clean_dialogue_openers_in_html(raw_html: str) -> str:
-    """Strip mechanical openers ('Look,', 'The thing is,') and fix '?' turned into '.' in dialogue lines."""
+    """
+    1. Strips mechanical openers ('Look,', 'The thing is,').
+    2. Restores '?' on syntactic questions that ended with '.'.
+    3. Caps speaker dialogue blocks at 3 (prevents duplicate 6-turn output).
+    """
     for opener in ("Look, ", "The thing is, ", "Honestly, "):
         raw_html = re.sub(
             rf"(<b>(?:Marcus|Chloe|Jake):?</b>\s*){re.escape(opener)}",
             lambda m: m.group(1),
             raw_html,
         )
-    # Capitalize first letter after speaker tag if needed
+
     def _cap_after_tag(m):
         return m.group(1) + m.group(2).upper()
+
     raw_html = re.sub(r"(<b>(?:Marcus|Chloe|Jake):?</b>\s*)([a-z])", _cap_after_tag, raw_html)
-    return raw_html
+
+    # Restore '?' when a sentence starts with an auxiliary/question word or ends with a tag question like ", aren't you."
+    q_starters = r"(?:Are|Is|Was|Were|Do|Does|Did|Can|Could|Will|Would|Should|Have|Has|Why|How|What|Where|When|Who)"
+    raw_html = re.sub(
+        rf"((?:^|(?<=[.!?]\s)){q_starters}\b[^.!?\n]{{8,160}})\.",
+        r"\1?",
+        raw_html,
+    )
+    raw_html = re.sub(
+        r"(,\s*(?:aren't|isn't|don't|doesn't|didn't|won't|wouldn't|can't|couldn't|shouldn't|haven't|hasn't)\s+you)\.",
+        r"\1?",
+        raw_html,
+        flags=re.IGNORECASE,
+    )
+
+    # Cap dialogue blocks at max 3 turns so a double-generated 6-turn block never reaches Telegram
+    paragraphs = [p.strip() for p in raw_html.split("\n\n") if p.strip()]
+    kept_paragraphs = []
+    speaker_count = 0
+    for p in paragraphs:
+        if any(spk in p for spk in ("🧔‍♂️", "👩🏼‍💼", "🧢")) and "<b>" in p:
+            speaker_count += 1
+            if speaker_count > 3:
+                continue
+        kept_paragraphs.append(p)
+
+    return "\n\n".join(kept_paragraphs)
 
 
 def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
