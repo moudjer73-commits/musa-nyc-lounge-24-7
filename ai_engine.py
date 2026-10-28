@@ -2328,30 +2328,63 @@ class NYCLoungeAI:
         ])
         u_prompt = f"RECENT DIALOGUE CONTEXT:\n{hist_block}\n\nLEARNER MESSAGE:\n{user_text}"
         def _validate_dlg_with_repair(d: dict):
-            try:
+            raw_turns = d.get("turns") if isinstance(d, dict) else None
+            if not raw_turns or not isinstance(raw_turns, list):
                 return DialogueOnlyResponse.model_validate(d)
-            except Exception:
-                # Auto-repair minor stylistic overflows (e.g. rhetorical '?' in early turns or slight word overflow)
-                raw_turns = d.get("turns") if isinstance(d, dict) else None
-                if not raw_turns or not isinstance(raw_turns, list):
-                    raise
-                repaired = []
-                for idx, t_item in enumerate(raw_turns[:4]):
-                    spk = str(t_item.get("speaker", "Marcus")).strip().capitalize()
-                    if spk not in ("Marcus", "Chloe", "Jake"):
-                        spk = "Marcus"
-                    txt = str(t_item.get("text", "")).strip()
-                    # Question marks will be deduplicated after collecting all turns
-                    words = txt.split()
-                    limit_map = {"Jake": 22, "Chloe": 33, "Marcus": 40}
-                    max_w = limit_map.get(spk, 40)
-                    if len(words) > max_w:
-                        txt = " ".join(words[:max_w]).rstrip(",;:") + "."
-                    repaired.append({"speaker": spk, "text": txt})
-                q_idxs = [i for i, t in enumerate(repaired) if "?" in t["text"]]
-                for i in q_idxs[:-1]:
-                    repaired[i]["text"] = repaired[i]["text"].replace("?", ".")
-                return DialogueOnlyResponse.model_validate({"turns": repaired})
+
+            recent_joined = " ".join(history_lines or [])
+            cleaned_turns = []
+            for idx, t_item in enumerate(raw_turns[:3]):
+                spk = str(t_item.get("speaker", "Marcus")).strip().capitalize()
+                if spk not in ("Marcus", "Chloe", "Jake"):
+                    spk = "Marcus"
+                txt = str(t_item.get("text", "")).strip()
+
+                for opener in ("Look,", "The thing is,", "Honestly,", "Frankly,"):
+                    if txt.startswith(opener) and (opener in recent_joined or (spk == "Marcus" and opener == "Look,")):
+                        rest = txt[len(opener):].lstrip()
+                        if rest:
+                            txt = rest[0].upper() + rest[1:]
+
+                # Restore '?' if a syntactic question accidentally ended with '.'
+                sents_check = [s.strip() for s in re.split(r'(?<=[.!?])\s+', txt) if s.strip()]
+                fixed_sents = []
+                for s in sents_check:
+                    if s.endswith(".") and re.match(r'^(Can|Could|Will|Would|Do|Does|Did|Are|Is|Was|Were|Have|Has|Should|Why|How|What|Where|When|Who)\b', s, re.I):
+                        s = s[:-1] + "?"
+                    fixed_sents.append(s)
+                txt = " ".join(fixed_sents)
+
+                cleaned_turns.append({"speaker": spk, "text": txt})
+
+            # Keep at most 1 question across the dialogue by dropping extra questions semantically (NEVER turning '?' into '.')
+            q_turn_indices = [i for i, t in enumerate(cleaned_turns) if "?" in t["text"]]
+            if len(q_turn_indices) > 1:
+                for i in q_turn_indices[:-1]:
+                    sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', cleaned_turns[i]["text"]) if s.strip()]
+                    decl_sents = [s for s in sents if not s.endswith("?") and not re.match(r'^(Can|Could|Will|Would|Do|Does|Did|Are|Is|Was|Were|Have|Has|Should|Why|How|What|Where|When|Who)\b', s, re.I)]
+                    if decl_sents:
+                        cleaned_turns[i]["text"] = " ".join(decl_sents)
+
+            for t_item in cleaned_turns:
+                spk = t_item["speaker"]
+                txt = t_item["text"]
+                limit_map = {"Jake": 22, "Chloe": 33, "Marcus": 40}
+                max_w = limit_map.get(spk, 40)
+                words = txt.split()
+                if len(words) > max_w:
+                    sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', txt) if s.strip()]
+                    kept = []
+                    for s in sents:
+                        if len((" ".join(kept + [s])).split()) <= max_w:
+                            kept.append(s)
+                    if kept:
+                        t_item["text"] = " ".join(kept)
+                    else:
+                        term = "?" if txt.endswith("?") else "."
+                        t_item["text"] = " ".join(words[:max_w]).rstrip(",;:.!?") + term
+
+            return DialogueOnlyResponse.model_validate({"turns": cleaned_turns})
 
         return self._call_gemini_json(
             system_prompt=sys_prompt,

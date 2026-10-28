@@ -2043,15 +2043,22 @@ def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
     if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html:
         return raw_html
 
-    parts_diamond = re.split(r"\n+💎\s*<b>Spoken American Moves:?</b>", raw_html, maxsplit=1)
+    # Match 💎 Spoken American Moves regardless of where <b> tags are placed
+    parts_diamond = re.split(
+        r"\n+(?:<b>)?\s*💎\s*(?:<b>)?\s*Spoken American Moves:?(?:</b>)?",
+        raw_html,
+        maxsplit=1,
+    )
     before_diamond = parts_diamond[0].strip()
 
     has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
     if has_mirror_fix:
+        # Priority 1: Surgical Mirror only (strip Chunks to respect Cognitive Cap)
         return before_diamond
 
     uptake_event = detect_active_uptake_event(learner_text)
     if uptake_event is not None:
+        # Priority 2: Active Uptake & Evidence Ledger
         ledger_block = (
             "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
             f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
@@ -2065,14 +2072,16 @@ def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
         "do not have enough", "in order to", "it is necessary",
     )
     if any(sm in (learner_text or "").lower() for sm in stiff_markers) and len(parts_diamond) > 1:
+        # Priority 3: Stiff textbook phrasing -> keep Spoken Move as Recast/Alternative
         return raw_html
 
+    # Priority 4: Clean natural English -> Complete Coaching Silence (no_coaching_needed)!
     return before_diamond
 
 
 class _V3BotProxy:
     def __init__(self, real_bot: Any, learner_text: str):
-        self._bot = real_bot
+        self._bot = getattr(real_bot, "_bot", real_bot)
         self._learner_text = learner_text
 
     def send_chat_action(self, *a, **kw):
@@ -2100,19 +2109,20 @@ def handle_claude_v2_turn_safe(
 ) -> bool:
     import logging
     logger = logging.getLogger(__name__)
+    real_bot = None
     try:
         g_dict = g_env if isinstance(g_env, dict) else {}
         l_dict = l_env if isinstance(l_env, dict) else {}
         bot = l_dict.get("bot") or g_dict.get("bot")
+        real_bot = getattr(bot, "_bot", bot) if bot else None
         ai_obj = l_dict.get("ai") or g_dict.get("ai") or l_dict.get("ai_engine") or g_dict.get("ai_engine")
 
-        # When called on boot (message is None), send a short readiness notification instead of running a test message
         if message is None:
-            if bot and override_chat_id:
+            if real_bot and override_chat_id:
                 try:
-                    bot.send_message(
+                    real_bot.send_message(
                         override_chat_id,
-                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Spec v1.1)</b> is live and listening! Send Message 1 now.",
+                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Silence & Gate Filter Active)</b> is live! Send Message 1 now.",
                         parse_mode="HTML",
                     )
                 except Exception:
@@ -2138,9 +2148,9 @@ def handle_claude_v2_turn_safe(
             return False
 
         # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
-        if bot and chat_id and detect_metalinguistic_inquiry(clean_t):
+        if real_bot and chat_id and detect_metalinguistic_inquiry(clean_t):
             try:
-                bot.send_chat_action(chat_id, "typing")
+                real_bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             scene_ctx = _V3_SCENE_MEMORY.get(uid, {}).get("last_topic", "finishing the report that is behind schedule")
@@ -2150,48 +2160,55 @@ def handle_claude_v2_turn_safe(
                 scene_topic=scene_ctx,
                 counterpart="Marcus",
             )
-            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            real_bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
 
         # GATE 1B: Two-Beat Negotiation (Beat 1 Cave-in vs. Beat 2 Compromise)
         neg_move = classify_negotiation_move_v3(clean_t, mode, uid)
-        if bot and chat_id and neg_move == "beat1_cavein":
+        if real_bot and chat_id and neg_move == "beat1_cavein":
             try:
-                bot.send_chat_action(chat_id, "typing")
+                real_bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             out_html = format_v3_negotiation_cavein(uid, clean_t)
-            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            real_bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
-        if bot and chat_id and neg_move == "beat2_solution":
+        if real_bot and chat_id and neg_move == "beat2_solution":
             try:
-                bot.send_chat_action(chat_id, "typing")
+                real_bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             out_html = format_v3_negotiation_debrief(uid, clean_t)
-            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            real_bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
 
-        # Standard turn: remember topic and delegate to the working b2f0cf2 handler with _V3BotProxy
+        # Mutate g_env["bot"] IN-PLACE during the call so app.py's global `bot` uses _V3BotProxy!
         _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
-        proxied_g = dict(g_dict)
-        proxied_l = dict(l_dict)
-        if bot:
-            proxy_bot = _V3BotProxy(bot, clean_t)
-            proxied_g["bot"] = proxy_bot
-            if "bot" in proxied_l:
-                proxied_l["bot"] = proxy_bot
+        if real_bot and isinstance(g_env, dict):
+            proxy_instance = _V3BotProxy(real_bot, clean_t)
+            g_env["bot"] = proxy_instance
+            if isinstance(l_env, dict) and "bot" in l_env:
+                l_env["bot"] = proxy_instance
 
-        return _B2F_ORIG_HANDLER(
-            proxied_g,
-            proxied_l,
-            message,
-            override_text=override_text,
-            override_chat_id=override_chat_id,
-            override_uid=override_uid,
-        )
+        try:
+            return _B2F_ORIG_HANDLER(
+                g_env,
+                l_env,
+                message,
+                override_text=override_text,
+                override_chat_id=override_chat_id,
+                override_uid=override_uid,
+            )
+        finally:
+            if real_bot and isinstance(g_env, dict):
+                g_env["bot"] = real_bot
+                if isinstance(l_env, dict) and "bot" in l_env:
+                    l_env["bot"] = real_bot
+
     except Exception as e:
         logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
+        if real_bot and isinstance(g_env, dict):
+            g_env["bot"] = real_bot
         return _B2F_ORIG_HANDLER(
             g_env,
             l_env,
