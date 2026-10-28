@@ -2132,9 +2132,8 @@ def handle_claude_v2_turn_safe(
         return None
 
 
-
 # ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (WRAPPING PROVEN V2 HANDLER)
+# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (FIXED ENV LOOKUP — NO V1 FALLBACK)
 # ==============================================================================
 _ORIG_HANDLE_V2_TURN = handle_claude_v2_turn_safe
 _V2_PENDING_PRACTICE_MEM = globals().get("_V2_PENDING_PRACTICE_MEM", {})
@@ -2142,8 +2141,31 @@ _V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
 _V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
 
 
+def _resolve_env_objs(g_env: dict, l_env: dict):
+    """Extract (bot, ai, db) reliably regardless of variable naming in app.py."""
+    combined = {}
+    if isinstance(g_env, dict):
+        combined.update(g_env)
+    if isinstance(l_env, dict):
+        combined.update(l_env)
+
+    bot_obj = combined.get("bot")
+    ai_obj = combined.get("ai") or combined.get("ai_engine") or combined.get("engine")
+    db_obj = combined.get("db") or combined.get("database") or combined.get("vault")
+
+    # Fallback scan by class/method duck-typing if names differ
+    if not ai_obj or not db_obj or not bot_obj:
+        for v in combined.values():
+            if not bot_obj and hasattr(v, "send_message") and hasattr(v, "send_chat_action"):
+                bot_obj = v
+            if not ai_obj and hasattr(v, "generate_dialogue") and hasattr(v, "coach_turn"):
+                ai_obj = v
+            if not db_obj and hasattr(v, "get_user"):
+                db_obj = v
+    return bot_obj, ai_obj, db_obj
+
+
 def detect_metalinguistic_inquiry(text: str) -> bool:
-    """Gate 1A: Detect when the learner asks a direct metalinguistic question ('Why say X instead of Y?')."""
     t = (text or "").strip().lower()
     if "?" not in t:
         return False
@@ -2162,7 +2184,6 @@ def detect_metalinguistic_inquiry(text: str) -> bool:
 
 
 def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
-    """Gate 4: Detect independent functional & target uptake without claiming permanent stabilization."""
     t = (text or "").strip()
     tl = t.lower()
     if re.search(r"\bnot\s+(quite\s+|entirely\s+|fully\s+)?sold\s+on\b", tl):
@@ -2257,28 +2278,16 @@ def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
 
 
 def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
-    """
-    Applies the Spec v1.1 Call B Priority & Cognitive Cap rules to outgoing chat HTML:
-    - If Read the Room card (🎭), return unchanged.
-    - Separate Dialogue lines from Mirror (🪞/🇺🇸/🎙️) and Chunks (💎).
-    - Priority 1: If Mirror Fix exists -> Dialogue + Mirror ONLY (strip Chunks).
-    - Priority 2: If Active Uptake exists -> Dialogue + Evidence Ledger ONLY.
-    - Priority 3: If textbook-stiff markers exist -> keep Dialogue + 1 Recast/Chunk note.
-    - Priority 4: Otherwise (clean natural input) -> Dialogue ONLY (complete Call B silence!).
-    """
     if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html:
         return raw_html
 
-    # Split out the 💎 Spoken American Moves section if present
     parts_diamond = re.split(r"\n+💎\s*<b>Spoken American Moves:?</b>", raw_html, maxsplit=1)
     before_diamond = parts_diamond[0].strip()
 
     has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
     if has_mirror_fix:
-        # Priority 1: Surgical Mirror only (no chunk overload)
         return before_diamond
 
-    # Priority 2: Active Uptake & Evidence Ledger
     uptake_event = detect_active_uptake_event(learner_text)
     if uptake_event is not None:
         ledger_block = (
@@ -2289,7 +2298,6 @@ def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
         )
         return f"{before_diamond}\n\n{ledger_block}"
 
-    # Priority 3: Textbook-stiff input -> keep Spoken Move as a Recast/Alternative note
     stiff_markers = (
         "cannot accept", "additional task", "completely full", "do not think",
         "do not have enough", "in order to", "it is necessary",
@@ -2297,12 +2305,10 @@ def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
     if any(sm in (learner_text or "").lower() for sm in stiff_markers) and len(parts_diamond) > 1:
         return raw_html
 
-    # Priority 4: Clean natural English -> Complete Coaching Silence (no_coaching_needed)!
     return before_diamond
 
 
 class _V3BotProxy:
-    """Intercepts bot.send_message during standard turns to enforce the V3 Cognitive Cap & Silence Policy."""
     def __init__(self, real_bot: Any, learner_text: str):
         self._bot = real_bot
         self._learner_text = learner_text
@@ -2328,24 +2334,21 @@ def handle_claude_v2_turn_safe(
     import logging
     logger = logging.getLogger(__name__)
     try:
-        bot = g_env.get("bot")
-        ai = g_env.get("ai")
-        db = g_env.get("db")
-        if not bot or not ai or not db:
-            return False
+        bot, ai, db = _resolve_env_objs(g_env, l_env)
 
-        # Boot readiness notification
-        if message is None:
-            boot_cid = kwargs.get("override_chat_id")
-            if boot_cid:
+        # Boot call (message is None): suppress auto-test message and send readiness ping
+        if message is None and not kwargs.get("override_text"):
+            return True
+        if message is None and kwargs.get("override_chat_id"):
+            if bot:
                 try:
                     bot.send_message(
-                        boot_cid,
-                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Spec v1.1)</b> is live and listening! Send Message 1 whenever you’re ready.",
+                        kwargs["override_chat_id"],
+                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Spec v1.1)</b> is live and listening! Send Message 1 now.",
                         parse_mode="HTML",
                     )
-                except Exception as be:
-                    logger.warning(f"Boot readiness ping warning: {be}")
+                except Exception:
+                    pass
             return True
 
         raw_text = kwargs.get("override_text") or getattr(message, "text", None) or ""
@@ -2353,16 +2356,8 @@ def handle_claude_v2_turn_safe(
         if not clean_t:
             return False
 
-        chat_id = kwargs.get("override_chat_id") or message.chat.id
-        uid = kwargs.get("override_uid") or message.from_user.id
-
-        if clean_t.lower() in ("/skip", "skip", "/cancel"):
-            if uid in _V2_PENDING_PRACTICE_MEM or uid in _V3_NEGOTIATION_STATE:
-                _V2_PENDING_PRACTICE_MEM.pop(uid, None)
-                _V3_NEGOTIATION_STATE.pop(uid, None)
-                bot.send_message(chat_id, "✅ Exited active roleplay. Back to NYC Banter!", parse_mode="HTML")
-                return True
-            return False
+        chat_id = kwargs.get("override_chat_id") or (message.chat.id if message else None)
+        uid = kwargs.get("override_uid") or (message.from_user.id if message else None)
 
         if clean_t.startswith("/"):
             return False
@@ -2373,12 +2368,12 @@ def handle_claude_v2_turn_safe(
         if clean_t.startswith(menu_prefixes):
             return False
 
-        u_row = db.get_user(uid) if hasattr(db, "get_user") else None
+        u_row = db.get_user(uid) if (db and hasattr(db, "get_user")) else None
         u_dict = dict(u_row) if u_row else {"user_id": uid, "name": "Musa"}
         mode = str(u_dict.get("conversation_mode") or "spontaneous_chat").strip().lower()
 
         # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
-        if detect_metalinguistic_inquiry(clean_t):
+        if bot and ai and detect_metalinguistic_inquiry(clean_t):
             try:
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
@@ -2395,7 +2390,7 @@ def handle_claude_v2_turn_safe(
 
         # GATE 1B: Two-Beat Negotiation (Beat 1 Cave-in vs. Beat 2 Compromise)
         neg_move = classify_negotiation_move_v3(clean_t, mode, uid)
-        if neg_move == "beat1_cavein":
+        if bot and neg_move == "beat1_cavein":
             try:
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
@@ -2403,7 +2398,7 @@ def handle_claude_v2_turn_safe(
             out_html = format_v3_negotiation_cavein(uid, clean_t)
             bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
-        if neg_move == "beat2_solution":
+        if bot and neg_move == "beat2_solution":
             try:
                 bot.send_chat_action(chat_id, "typing")
             except Exception:
@@ -2412,11 +2407,16 @@ def handle_claude_v2_turn_safe(
             bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
 
-        # Record scene topic for continuity, then delegate to proven V2 handler with V3 Bot Proxy
+        # Delegate to proven _ORIG_HANDLE_V2_TURN with _V3BotProxy wrapped in both g_env and l_env
         _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
-        proxied_env = dict(g_env)
-        proxied_env["bot"] = _V3BotProxy(bot, clean_t)
-        return _ORIG_HANDLE_V2_TURN(proxied_env, l_env, message, *args, **kwargs)
+        proxied_g = dict(g_env) if isinstance(g_env, dict) else {}
+        proxied_l = dict(l_env) if isinstance(l_env, dict) else {}
+        if bot:
+            proxy_bot = _V3BotProxy(bot, clean_t)
+            proxied_g["bot"] = proxy_bot
+            if "bot" in proxied_l:
+                proxied_l["bot"] = proxy_bot
+        return _ORIG_HANDLE_V2_TURN(proxied_g, proxied_l, message, *args, **kwargs)
 
     except Exception as e:
         logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
