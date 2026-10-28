@@ -2341,7 +2341,7 @@ class NYCLoungeAI:
                 txt = str(t_item.get("text", "")).strip()
 
                 for opener in ("Look,", "The thing is,", "Honestly,", "Frankly,"):
-                    if txt.startswith(opener) and (opener in recent_joined or (spk == "Marcus" and opener == "Look,")):
+                    if txt.startswith(opener):
                         rest = txt[len(opener):].lstrip()
                         if rest:
                             txt = rest[0].upper() + rest[1:]

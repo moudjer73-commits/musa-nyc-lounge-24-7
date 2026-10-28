@@ -1860,18 +1860,17 @@ def handle_claude_v2_turn_safe(g_dict: dict, l_dict: dict, message_obj, override
         return True
 
 
-
-
 # ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (LAYERED ON WORKING COMMIT b2f0cf2)
+# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (DIRECT BOT METHOD HOOK)
 # ==============================================================================
 _B2F_ORIG_HANDLER = handle_claude_v2_turn_safe
 _V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
 _V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
+_V3_ACTIVE_LEARNER_TEXT: Dict[int, str] = {}
+_V3_PATCHED_BOT_IDS: set = set()
 
 
 def detect_metalinguistic_inquiry(text: str) -> bool:
-    """Gate 1A: Detect when the learner asks a direct metalinguistic question ('Why say X instead of Y?')."""
     t = (text or "").strip().lower()
     if "?" not in t:
         return False
@@ -1890,7 +1889,6 @@ def detect_metalinguistic_inquiry(text: str) -> bool:
 
 
 def build_metalinguistic_response_v3(ai_obj: Any, question_text: str, scene_topic: str, counterpart: str = "Marcus") -> str:
-    """Self-contained Gate 1A responder: suspends scene, answers metalinguistic question accurately, and resumes scene."""
     sys_prompt = (
         "You are the Precision C1/C2 Spoken American English Coach in 'Musa's NYC Lounge'.\n"
         "The learner paused the conversation to ask a direct metalinguistic question.\n"
@@ -1945,7 +1943,6 @@ def build_metalinguistic_response_v3(ai_obj: Any, question_text: str, scene_topi
 
 
 def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
-    """Gate 4: Detect independent functional & target uptake without claiming permanent stabilization."""
     t = (text or "").strip()
     tl = t.lower()
     if re.search(r"\bnot\s+(quite\s+|entirely\s+|fully\s+)?sold\s+on\b", tl):
@@ -2040,20 +2037,21 @@ def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
 
 
 def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
-    if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html:
+    if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html or "🟢" in raw_html:
         return raw_html
 
-    # Match 💎 Spoken American Moves regardless of where <b> tags are placed
-    parts_diamond = re.split(
-        r"\n+(?:<b>)?\s*💎\s*(?:<b>)?\s*Spoken American Moves:?(?:</b>)?",
-        raw_html,
-        maxsplit=1,
-    )
-    before_diamond = parts_diamond[0].strip()
+    # Match 💎 Spoken American Moves in any HTML variation
+    if "💎" not in raw_html:
+        return raw_html
+
+    idx_diamond = raw_html.find("💎")
+    # Cut cleanly right before the newline preceding 💎
+    cut_pos = raw_html.rfind("\n", 0, idx_diamond)
+    before_diamond = (raw_html[:cut_pos] if cut_pos != -1 else raw_html[:idx_diamond]).strip()
 
     has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
     if has_mirror_fix:
-        # Priority 1: Surgical Mirror only (strip Chunks to respect Cognitive Cap)
+        # Priority 1: Surgical Mirror only (0 chunks)
         return before_diamond
 
     uptake_event = detect_active_uptake_event(learner_text)
@@ -2071,32 +2069,36 @@ def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
         "cannot accept", "additional task", "completely full", "do not think",
         "do not have enough", "in order to", "it is necessary",
     )
-    if any(sm in (learner_text or "").lower() for sm in stiff_markers) and len(parts_diamond) > 1:
-        # Priority 3: Stiff textbook phrasing -> keep Spoken Move as Recast/Alternative
+    if any(sm in (learner_text or "").lower() for sm in stiff_markers):
+        # Priority 3: Textbook-stiff input -> keep Spoken Move as Recast/Alternative
         return raw_html
 
     # Priority 4: Clean natural English -> Complete Coaching Silence (no_coaching_needed)!
     return before_diamond
 
 
-class _V3BotProxy:
-    def __init__(self, real_bot: Any, learner_text: str):
-        self._bot = getattr(real_bot, "_bot", real_bot)
-        self._learner_text = learner_text
+def _ensure_bot_method_hooked(bot_obj: Any):
+    """Hooks `bot.send_message` and `bot.reply_to` directly on the TeleBot instance so NO call can bypass the V3 filter."""
+    if not bot_obj or id(bot_obj) in _V3_PATCHED_BOT_IDS:
+        return
+    orig_send = bot_obj.send_message
+    orig_reply = getattr(bot_obj, "reply_to", None)
 
-    def send_chat_action(self, *a, **kw):
-        return self._bot.send_chat_action(*a, **kw)
+    def _hooked_send_message(chat_id: Any, text: str, *a, **kw):
+        l_txt = _V3_ACTIVE_LEARNER_TEXT.get(int(chat_id) if str(chat_id).lstrip("-").isdigit() else 0, "")
+        filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt)
+        return orig_send(chat_id, filtered, *a, **kw)
 
-    def send_message(self, chat_id: Any, text: str, *a, **kw):
-        filtered_text = _apply_v3_cognitive_cap_to_html(text, self._learner_text)
-        return self._bot.send_message(chat_id, filtered_text, *a, **kw)
+    bot_obj.send_message = _hooked_send_message
+    if orig_reply:
+        def _hooked_reply_to(msg_obj: Any, text: str, *a, **kw):
+            cid = getattr(getattr(msg_obj, "chat", None), "id", 0)
+            l_txt = _V3_ACTIVE_LEARNER_TEXT.get(int(cid) if str(cid).lstrip("-").isdigit() else 0, "")
+            filtered = _apply_v3_cognitive_cap_to_html(str(text), l_txt)
+            return orig_reply(msg_obj, filtered, *a, **kw)
+        bot_obj.reply_to = _hooked_reply_to
 
-    def reply_to(self, message: Any, text: str, *a, **kw):
-        filtered_text = _apply_v3_cognitive_cap_to_html(text, self._learner_text)
-        return self._bot.reply_to(message, filtered_text, *a, **kw)
-
-    def __getattr__(self, name: str):
-        return getattr(self._bot, name)
+    _V3_PATCHED_BOT_IDS.add(id(bot_obj))
 
 
 def handle_claude_v2_turn_safe(
@@ -2109,20 +2111,21 @@ def handle_claude_v2_turn_safe(
 ) -> bool:
     import logging
     logger = logging.getLogger(__name__)
-    real_bot = None
     try:
         g_dict = g_env if isinstance(g_env, dict) else {}
         l_dict = l_env if isinstance(l_env, dict) else {}
         bot = l_dict.get("bot") or g_dict.get("bot")
-        real_bot = getattr(bot, "_bot", bot) if bot else None
         ai_obj = l_dict.get("ai") or g_dict.get("ai") or l_dict.get("ai_engine") or g_dict.get("ai_engine")
 
+        if bot:
+            _ensure_bot_method_hooked(bot)
+
         if message is None:
-            if real_bot and override_chat_id:
+            if bot and override_chat_id:
                 try:
-                    real_bot.send_message(
+                    bot.send_message(
                         override_chat_id,
-                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Silence & Gate Filter Active)</b> is live! Send Message 1 now.",
+                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Direct Hook Active)</b> is live! Send Message 1 now.",
                         parse_mode="HTML",
                     )
                 except Exception:
@@ -2138,6 +2141,9 @@ def handle_claude_v2_turn_safe(
         uid = override_uid or l_dict.get("uid") or getattr(getattr(message, "from_user", None), "id", 0)
         mode = str(l_dict.get("mode") or (l_dict.get("user") or {}).get("current_mode") or "spontaneous_chat").strip().lower()
 
+        if chat_id:
+            _V3_ACTIVE_LEARNER_TEXT[int(chat_id)] = clean_t
+
         if clean_t.startswith("/"):
             return False
 
@@ -2148,9 +2154,9 @@ def handle_claude_v2_turn_safe(
             return False
 
         # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
-        if real_bot and chat_id and detect_metalinguistic_inquiry(clean_t):
+        if bot and chat_id and detect_metalinguistic_inquiry(clean_t):
             try:
-                real_bot.send_chat_action(chat_id, "typing")
+                bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             scene_ctx = _V3_SCENE_MEMORY.get(uid, {}).get("last_topic", "finishing the report that is behind schedule")
@@ -2160,55 +2166,39 @@ def handle_claude_v2_turn_safe(
                 scene_topic=scene_ctx,
                 counterpart="Marcus",
             )
-            real_bot.send_message(chat_id, out_html, parse_mode="HTML")
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
 
         # GATE 1B: Two-Beat Negotiation (Beat 1 Cave-in vs. Beat 2 Compromise)
         neg_move = classify_negotiation_move_v3(clean_t, mode, uid)
-        if real_bot and chat_id and neg_move == "beat1_cavein":
+        if bot and chat_id and neg_move == "beat1_cavein":
             try:
-                real_bot.send_chat_action(chat_id, "typing")
+                bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             out_html = format_v3_negotiation_cavein(uid, clean_t)
-            real_bot.send_message(chat_id, out_html, parse_mode="HTML")
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
-        if real_bot and chat_id and neg_move == "beat2_solution":
+        if bot and chat_id and neg_move == "beat2_solution":
             try:
-                real_bot.send_chat_action(chat_id, "typing")
+                bot.send_chat_action(chat_id, "typing")
             except Exception:
                 pass
             out_html = format_v3_negotiation_debrief(uid, clean_t)
-            real_bot.send_message(chat_id, out_html, parse_mode="HTML")
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
             return True
 
-        # Mutate g_env["bot"] IN-PLACE during the call so app.py's global `bot` uses _V3BotProxy!
         _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
-        if real_bot and isinstance(g_env, dict):
-            proxy_instance = _V3BotProxy(real_bot, clean_t)
-            g_env["bot"] = proxy_instance
-            if isinstance(l_env, dict) and "bot" in l_env:
-                l_env["bot"] = proxy_instance
-
-        try:
-            return _B2F_ORIG_HANDLER(
-                g_env,
-                l_env,
-                message,
-                override_text=override_text,
-                override_chat_id=override_chat_id,
-                override_uid=override_uid,
-            )
-        finally:
-            if real_bot and isinstance(g_env, dict):
-                g_env["bot"] = real_bot
-                if isinstance(l_env, dict) and "bot" in l_env:
-                    l_env["bot"] = real_bot
-
+        return _B2F_ORIG_HANDLER(
+            g_env,
+            l_env,
+            message,
+            override_text=override_text,
+            override_chat_id=override_chat_id,
+            override_uid=override_uid,
+        )
     except Exception as e:
         logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
-        if real_bot and isinstance(g_env, dict):
-            g_env["bot"] = real_bot
         return _B2F_ORIG_HANDLER(
             g_env,
             l_env,
