@@ -777,15 +777,17 @@ class MirrorEdit(BaseModel):
 
     span: str
     replacement: str
-    trigger: Literal["register", "calque", "wordy", "reference", "pragmatic", "error"] = "calque"
+    trigger: Literal["register", "calque", "wordy", "reference", "pragmatic", "error", "us_preference"] = "calque"
     why: str
 
     @field_validator("trigger", mode="before")
     @classmethod
     def _norm_trigger(cls, v: Any) -> str:
         s = str(v or "").strip().lower()
-        if s in ("register", "calque", "wordy", "reference", "pragmatic", "error"):
+        if s in ("register", "calque", "wordy", "reference", "pragmatic", "error", "us_preference"):
             return s
+        if "us_" in s or "american" in s or "brit" in s or "prefer" in s or "idiom" in s:
+            return "us_preference"
         if "colloc" in s or "interf" in s or "literal" in s:
             return "calque"
         if "gramm" in s or "tense" in s or "prepos" in s:
@@ -2132,8 +2134,9 @@ def handle_claude_v2_turn_safe(
 
 
 # ==============================================================================
-# CLAUDE V3 — UNIFIED EXECUTIVE SPECIFICATION (v1.1) DECISION GATES
+# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (WRAPPING PROVEN V2 HANDLER)
 # ==============================================================================
+_ORIG_HANDLE_V2_TURN = handle_claude_v2_turn_safe
 _V2_PENDING_PRACTICE_MEM = globals().get("_V2_PENDING_PRACTICE_MEM", {})
 _V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
 _V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
@@ -2190,13 +2193,9 @@ def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
 
 
 def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional[str]:
-    """
-    Detect if the message belongs to the Two-Beat Negotiation flow (Beat 1 cave-in vs Beat 2 constraint-preserving solution).
-    Returns: 'beat1_cavein', 'beat2_solution', or None.
-    """
     t = (text or "").strip().lower()
     st = _V3_NEGOTIATION_STATE.get(user_id, {})
-    in_rtr_mode = mode in ("subtext", "situational", "read_the_room")
+    in_rtr_mode = mode in ("subtext", "situational", "read_the_room", "pragmatic_subtext", "what_to_say")
 
     is_cavein = (
         re.search(r"\b(delete|cut|drop|remove)\s+(the\s+)?(whole|entire)?\s*(background\s+)?section\b", t)
@@ -2217,7 +2216,6 @@ def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional
 
 
 def format_v3_negotiation_cavein(user_id: int, learner_text: str) -> str:
-    """Case 16 / Message 5: Detect premature cave-in, preserve Marcus as counterpart, request Beat 1 retry without leaking answer."""
     _V3_NEGOTIATION_STATE[user_id] = {
         "active": True,
         "counterpart": "Marcus",
@@ -2240,7 +2238,6 @@ def format_v3_negotiation_cavein(user_id: int, learner_text: str) -> str:
 
 
 def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
-    """Case 17 / Message 6: Marcus closes the negotiation + Comparative Debrief between Attempt 1 and Attempt 2."""
     _V3_NEGOTIATION_STATE.pop(user_id, None)
     return (
         "🧔‍♂️ <b>Marcus:</b> “That works. Keep the key background points in one tight paragraph, "
@@ -2259,143 +2256,168 @@ def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
     )
 
 
-def handle_claude_v2_turn_safe(
-    ai_inst: Any,
-    db_inst: Any,
-    user_id: int,
-    user_text: str,
-    mode_override: Optional[str] = None,
-) -> Optional[str]:
+def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
     """
-    Unified Executive Turn Router (Claude V3 / Spec v1.1):
-    Implements the 6-Step Single-Turn Decision Tree.
+    Applies the Spec v1.1 Call B Priority & Cognitive Cap rules to outgoing chat HTML:
+    - If Read the Room card (🎭), return unchanged.
+    - Separate Dialogue lines from Mirror (🪞/🇺🇸/🎙️) and Chunks (💎).
+    - Priority 1: If Mirror Fix exists -> Dialogue + Mirror ONLY (strip Chunks).
+    - Priority 2: If Active Uptake exists -> Dialogue + Evidence Ledger ONLY.
+    - Priority 3: If textbook-stiff markers exist -> keep Dialogue + 1 Recast/Chunk note.
+    - Priority 4: Otherwise (clean natural input) -> Dialogue ONLY (complete Call B silence!).
     """
-    try:
-        clean_t = (user_text or "").strip()
-        if not clean_t:
-            return None
+    if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html:
+        return raw_html
 
-        u_row = db_inst.get_user(user_id) if hasattr(db_inst, "get_user") else None
-        u_dict = dict(u_row) if u_row else {"user_id": user_id, "name": "Musa"}
-        mode = (mode_override or u_dict.get("conversation_mode") or "spontaneous_chat").strip().lower()
+    # Split out the 💎 Spoken American Moves section if present
+    parts_diamond = re.split(r"\n+💎\s*<b>Spoken American Moves:?</b>", raw_html, maxsplit=1)
+    before_diamond = parts_diamond[0].strip()
+
+    has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
+    if has_mirror_fix:
+        # Priority 1: Surgical Mirror only (no chunk overload)
+        return before_diamond
+
+    # Priority 2: Active Uptake & Evidence Ledger
+    uptake_event = detect_active_uptake_event(learner_text)
+    if uptake_event is not None:
+        ledger_block = (
+            "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
+            f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
+            f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
+            f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>"
+        )
+        return f"{before_diamond}\n\n{ledger_block}"
+
+    # Priority 3: Textbook-stiff input -> keep Spoken Move as a Recast/Alternative note
+    stiff_markers = (
+        "cannot accept", "additional task", "completely full", "do not think",
+        "do not have enough", "in order to", "it is necessary",
+    )
+    if any(sm in (learner_text or "").lower() for sm in stiff_markers) and len(parts_diamond) > 1:
+        return raw_html
+
+    # Priority 4: Clean natural English -> Complete Coaching Silence (no_coaching_needed)!
+    return before_diamond
+
+
+class _V3BotProxy:
+    """Intercepts bot.send_message during standard turns to enforce the V3 Cognitive Cap & Silence Policy."""
+    def __init__(self, real_bot: Any, learner_text: str):
+        self._bot = real_bot
+        self._learner_text = learner_text
+
+    def send_chat_action(self, *a, **kw):
+        return self._bot.send_chat_action(*a, **kw)
+
+    def send_message(self, chat_id: Any, text: str, *a, **kw):
+        filtered_text = _apply_v3_cognitive_cap_to_html(text, self._learner_text)
+        return self._bot.send_message(chat_id, filtered_text, *a, **kw)
+
+    def __getattr__(self, name: str):
+        return getattr(self._bot, name)
+
+
+def handle_claude_v2_turn_safe(
+    g_env: dict,
+    l_env: dict,
+    message: Any = None,
+    *args,
+    **kwargs,
+) -> bool:
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        bot = g_env.get("bot")
+        ai = g_env.get("ai")
+        db = g_env.get("db")
+        if not bot or not ai or not db:
+            return False
+
+        # Boot readiness notification
+        if message is None:
+            boot_cid = kwargs.get("override_chat_id")
+            if boot_cid:
+                try:
+                    bot.send_message(
+                        boot_cid,
+                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Spec v1.1)</b> is live and listening! Send Message 1 whenever you’re ready.",
+                        parse_mode="HTML",
+                    )
+                except Exception as be:
+                    logger.warning(f"Boot readiness ping warning: {be}")
+            return True
+
+        raw_text = kwargs.get("override_text") or getattr(message, "text", None) or ""
+        clean_t = raw_text.strip()
+        if not clean_t:
+            return False
+
+        chat_id = kwargs.get("override_chat_id") or message.chat.id
+        uid = kwargs.get("override_uid") or message.from_user.id
 
         if clean_t.lower() in ("/skip", "skip", "/cancel"):
-            _V2_PENDING_PRACTICE_MEM.pop(user_id, None)
-            _V3_NEGOTIATION_STATE.pop(user_id, None)
-            if hasattr(db_inst, "clear_pending_practice"):
-                try:
-                    db_inst.clear_pending_practice(user_id)
-                except Exception:
-                    pass
-            return "✅ Exited active roleplay. Back to NYC Banter!"
+            if uid in _V2_PENDING_PRACTICE_MEM or uid in _V3_NEGOTIATION_STATE:
+                _V2_PENDING_PRACTICE_MEM.pop(uid, None)
+                _V3_NEGOTIATION_STATE.pop(uid, None)
+                bot.send_message(chat_id, "✅ Exited active roleplay. Back to NYC Banter!", parse_mode="HTML")
+                return True
+            return False
 
-        # STEP 1A: Metalinguistic Inquiry Gate ("Why would you say X instead of Y?")
+        if clean_t.startswith("/"):
+            return False
+
+        menu_prefixes = (
+            "🗽", "🥊", "🕵️", "⚡", "🎙️", "📊", "⚙️", "🧠", "🎯", "🏆", "📚", "🔄", "🎭", "🎧"
+        )
+        if clean_t.startswith(menu_prefixes):
+            return False
+
+        u_row = db.get_user(uid) if hasattr(db, "get_user") else None
+        u_dict = dict(u_row) if u_row else {"user_id": uid, "name": "Musa"}
+        mode = str(u_dict.get("conversation_mode") or "spontaneous_chat").strip().lower()
+
+        # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
         if detect_metalinguistic_inquiry(clean_t):
-            scene_ctx = _V3_SCENE_MEMORY.get(user_id, {}).get("last_topic", "finishing the report that is behind schedule")
-            return ai_inst.answer_metalinguistic_inquiry_v3(
+            try:
+                bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            scene_ctx = _V3_SCENE_MEMORY.get(uid, {}).get("last_topic", "finishing the report that is behind schedule")
+            out_html = ai.answer_metalinguistic_inquiry_v3(
                 user=u_dict,
                 question_text=clean_t,
                 scene_topic=scene_ctx,
                 counterpart="Marcus",
             )
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            return True
 
-        # STEP 1B: Two-Beat Negotiation Gate (Beat 1 Cave-in vs. Beat 2 Compromise)
-        neg_move = classify_negotiation_move_v3(clean_t, mode, user_id)
+        # GATE 1B: Two-Beat Negotiation (Beat 1 Cave-in vs. Beat 2 Compromise)
+        neg_move = classify_negotiation_move_v3(clean_t, mode, uid)
         if neg_move == "beat1_cavein":
-            return format_v3_negotiation_cavein(user_id, clean_t)
-        if neg_move == "beat2_solution":
-            return format_v3_negotiation_debrief(user_id, clean_t)
-
-        # STEP 1C: Pending Turn-2 Roleplay from Read the Room
-        pending = _V2_PENDING_PRACTICE_MEM.get(user_id)
-        if not pending and hasattr(db_inst, "get_pending_practice"):
             try:
-                pending = db_inst.get_pending_practice(user_id)
+                bot.send_chat_action(chat_id, "typing")
             except Exception:
-                pending = None
+                pass
+            out_html = format_v3_negotiation_cavein(uid, clean_t)
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            return True
+        if neg_move == "beat2_solution":
+            try:
+                bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            out_html = format_v3_negotiation_debrief(uid, clean_t)
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            return True
 
-        if pending and isinstance(pending, dict) and pending.get("their_line"):
-            pe = ai_inst.practice_reply_v2(user=u_dict, learner_reply=clean_t, pending_state=pending)
-            _V2_PENDING_PRACTICE_MEM.pop(user_id, None)
-            if hasattr(db_inst, "clear_pending_practice"):
-                try:
-                    db_inst.clear_pending_practice(user_id)
-                except Exception:
-                    pass
-            if pe.intent == "attempt":
-                return format_practice_eval_v2(pe, learner_text=clean_t)
+        # Record scene topic for continuity, then delegate to proven V2 handler with V3 Bot Proxy
+        _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
+        proxied_env = dict(g_env)
+        proxied_env["bot"] = _V3BotProxy(bot, clean_t)
+        return _ORIG_HANDLE_V2_TURN(proxied_env, l_env, message, *args, **kwargs)
 
-        # STEP 2: Read the Room Turn 1
-        if mode in ("subtext", "situational", "read_the_room"):
-            rtr = ai_inst.read_the_room_v2(user=u_dict, text_or_situation=clean_t)
-            _pending_obj = {
-                "counterpart": rtr.your_turn.counterpart,
-                "their_line": rtr.your_turn.their_line,
-                "goal": rtr.your_turn.goal,
-            }
-            _V2_PENDING_PRACTICE_MEM[user_id] = _pending_obj
-            if hasattr(db_inst, "set_pending_practice"):
-                try:
-                    db_inst.set_pending_practice(user_id, _pending_obj)
-                except Exception:
-                    pass
-            return format_read_the_room_v2(rtr, user_input=clean_t)
-
-        # STEP 3: Call A — Natural Spoken American Dialogue
-        dlg_mode = "devils_advocate" if "devil" in mode or "debate" in mode else "banter"
-        dlg = ai_inst.generate_dialogue(user=u_dict, text=clean_t, mode=dlg_mode)
-
-        _V3_SCENE_MEMORY[user_id] = {
-            "last_learner_text": clean_t,
-            "last_topic": clean_t,
-            "last_turns": [{"speaker": t.speaker, "text": t.text} for t in dlg.turns],
-        }
-
-        # STEP 4 & 5: Call B — Precision Coach with Cognitive Cap, Silence Policy & Uptake Ledger
-        coach = ai_inst.coach_turn(user=u_dict, text=clean_t, dialogue_turns=dlg.turns)
-        uptake_event = detect_active_uptake_event(clean_t)
-
-        speaker_icons = {"Marcus": "🧔‍♂️", "Chloe": "👩🏼‍💼", "Jake": "🧢"}
-        blocks: List[str] = []
-        for t in dlg.turns:
-            icon = speaker_icons.get(t.speaker, "🗣️")
-            blocks.append(f"{icon} <b>{_e(t.speaker)}:</b> {_e(t.text)}")
-
-        # Priority 1: Genuine Error or US Usage Preference -> Surgical Mirror ONLY (0 chunks for cognitive cap)
-        if coach.mirror.verdict == "fix" and coach.mirror.html_render:
-            blocks.append(coach.mirror.html_render)
-            return "\n\n".join(blocks)
-
-        # Priority 2: Active Uptake Detected -> Record Functional & Target Uptake in Evidence Ledger
-        if uptake_event is not None:
-            ledger_block = (
-                "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
-                f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
-                f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
-                f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>"
-            )
-            blocks.append(ledger_block)
-            return "\n\n".join(blocks)
-
-        # Priority 3: Textbook-stiff input -> Verified Recast note
-        stiff_markers = (
-            "cannot accept", "additional task", "completely full", "do not think",
-            "do not have enough", "in order to", "it is necessary",
-        )
-        if any(sm in clean_t.lower() for sm in stiff_markers) and coach.chunks:
-            c0 = coach.chunks[0]
-            recast_block = (
-                "💡 <b>Verified Spoken Recast (Original sentence is grammatically correct):</b>\n"
-                f"• <b>Spoken alternative in dialogue:</b> “{_e(c0.expression)}” (<code>{_e(c0.base_pattern)}</code> — {_e(c0.ar)})\n"
-                f"• <b>Why it helps:</b> {_e(c0.does)}\n"
-                "• <b>📋 Evidence Stage:</b> <code>Exposure</code> recorded (hearing the phrase does not count as production)."
-            )
-            blocks.append(recast_block)
-            return "\n\n".join(blocks)
-
-        # Priority 4: Complete Coaching Silence (`no_coaching_needed`) when learner's English is natural!
-        return "\n\n".join(blocks)
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Claude V3 turn handler fallback: {e}")
-        return None
+        logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
+        return _ORIG_HANDLE_V2_TURN(g_env, l_env, message, *args, **kwargs)
