@@ -13,6 +13,7 @@ from ai_engine import DualLLMEngine
 from config import ADMIN_ID, DEFAULT_VOICE, TELEGRAM_BOT_TOKEN, TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
 from orchestrator import TurnOrchestrator
+from guide_and_branding import GUIDE_CHAPTERS_HTML, generate_bot_branding_images
 from schemas import DirectnessLevel, InterventionLevel, RegisterProfile, TrainingMode
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -46,6 +47,8 @@ def sync_telegram_bot_profile_and_commands() -> None:
             types.BotCommand("workout", "Spontaneous phrase retrieval workout"),
             types.BotCommand("settings", "Adjust register & coaching intensity"),
             types.BotCommand("progress", "View evidence-based acquisition profile"),
+            types.BotCommand("guide", "Interactive User Guide (EN + AR)"),
+            types.BotCommand("branding", "Get official BotFather profile & description images"),
         ]
         bot.set_my_commands(commands)
 
@@ -86,6 +89,7 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("🏋️ Phrase Workout"),
         types.KeyboardButton("⚙️ Register & Tone"),
         types.KeyboardButton("📊 My Progress"),
+        types.KeyboardButton("📖 User Guide"),
         types.KeyboardButton("🔄 New Scene"),
     )
     return markup
@@ -304,12 +308,81 @@ if bot is not None:
             parse_mode="HTML",
         )
 
+
+    def build_guide_inline_markup(active_key: str = "overview") -> types.InlineKeyboardMarkup:
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        chapters = [
+            ("overview", "📖 Overview"),
+            ("ch1_layers", "🏛️ 1. 3-Layer System"),
+            ("ch2_modes", "🎯 2. 5 Training Modes"),
+            ("ch3_registers", "⚙️ 3. Registers & Tone"),
+            ("ch4_mastery", "📊 4. Mastery Ladder"),
+        ]
+        buttons = []
+        for k, label in chapters:
+            prefix = "✅ " if k == active_key else ""
+            buttons.append(types.InlineKeyboardButton(f"{prefix}{label}", callback_data=f"guide:{k}"))
+        markup.add(*buttons)
+        return markup
+
+    @bot.message_handler(commands=["guide", "help"])
+    def handle_guide_cmd(message):
+        bot.send_message(
+            message.chat.id,
+            GUIDE_CHAPTERS_HTML["overview"],
+            parse_mode="HTML",
+            reply_markup=build_guide_inline_markup("overview"),
+        )
+
+    @bot.message_handler(commands=["branding"])
+    def handle_branding_cmd(message):
+        chat_id = message.chat.id
+        try:
+            bot.send_chat_action(chat_id, "upload_photo")
+        except Exception:
+            pass
+        p_img, d_img = generate_bot_branding_images(TEMP_AUDIO_DIR)
+        with open(p_img, "rb") as fp:
+            bot.send_photo(
+                chat_id,
+                fp,
+                caption="🖼️ <b>1. Bot Profile Picture (800×800)</b>\nUse this in <code>@BotFather</code> → <code>/setuserpic</code> (or Edit Botpic).",
+                parse_mode="HTML",
+            )
+        with open(d_img, "rb") as fd:
+            bot.send_photo(
+                chat_id,
+                fd,
+                caption="🖼️ <b>2. Bot Description Picture (Exact 640×360)</b>\nUse this in <code>@BotFather</code> → <code>Edit Bot</code> → <code>Edit Description Picture</code>.",
+                parse_mode="HTML",
+            )
+        with open(d_img, "rb") as fd_doc:
+            bot.send_document(
+                chat_id,
+                fd_doc,
+                caption="📎 <b>Uncompressed 640×360 PNG</b> (in case Telegram mobile compresses the photo above).",
+                parse_mode="HTML",
+            )
+
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callback(call):
         data = call.data or ""
         lid = call.from_user.id
         sess = db.get_or_create_active_session(lid)
         sid = str(sess["session_id"])
+
+        if data.startswith("guide:"):
+            ch_key = data.split(":", 1)[1]
+            ch_html = GUIDE_CHAPTERS_HTML.get(ch_key, GUIDE_CHAPTERS_HTML["overview"])
+            bot.edit_message_text(
+                ch_html,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode="HTML",
+                reply_markup=build_guide_inline_markup(ch_key),
+            )
+            bot.answer_callback_query(call.id, "Guide chapter loaded")
+            return
 
         if data.startswith("card:"):
             card_id = data.split(":", 1)[1]
@@ -377,6 +450,9 @@ if bot is not None:
             return
         if text.startswith("📊"):
             handle_progress(message)
+            return
+        if text.startswith("📖"):
+            handle_guide_cmd(message)
             return
         if text.startswith("⚙️"):
             handle_settings_cmd(message)
