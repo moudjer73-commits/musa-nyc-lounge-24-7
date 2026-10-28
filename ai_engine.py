@@ -2350,9 +2350,16 @@ class NYCLoungeAI:
                     repaired.append({"speaker": spk, "text": txt})
                 q_idxs = [i for i, t in enumerate(repaired) if "?" in t["text"]]
                 for i in q_idxs[:-1]:
-                    repaired[i]["text"] = repaired[i]["text"].replace("?", ".")
+                    repaired[i]["text"] = repaired[i]["text"]
                 return DialogueOnlyResponse.model_validate({"turns": repaired})
 
+                sys_prompt += (
+            "\n\nGENERAL CONVERSATIONAL NATURALNESS PRINCIPLES:\n"
+            "1. Respond directly and authentically to the learner's exact message and tone.\n"
+            "2. GROUP CHEMISTRY: Let the hosts react to each other's points as well as the learner, rather than delivering three isolated monologues.\n"
+            "3. NATURAL QUESTION PACING: Avoid turning the conversation into an interrogation. At most one speaker may ask a follow-up question when it genuinely fits, and if the learner shares a brief undecided comment or casual observation, feel free to let all three hosts respond with natural declarative comments without forcing any question.\n"
+            "4. EVERYDAY SPOKEN AMERICAN REGISTER: Keep the language natural, idiomatic, and grounded—avoid theatrical metaphors, corporate clichés, mechanical openers ('Look,', 'The thing is,'), or unsolicited psychoanalysis.\n"
+        )
         return self._call_gemini_json(
             system_prompt=sys_prompt,
             user_prompt=u_prompt,
