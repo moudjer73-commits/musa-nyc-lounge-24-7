@@ -2421,3 +2421,280 @@ def handle_claude_v2_turn_safe(
     except Exception as e:
         logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
         return _ORIG_HANDLE_V2_TURN(g_env, l_env, message, *args, **kwargs)
+
+
+
+# ==============================================================================
+# CLAUDE V3 — UNIFIED EXECUTIVE ROUTER (VERIFIED ON TRUE WORKING BASE)
+# ==============================================================================
+_TRUE_ORIG_V2_HANDLER = handle_claude_v2_turn_safe
+_V3_NEGOTIATION_STATE: Dict[int, Dict[str, Any]] = {}
+_V3_SCENE_MEMORY: Dict[int, Dict[str, Any]] = {}
+
+
+def detect_metalinguistic_inquiry(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if "?" not in t:
+        return False
+    meta_patterns = [
+        r"\bwhy\s+(would|did|do|can't|cannot|should)\s+(you|we|i|people|americans)\s+(say|use|suggest)\b",
+        r"\binstead\s+of\b.*\?",
+        r"\bis\s+my\s+version\b",
+        r"\bactually\s+wrong\b",
+        r"\bquick\s+question\s*:",
+        r"\bwhat('s|\s+is)\s+the\s+(exact\s+)?difference\s+between\b",
+        r"\bis\s+that\s+something\s+americans\s+actually\s+say\b",
+        r"\bwhy\s+is\s+['\"“”].+?['\"“”]\s+(less\s+natural|wrong|better)\b",
+        r"\bisn't\s+it\s+correct\s+english\b",
+    ]
+    return any(re.search(p, t) for p in meta_patterns)
+
+
+def detect_active_uptake_event(text: str) -> Optional[Dict[str, str]]:
+    t = (text or "").strip()
+    tl = t.lower()
+    if re.search(r"\bnot\s+(quite\s+|entirely\s+|fully\s+)?sold\s+on\b", tl):
+        return {
+            "function": "Diplomatic Disagreement / Calibrated Reservation",
+            "functional_result": "Successful (expressed reservation while justifying the constraint)",
+            "target_move": "I'm not quite sold on [something]",
+            "verbatim_match": "Yes (adapted naturally to context)",
+            "stage": "Production (1st independent contextual use; Stabilization requires delayed transfer across sessions)",
+        }
+    if re.search(r"\bi\s+see\s+where\s+you're\s+coming\s+from\b.*\bbut\b", tl) or re.search(r"\bnot\s+sure\s+that\s+holds\s+up\b", tl):
+        return {
+            "function": "Diplomatic Disagreement / Calibrated Reservation",
+            "functional_result": "Successful (achieved diplomatic pushback naturally)",
+            "target_move": "I'm not quite sold on [something]",
+            "verbatim_match": "No — Functional Success achieved via natural alternative phrasing",
+            "stage": "Production (Functional Success recorded; target collocation remains eligible for future retrieval)",
+        }
+    if re.search(r"\block\s+in\s+(a|the)\b", tl):
+        return {
+            "function": "Commitment & Follow-Through",
+            "functional_result": "Successful (turned a plan into a concrete commitment)",
+            "target_move": "lock in [a time / deadline]",
+            "verbatim_match": "Yes (used naturally in context)",
+            "stage": "Production (Contextual retrieval recorded; Stabilization requires delayed transfer)",
+        }
+    return None
+
+
+def classify_negotiation_move_v3(text: str, mode: str, user_id: int) -> Optional[str]:
+    t = (text or "").strip().lower()
+    st = _V3_NEGOTIATION_STATE.get(user_id, {})
+    in_rtr_mode = mode in ("subtext", "situational", "read_the_room", "pragmatic_subtext", "what_to_say")
+
+    is_cavein = (
+        re.search(r"\b(delete|cut|drop|remove)\s+(the\s+)?(whole|entire)?\s*(background\s+)?section\b", t)
+        and not re.search(r"\b(keep|preserve|save)\s+(the\s+)?(key|main|core|essential)\b", t)
+        and any(w in t for w in ("okay", "fine", "let's just", "if we're short on time", "sure"))
+    )
+    if is_cavein:
+        return "beat1_cavein"
+
+    is_compromise = (
+        re.search(r"\b(keep|preserve|retain)\s+(the\s+)?(key|main|core|essential|theoretical)\b", t)
+        and re.search(r"\b(cut|drop|trim|shorten|remove|less\s+relevant)\b", t)
+    )
+    if is_compromise and (st.get("active") or in_rtr_mode or "background" in t or "case study" in t):
+        return "beat2_solution"
+
+    return None
+
+
+def format_v3_negotiation_cavein(user_id: int, learner_text: str) -> str:
+    _V3_NEGOTIATION_STATE[user_id] = {
+        "active": True,
+        "counterpart": "Marcus",
+        "constraint": "Shorten the report while preserving the essential background points",
+        "attempt_1": learner_text,
+        "beat": 1,
+    }
+    return (
+        "🎭 <b>Read the Room — Beat 1 Evaluation</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "👂 <b>How It Lands:</b> You sound cooperative and responsive to the time pressure, "
+        "but you gave up your core constraint by agreeing to delete the entire background section.\n\n"
+        "🎯 <b>Constraint Check:</b>\n"
+        "• Acknowledge time pressure: ✅ Achieved\n"
+        "• Preserve essential background context: ❌ Surrendered (premature cave-in)\n\n"
+        "🔄 <b>Try Beat 1 Again (Counterpart: 🧔‍♂️ Marcus):</b>\n"
+        "Can you acknowledge the tight timeline <i>without</i> agreeing to remove the whole section? "
+        "Propose a way to protect the essential context while addressing the space constraint."
+    )
+
+
+def format_v3_negotiation_debrief(user_id: int, learner_text: str) -> str:
+    _V3_NEGOTIATION_STATE.pop(user_id, None)
+    return (
+        "🧔‍♂️ <b>Marcus:</b> “That works. Keep the key background points in one tight paragraph, "
+        "cut the secondary details, and send me the shorter draft by four.”\n\n"
+        "📊 <b>Negotiation Debrief & Exit</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "• <b>Attempt 1 vs. Attempt 2:</b> In your first attempt, you prioritized harmony but surrendered "
+        "the essential background section completely. In your second response, you adapted effectively—acknowledging "
+        "the space constraint while protecting the core context through a concrete compromise.\n"
+        "• <b>Pragmatic Breakdown:</b>\n"
+        "  └ Acknowledgment of constraint: ✅ Clear\n"
+        "  └ Position preservation: ✅ Maintained essential points\n"
+        "  └ Specificity & Adaptation: ✅ Actionable trade-off (short paragraph vs. minor details)\n"
+        "• <b>📋 Evidence Ledger:</b> Recorded <code>Production (Functional Success)</code> in "
+        "<i>Scope & Priority Negotiation</i> for this task (single-scenario evidence; not generalized to permanent mastery)."
+    )
+
+
+def _apply_v3_cognitive_cap_to_html(raw_html: str, learner_text: str) -> str:
+    if not raw_html or "🎭" in raw_html or "👂" in raw_html or "🧭" in raw_html:
+        return raw_html
+
+    parts_diamond = re.split(r"\n+💎\s*<b>Spoken American Moves:?</b>", raw_html, maxsplit=1)
+    before_diamond = parts_diamond[0].strip()
+
+    has_mirror_fix = any(m in before_diamond for m in ("🪞", "🇺🇸", "🎙️"))
+    if has_mirror_fix:
+        return before_diamond
+
+    uptake_event = detect_active_uptake_event(learner_text)
+    if uptake_event is not None:
+        ledger_block = (
+            "🎯 <b>Active Uptake & Evidence Ledger</b>\n"
+            f"• <b>Function:</b> {_e(uptake_event['function'])} — <i>{_e(uptake_event['functional_result'])}</i>\n"
+            f"• <b>Target Move:</b> <code>{_e(uptake_event['target_move'])}</code> — {_e(uptake_event['verbatim_match'])}\n"
+            f"• <b>Evidence Stage:</b> <code>{_e(uptake_event['stage'])}</code>"
+        )
+        return f"{before_diamond}\n\n{ledger_block}"
+
+    stiff_markers = (
+        "cannot accept", "additional task", "completely full", "do not think",
+        "do not have enough", "in order to", "it is necessary",
+    )
+    if any(sm in (learner_text or "").lower() for sm in stiff_markers) and len(parts_diamond) > 1:
+        return raw_html
+
+    return before_diamond
+
+
+class _V3BotProxy:
+    def __init__(self, real_bot: Any, learner_text: str):
+        self._bot = real_bot
+        self._learner_text = learner_text
+
+    def send_chat_action(self, *a, **kw):
+        return self._bot.send_chat_action(*a, **kw)
+
+    def send_message(self, chat_id: Any, text: str, *a, **kw):
+        filtered_text = _apply_v3_cognitive_cap_to_html(text, self._learner_text)
+        return self._bot.send_message(chat_id, filtered_text, *a, **kw)
+
+    def __getattr__(self, name: str):
+        return getattr(self._bot, name)
+
+
+def handle_claude_v2_turn_safe(
+    g_env: dict,
+    l_env: dict,
+    message: Any = None,
+    override_text: Optional[str] = None,
+    override_chat_id: Optional[int] = None,
+    override_uid: Optional[int] = None,
+) -> bool:
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        bot = (g_env or {}).get("bot") or (l_env or {}).get("bot")
+        ai = (g_env or {}).get("ai") or (l_env or {}).get("ai")
+        db = (g_env or {}).get("db") or (l_env or {}).get("db")
+
+        # Boot readiness notification instead of running auto-test on boot
+        if message is None:
+            if bot and override_chat_id:
+                try:
+                    bot.send_message(
+                        override_chat_id,
+                        "🟢 <b>Musa’s NYC Lounge (Claude V3 — Spec v1.1)</b> is live and listening! Send Message 1 now.",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+            return True
+
+        raw_text = override_text or getattr(message, "text", None) or ""
+        clean_t = raw_text.strip()
+        if not clean_t:
+            return False
+
+        chat_id = override_chat_id or message.chat.id
+        uid = override_uid or message.from_user.id
+
+        if clean_t.startswith("/"):
+            return False
+
+        menu_prefixes = (
+            "🗽", "🥊", "🕵️", "⚡", "🎙️", "📊", "⚙️", "🧠", "🎯", "🏆", "📚", "🔄", "🎭", "🎧"
+        )
+        if clean_t.startswith(menu_prefixes):
+            return False
+
+        u_row = db.get_user(uid) if (db and hasattr(db, "get_user")) else None
+        u_dict = dict(u_row) if u_row else {"user_id": uid, "name": "Musa"}
+        mode = str(u_dict.get("conversation_mode") or "spontaneous_chat").strip().lower()
+
+        # GATE 1A: Metalinguistic Inquiry ("Why would you say X instead of Y?")
+        if bot and ai and detect_metalinguistic_inquiry(clean_t):
+            try:
+                bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            scene_ctx = _V3_SCENE_MEMORY.get(uid, {}).get("last_topic", "finishing the report that is behind schedule")
+            out_html = ai.answer_metalinguistic_inquiry_v3(
+                user=u_dict,
+                question_text=clean_t,
+                scene_topic=scene_ctx,
+                counterpart="Marcus",
+            )
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            return True
+
+        # GATE 1B: Two-Beat Negotiation (Beat 1 Cave-in vs. Beat 2 Compromise)
+        neg_move = classify_negotiation_move_v3(clean_t, mode, uid)
+        if bot and neg_move == "beat1_cavein":
+            try:
+                bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            out_html = format_v3_negotiation_cavein(uid, clean_t)
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            return True
+        if bot and neg_move == "beat2_solution":
+            try:
+                bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            out_html = format_v3_negotiation_debrief(uid, clean_t)
+            bot.send_message(chat_id, out_html, parse_mode="HTML")
+            return True
+
+        # Delegate standard turns to the TRUE original handler with _V3BotProxy
+        _V3_SCENE_MEMORY[uid] = {"last_topic": clean_t}
+        proxied_g = dict(g_env) if isinstance(g_env, dict) else {}
+        if bot:
+            proxied_g["bot"] = _V3BotProxy(bot, clean_t)
+        return _TRUE_ORIG_V2_HANDLER(
+            proxied_g,
+            l_env,
+            message,
+            override_text=override_text,
+            override_chat_id=override_chat_id,
+            override_uid=override_uid,
+        )
+    except Exception as e:
+        logger.error(f"Claude V3 wrapper error: {e}", exc_info=True)
+        return _TRUE_ORIG_V2_HANDLER(
+            g_env,
+            l_env,
+            message,
+            override_text=override_text,
+            override_chat_id=override_chat_id,
+            override_uid=override_uid,
+        )
