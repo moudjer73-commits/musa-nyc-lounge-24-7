@@ -57,6 +57,7 @@ class TurnOrchestrator:
 
         learner_cfg = self.db.get_learner_settings(learner_id)
         feedback_pref = learner_cfg.get("feedback_preference", "light")
+        arabic_support = learner_cfg.get("arabic_support", "bilingual")
         opted_in_workouts = bool(learner_cfg.get("opted_in_workouts", 1))
 
         session = self.db.get_or_create_active_session(learner_id)
@@ -256,6 +257,9 @@ class TurnOrchestrator:
             causation_id=msg_ev_id,
             idempotency_key=f"{idem_base}:resp",
         )
+
+        if selected_diag and arabic_support == "english_only":
+            selected_diag = selected_diag.model_copy(update={"explanation_ar": None})
 
         card_id: Optional[str] = None
         if policy_dec.intervention == InterventionLevel.BRIEF_CARD and selected_diag:

@@ -29,54 +29,106 @@ def _e(val) -> str:
     return html.escape(str(val if val is not None else ""))
 
 
-def sync_telegram_bot_profile_and_commands() -> None:
+def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -> dict:
     """
-    Automatically configures the Telegram bot's official commands menu (/),
-    description, and short bio via the Telegram Bot API so the Telegram UI
-    matches the new Spoken English Lab architecture.
+    Purges all legacy command scopes and language overrides in Telegram, then sets:
+    1. Luxury Bot Name (`setMyName`) across '', 'en', 'ar'
+    2. Short Description (`setMyShortDescription`) across '', 'en', 'ar'
+    3. Main Description (`setMyDescription`) across '', 'en', 'ar'
+    4. Bot Commands (`setMyCommands`) across default, all_private_chats, and target_chat_id
+    5. Menu Button (`setChatMenuButton` -> type='commands')
     """
-    if not bot or not TELEGRAM_BOT_TOKEN:
-        return
-    try:
-        commands = [
-            types.BotCommand("start", "Start or refresh your Spoken English Lab"),
-            types.BotCommand("scene", "Open spontaneous conversation scene"),
-            types.BotCommand("dilemma", "Generate a live pragmatic dilemma"),
-            types.BotCommand("shift", "Transform a thought across registers"),
-            types.BotCommand("think", "Analytical Think-Aloud sparring"),
-            types.BotCommand("workout", "Spontaneous phrase retrieval workout"),
-            types.BotCommand("settings", "Adjust register & coaching intensity"),
-            types.BotCommand("progress", "View evidence-based acquisition profile"),
-            types.BotCommand("guide", "Interactive User Guide (EN + AR)"),
-            types.BotCommand("branding", "Get official BotFather profile & description images"),
-        ]
-        bot.set_my_commands(commands)
+    report = {"ok": False, "steps": []}
+    if not TELEGRAM_BOT_TOKEN:
+        return report
 
-        base_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-        requests.post(
-            f"{base_api}/setMyShortDescription",
-            json={
-                "short_description": "Spoken American English Lab — Real conversation, pragmatic nuance & register mastery for Arabic speakers."
-            },
-            timeout=10,
-        )
-        requests.post(
-            f"{base_api}/setMyDescription",
-            json={
-                "description": (
-                    "Welcome to Spoken English Lab 🎙️\n\n"
-                    "Practice real, unscripted Spoken American English across every register "
-                    "(Casual, Warm, Witty, Diplomatic, Executive, Analytical).\n"
-                    "• Natural conversation first, non-intrusive coaching second\n"
-                    "• L1-Arabic transfer diagnostics & neutral bilingual notes\n"
-                    "• Live pragmatic dilemmas, register shifting & unaided retrieval workouts"
-                )
-            },
-            timeout=10,
-        )
-        logger.info("Telegram bot commands and descriptions synchronized successfully.")
-    except Exception as sync_err:
-        logger.warning(f"Telegram profile sync notice: {sync_err}")
+    base_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    scopes = [
+        {"type": "default"},
+        {"type": "all_private_chats"},
+        {"type": "all_group_chats"},
+        {"type": "all_chat_administrators"},
+    ]
+    if target_chat_id:
+        scopes.append({"type": "chat", "chat_id": int(target_chat_id)})
+
+    lang_codes = ["", "en", "ar"]
+
+    # 1. Delete all old commands across every scope and language code so nothing overrides the new list
+    for sc in scopes:
+        for lc in lang_codes:
+            payload = {"scope": sc}
+            if lc:
+                payload["language_code"] = lc
+            try:
+                requests.post(f"{base_api}/deleteMyCommands", json=payload, timeout=8)
+            except Exception:
+                pass
+
+    # 2. Set the clean 9 commands across default, all_private_chats, and specific chat for '', 'en', 'ar'
+    commands_list = [
+        {"command": "start", "description": "Start or refresh your Spoken English Lab"},
+        {"command": "settings", "description": "Adjust register, directness & coaching intensity"},
+        {"command": "scene", "description": "Open spontaneous conversation scene"},
+        {"command": "dilemma", "description": "Generate a live pragmatic dilemma"},
+        {"command": "shift", "description": "Transform a thought across registers"},
+        {"command": "think", "description": "Analytical Think-Aloud sparring"},
+        {"command": "workout", "description": "Spontaneous phrase retrieval workout"},
+        {"command": "progress", "description": "View evidence-based acquisition profile"},
+        {"command": "guide", "description": "Interactive User Guide (EN + AR)"},
+    ]
+    active_scopes = [{"type": "default"}, {"type": "all_private_chats"}]
+    if target_chat_id:
+        active_scopes.append({"type": "chat", "chat_id": int(target_chat_id)})
+
+    for sc in active_scopes:
+        for lc in lang_codes:
+            payload = {"commands": commands_list, "scope": sc}
+            if lc:
+                payload["language_code"] = lc
+            try:
+                r = requests.post(f"{base_api}/setMyCommands", json=payload, timeout=8).json()
+                report["steps"].append(f"setMyCommands({sc['type']},{lc or 'default'}): {r.get('ok')}")
+            except Exception as e:
+                report["steps"].append(f"setMyCommands err: {e}")
+
+    # 3. Force the chat menu button to show the Commands menu
+    for cid in ([None, int(target_chat_id)] if target_chat_id else [None]):
+        body = {"menu_button": {"type": "commands"}}
+        if cid:
+            body["chat_id"] = cid
+        try:
+            requests.post(f"{base_api}/setChatMenuButton", json=body, timeout=8)
+        except Exception:
+            pass
+
+    # 4. Set Name, Short Description (About), and Description across '', 'en', 'ar'
+    luxury_name = "𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️"
+    short_bio = (
+        "Master real Spoken American English across all registers 🎙️ "
+        "معمل التحدث الطبيعي والأسلوب الأمريكي الأصيل."
+    )
+    full_desc = (
+        "Welcome to 𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️\n"
+        "Your personal studio for mastering real, unscripted Spoken American English (B2–C2).\n\n"
+        "• 💬 Natural Flow First: Chat with Alex without robotic interrogations or textbook scripts.\n"
+        "• 💡 Surgical On-Demand Coaching: Fix L1-Arabic transfer traps, collocations & tone on your terms.\n"
+        "• 🎛️ 6 Live Registers: Shift seamlessly between Casual, Warm, Witty, Diplomatic, Executive & Analytical.\n"
+        "• 🤝 Pragmatic Dilemmas & Unaided Retrieval.\n\n"
+        "اضغط Start لبدء المحادثة والتدريب العملي فوراً 👇"
+    )
+
+    for lc in lang_codes:
+        lang_param = {"language_code": lc} if lc else {}
+        try:
+            requests.post(f"{base_api}/setMyName", json={"name": luxury_name, **lang_param}, timeout=8)
+            requests.post(f"{base_api}/setMyShortDescription", json={"short_description": short_bio, **lang_param}, timeout=8)
+            requests.post(f"{base_api}/setMyDescription", json={"description": full_desc, **lang_param}, timeout=8)
+        except Exception as e:
+            logger.warning(f"Profile sync notice ({lc}): {e}")
+
+    report["ok"] = True
+    return report
 
 
 def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
@@ -93,6 +145,89 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("🔄 New Scene"),
     )
     return markup
+
+
+def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup]:
+    """
+    Builds a live, persistent interactive control panel showing checkmarks (✅)
+    for Register, Directness, Coaching Intensity, and Arabic Support.
+    """
+    sess = db.get_or_create_active_session(lid)
+    cfg = db.get_learner_settings(lid)
+
+    cur_reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
+    cur_dir = sess.get("directness") or cfg.get("default_directness") or "balanced"
+    cur_fb = cfg.get("feedback_preference") or "light"
+    cur_ar = cfg.get("arabic_support") or "bilingual"
+    cur_mode = sess.get("training_mode") or "open_scene"
+
+    text_html = (
+        "🎛️ <b>Spoken English Lab — Live Control Panel</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Active Mode:</b> <code>{_e(cur_mode)}</code>\n"
+        f"• <b>Spoken Register:</b> <b>{_e(cur_reg.upper())}</b>\n"
+        f"• <b>Pragmatic Directness:</b> <b>{_e(cur_dir.upper())}</b>\n"
+        f"• <b>Coaching Intensity:</b> <b>{_e(cur_fb.upper())}</b>\n"
+        f"• <b>Arabic Nuance Notes:</b> <b>{_e(cur_ar.upper())}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Tap any button below to switch immediately (changes persist across scenes):</i>"
+    )
+
+    markup = types.InlineKeyboardMarkup(row_width=3)
+
+    # Row 1 & 2: 6 Registers
+    regs = [
+        ("casual", "Casual"),
+        ("warm", "Warm"),
+        ("witty", "Witty"),
+        ("diplomatic", "Diplomatic"),
+        ("executive", "Executive"),
+        ("analytical", "Analytical"),
+    ]
+    reg_btns = [
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_reg == k else ''}{label}",
+            callback_data=f"setreg:{k}",
+        )
+        for k, label in regs
+    ]
+    markup.row(*reg_btns[:3])
+    markup.row(*reg_btns[3:])
+
+    # Row 3: 3 Directness levels
+    dirs = [("soft", "🕊️ Soft"), ("balanced", "⚖️ Balanced"), ("direct", "🎯 Direct")]
+    dir_btns = [
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_dir == k else ''}{label}",
+            callback_data=f"setdir:{k}",
+        )
+        for k, label in dirs
+    ]
+    markup.row(*dir_btns)
+
+    # Row 4: 3 Feedback Intensity levels
+    fbs = [("silent", "🔇 Silent"), ("light", "💡 Light"), ("active", "🔬 Active")]
+    fb_btns = [
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_fb == k else ''}{label}",
+            callback_data=f"setfb:{k}",
+        )
+        for k, label in fbs
+    ]
+    markup.row(*fb_btns)
+
+    # Row 5: Arabic Support toggle
+    ars = [("bilingual", "🇦🇪 AR Notes: ON"), ("english_only", "🇺🇸 English Only")]
+    ar_btns = [
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_ar == k else ''}{label}",
+            callback_data=f"setar:{k}",
+        )
+        for k, label in ars
+    ]
+    markup.row(*ar_btns)
+
+    return text_html, markup
 
 
 def render_layer2_card_html(reply_text: str, diag: dict) -> str:
@@ -134,11 +269,33 @@ if bot is not None:
         db.upsert_learner(lid)
         cfg = db.get_learner_settings(lid)
         reg = cfg.get("default_register", "casual")
-        db.create_session(new_sid, lid, training_mode="open_scene", scene_mode="real_conversation", register_profile=reg)
+        direct = cfg.get("default_directness", "balanced")
+        fb = cfg.get("feedback_preference", "light")
+        db.create_session(
+            new_sid,
+            lid,
+            training_mode="open_scene",
+            scene_mode="real_conversation",
+            register_profile=reg,
+            directness=direct,
+        )
         bot.send_message(
             message.chat.id,
-            f"🟢 <b>Spoken English Lab</b> (Scene <code>{new_sid}</code> | Register: <b>{_e(reg)}</b>)\n"
-            "Jump in with whatever is on your mind, or use the mode buttons below.",
+            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️</b>\n"
+            f"• Scene: <code>{new_sid}</code>\n"
+            f"• Register: <b>{_e(reg.upper())}</b> | Directness: <b>{_e(direct.upper())}</b> | Coaching: <b>{_e(fb.upper())}</b>\n\n"
+            "Talk naturally about anything on your mind, or tap <b>⚙️ Register & Tone</b> below to customize your session.",
+            parse_mode="HTML",
+            reply_markup=build_reply_keyboard(),
+        )
+
+    @bot.message_handler(commands=["sync_telegram"])
+    def handle_sync_telegram_cmd(message):
+        rep = force_sync_all_telegram_scopes_and_profile(message.chat.id)
+        bot.send_message(
+            message.chat.id,
+            "✅ <b>Telegram Profile, Scopes & Commands Force-Synced!</b>\n"
+            "<i>Note: Close and reopen the Telegram app once to clear mobile profile cache.</i>",
             parse_mode="HTML",
             reply_markup=build_reply_keyboard(),
         )
@@ -180,22 +337,10 @@ if bot is not None:
     @bot.message_handler(commands=["settings"])
     def handle_settings_cmd(message):
         lid = message.from_user.id
-        sess = db.get_or_create_active_session(lid)
-        cfg = db.get_learner_settings(lid)
-        markup = types.InlineKeyboardMarkup(row_width=3)
-        regs = ["casual", "warm", "witty", "diplomatic", "executive", "analytical"]
-        markup.add(*[types.InlineKeyboardButton(r.capitalize(), callback_data=f"setreg:{r}") for r in regs])
-        markup.add(
-            types.InlineKeyboardButton("🔇 Silent", callback_data="setfb:silent"),
-            types.InlineKeyboardButton("💡 Light (Default)", callback_data="setfb:light"),
-            types.InlineKeyboardButton("🔬 Active", callback_data="setfb:active"),
-        )
+        panel_html, markup = build_live_settings_panel(lid)
         bot.send_message(
             message.chat.id,
-            f"⚙️ <b>Session & Coaching Settings</b>\n"
-            f"• Active Register: <b>{_e(sess.get('register_profile', 'casual'))}</b>\n"
-            f"• Feedback Policy: <b>{_e(cfg.get('feedback_preference', 'light'))}</b>\n"
-            "Tap below to adjust:",
+            panel_html,
             parse_mode="HTML",
             reply_markup=markup,
         )
@@ -214,12 +359,13 @@ if bot is not None:
             "established_facts": dilemma.established_facts,
             "counterpart_goal": dilemma.counterpart_goal,
         }
+        # Preserve the learner's chosen register instead of overwriting it!
         db.update_session_settings(
             sid,
             lid,
             training_mode="pragmatic_dilemma",
             scene_mode="explicit_simulation",
-            register_profile=dilemma.register_profile.value,
+            register_profile=reg,
             scene_bible=dilemma_bible,
         )
         corr_id = f"dil_{uuid.uuid4().hex[:8]}"
@@ -234,6 +380,7 @@ if bot is not None:
         bot.send_message(
             chat_id,
             f"🤝 <b>Live Pragmatic Dilemma</b> (<i>{_e(dilemma.setting)} — {_e(dilemma.relationship)}</i>)\n"
+            f"• <b>Active Register:</b> <b>{_e(reg.upper())}</b>\n"
             f"• <b>Your Goal:</b> {_e(dilemma.learner_pragmatic_goal)}\n\n"
             f"💬 <b>Alex:</b> “{_e(dilemma.opening_line)}”",
             parse_mode="HTML",
@@ -267,7 +414,7 @@ if bot is not None:
         )
         bot.send_message(
             chat_id,
-            f"🏋️ <b>Spontaneous Retrieval Workout</b>\n"
+            f"🏋️ <b>Spontaneous Retrieval Workout</b> (Register: <b>{_e(reg.upper())}</b>)\n"
             f"• <b>Communicative Intention:</b> <code>{_e(workout.communicative_intention)}</code>\n\n"
             f"{_e(workout.situation_setup)}\n\n"
             f"👉 <b>{_e(workout.prompt_question)}</b>",
@@ -278,13 +425,17 @@ if bot is not None:
     def handle_dilemma_cmd(message):
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
-        _launch_dynamic_dilemma(message.chat.id, lid, str(sess["session_id"]), sess.get("register_profile", "diplomatic"))
+        cfg = db.get_learner_settings(lid)
+        reg = sess.get("register_profile") or cfg.get("default_register") or "diplomatic"
+        _launch_dynamic_dilemma(message.chat.id, lid, str(sess["session_id"]), reg)
 
     @bot.message_handler(commands=["workout"])
     def handle_workout_cmd(message):
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
-        _launch_dynamic_workout(message.chat.id, lid, str(sess["session_id"]), sess.get("register_profile", "casual"))
+        cfg = db.get_learner_settings(lid)
+        reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
+        _launch_dynamic_workout(message.chat.id, lid, str(sess["session_id"]), reg)
 
     @bot.message_handler(commands=["shift"])
     def handle_shift_cmd(message):
@@ -301,13 +452,13 @@ if bot is not None:
     def handle_think_cmd(message):
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
-        db.update_session_settings(str(sess["session_id"]), lid, training_mode="think_aloud", scene_mode="real_conversation", register_profile="analytical")
+        # Keep learner's chosen register unless they haven't set one
+        db.update_session_settings(str(sess["session_id"]), lid, training_mode="think_aloud", scene_mode="real_conversation")
         bot.send_message(
             message.chat.id,
-            "🧠 <b>Think-Aloud Mode (Analytical):</b> Share a view or argument on any topic, and let's test and refine it.",
+            f"🧠 <b>Think-Aloud Mode</b> (Register: <b>{_e(sess.get('register_profile', 'analytical').upper())}</b>): Share a view or argument on any topic, and let's test and refine it.",
             parse_mode="HTML",
         )
-
 
     def build_guide_inline_markup(active_key: str = "overview") -> types.InlineKeyboardMarkup:
         markup = types.InlineKeyboardMarkup(row_width=2)
@@ -349,18 +500,11 @@ if bot is not None:
                 caption="🖼️ <b>1. Bot Profile Picture (800×800)</b>\nUse this in <code>@BotFather</code> → <code>/setuserpic</code> (or Edit Botpic).",
                 parse_mode="HTML",
             )
-        with open(d_img, "rb") as fd:
-            bot.send_photo(
-                chat_id,
-                fd,
-                caption="🖼️ <b>2. Bot Description Picture (Exact 640×360)</b>\nUse this in <code>@BotFather</code> → <code>Edit Bot</code> → <code>Edit Description Picture</code>.",
-                parse_mode="HTML",
-            )
         with open(d_img, "rb") as fd_doc:
             bot.send_document(
                 chat_id,
                 fd_doc,
-                caption="📎 <b>Uncompressed 640×360 PNG</b> (in case Telegram mobile compresses the photo above).",
+                caption="📎 <b>2. Uncompressed 640×360 PNG</b> for <code>@BotFather</code> → <code>Edit Description Picture</code>.",
                 parse_mode="HTML",
             )
 
@@ -401,8 +545,9 @@ if bot is not None:
                 reply_markup=markup,
             )
             bot.answer_callback_query(call.id, "Upgrade expanded")
+            return
 
-        elif data.startswith("tts:"):
+        if data.startswith("tts:"):
             card_id = data.split(":", 1)[1]
             info = db.get_pending_card(card_id)
             target_txt = info["reply_text"] if info else (call.message.text or "")
@@ -413,29 +558,38 @@ if bot is not None:
                     bot.send_voice(call.message.chat.id, f_audio)
             except Exception as e:
                 logger.warning(f"TTS error: {e}")
+            return
 
-        elif data.startswith("setreg:"):
-            new_reg = data.split(":", 1)[1]
-            db.update_session_settings(sid, lid, register_profile=new_reg)
-            db.update_learner_preference(lid, default_register=new_reg)
-            bot.answer_callback_query(call.id, f"Register set to {new_reg}")
-            bot.edit_message_text(
-                f"⚙️ Active Register updated to: <b>{_e(new_reg)}</b>",
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode="HTML",
-            )
+        if data.startswith(("setreg:", "setdir:", "setfb:", "setar:")):
+            kind, val = data.split(":", 1)
+            if kind == "setreg":
+                db.update_session_settings(sid, lid, register_profile=val)
+                db.update_learner_preference(lid, default_register=val)
+                toast = f"Register → {val.upper()}"
+            elif kind == "setdir":
+                db.update_session_settings(sid, lid, directness=val)
+                db.update_learner_preference(lid, default_directness=val)
+                toast = f"Directness → {val.upper()}"
+            elif kind == "setfb":
+                db.update_learner_preference(lid, feedback_preference=val)
+                toast = f"Coaching → {val.upper()}"
+            else:
+                db.update_learner_preference(lid, arabic_support=val)
+                toast = f"Arabic Notes → {val.upper()}"
 
-        elif data.startswith("setfb:"):
-            new_fb = data.split(":", 1)[1]
-            db.update_learner_preference(lid, feedback_preference=new_fb)
-            bot.answer_callback_query(call.id, f"Feedback set to {new_fb}")
-            bot.edit_message_text(
-                f"⚙️ Feedback intensity updated to: <b>{_e(new_fb)}</b>",
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode="HTML",
-            )
+            panel_html, markup = build_live_settings_panel(lid)
+            try:
+                bot.edit_message_text(
+                    panel_html,
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode="HTML",
+                    reply_markup=markup,
+                )
+            except Exception:
+                pass
+            bot.answer_callback_query(call.id, f"✅ {toast}")
+            return
 
     @bot.message_handler(content_types=["text"])
     def handle_text(message):
@@ -459,11 +613,18 @@ if bot is not None:
             return
 
         sess = db.get_or_create_active_session(lid)
+        cfg = db.get_learner_settings(lid)
         sid = str(sess["session_id"])
+        active_reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
+        active_dir = sess.get("directness") or cfg.get("default_directness") or "balanced"
 
         if text.startswith("💬"):
-            db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
-            bot.send_message(chat_id, f"💬 <b>Open Scene ({_e(sess.get('register_profile', 'casual'))})</b> active.", parse_mode="HTML")
+            db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation", register_profile=active_reg, directness=active_dir)
+            bot.send_message(
+                chat_id,
+                f"💬 <b>Open Scene</b> active (Register: <b>{_e(active_reg.upper())}</b> | Directness: <b>{_e(active_dir.upper())}</b>).",
+                parse_mode="HTML",
+            )
             return
 
         if text.startswith("🎛️"):
@@ -471,7 +632,7 @@ if bot is not None:
             return
 
         if text.startswith("🤝"):
-            _launch_dynamic_dilemma(chat_id, lid, sid, sess.get("register_profile", "diplomatic"))
+            _launch_dynamic_dilemma(chat_id, lid, sid, active_reg)
             return
 
         if text.startswith("🧠"):
@@ -479,7 +640,7 @@ if bot is not None:
             return
 
         if text.startswith("🏋️"):
-            _launch_dynamic_workout(chat_id, lid, sid, sess.get("register_profile", "casual"))
+            _launch_dynamic_workout(chat_id, lid, sid, active_reg)
             return
 
         try:
@@ -550,15 +711,27 @@ if bot is not None:
 if __name__ == "__main__":
     if not bot:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
-    logger.info("Synchronizing Telegram Bot profile & commands...")
-    sync_telegram_bot_profile_and_commands()
+    logger.info("Force-synchronizing Telegram Bot scopes, luxury name, descriptions & commands...")
+    sync_rep = force_sync_all_telegram_scopes_and_profile(ADMIN_ID)
+    logger.info(f"Telegram sync report: {sync_rep}")
     if ADMIN_ID:
         try:
+            # 1. Refresh bottom keyboard and notify user
             bot.send_message(
                 ADMIN_ID,
-                "🟢 <b>Spoken English Lab (100% Spontaneous & Dynamic Engine + Telegram Commands Synced)</b> is live!",
+                "🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — All Settings & Scopes Force-Synced!</b>\n"
+                "• All legacy Telegram command scopes & language overrides purged.\n"
+                "• Live interactive Settings Panel (with ✅ checkmarks) is ready below:",
                 parse_mode="HTML",
                 reply_markup=build_reply_keyboard(),
+            )
+            # 2. Send the Live Control Panel immediately so the user can test clicking ✅ buttons right away
+            panel_html, panel_markup = build_live_settings_panel(ADMIN_ID)
+            bot.send_message(
+                ADMIN_ID,
+                panel_html,
+                parse_mode="HTML",
+                reply_markup=panel_markup,
             )
         except Exception as e:
             logger.warning(f"Boot notification skipped: {e}")

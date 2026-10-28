@@ -233,13 +233,37 @@ class EventSourcedDatabase:
             row = conn.execute("SELECT * FROM learners WHERE learner_id = ?", (learner_id,)).fetchone()
             return dict(row)
 
-    def update_learner_preference(self, learner_id: int, *, feedback_preference: Optional[str] = None, default_register: Optional[str] = None) -> None:
+    def update_learner_preference(
+        self,
+        learner_id: int,
+        *,
+        feedback_preference: Optional[str] = None,
+        default_register: Optional[str] = None,
+        default_directness: Optional[str] = None,
+        arabic_support: Optional[str] = None,
+    ) -> None:
         self.upsert_learner(learner_id)
         with self._conn() as conn:
             if feedback_preference in ("silent", "light", "active"):
-                conn.execute("UPDATE learners SET feedback_preference = ? WHERE learner_id = ?", (feedback_preference, learner_id))
-            if default_register:
-                conn.execute("UPDATE learners SET default_register = ? WHERE learner_id = ?", (default_register, learner_id))
+                conn.execute(
+                    "UPDATE learners SET feedback_preference = ? WHERE learner_id = ?",
+                    (feedback_preference, learner_id),
+                )
+            if default_register in ("casual", "warm", "witty", "diplomatic", "executive", "analytical"):
+                conn.execute(
+                    "UPDATE learners SET default_register = ? WHERE learner_id = ?",
+                    (default_register, learner_id),
+                )
+            if default_directness in ("soft", "balanced", "direct"):
+                conn.execute(
+                    "UPDATE learners SET default_directness = ? WHERE learner_id = ?",
+                    (default_directness, learner_id),
+                )
+            if arabic_support in ("bilingual", "on_request", "english_only"):
+                conn.execute(
+                    "UPDATE learners SET arabic_support = ? WHERE learner_id = ?",
+                    (arabic_support, learner_id),
+                )
             conn.commit()
 
     def create_session(
