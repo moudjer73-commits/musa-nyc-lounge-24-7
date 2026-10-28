@@ -211,20 +211,36 @@ class EventSourcedDatabase:
     def upsert_learner(
         self,
         learner_id: int,
-        feedback_preference: str = "light",
-        opted_in_workouts: bool = True,
+        feedback_preference: Optional[str] = None,
+        opted_in_workouts: Optional[bool] = None,
     ) -> None:
+        """
+        Ensures the learner row exists using INSERT OR IGNORE so existing preferences
+        (like 'silent' or 'active') are NEVER overwritten when reading settings.
+        """
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO learners (learner_id, feedback_preference, opted_in_workouts, created_at_utc)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(learner_id) DO UPDATE SET
-                    feedback_preference = excluded.feedback_preference,
-                    opted_in_workouts = excluded.opted_in_workouts
+                INSERT OR IGNORE INTO learners (learner_id, feedback_preference, opted_in_workouts, created_at_utc)
+                VALUES (?, COALESCE(?, 'light'), COALESCE(?, 1), ?)
                 """,
-                (learner_id, feedback_preference, 1 if opted_in_workouts else 0, _now_iso_utc()),
+                (
+                    learner_id,
+                    feedback_preference,
+                    (1 if opted_in_workouts else 0) if opted_in_workouts is not None else None,
+                    _now_iso_utc(),
+                ),
             )
+            if feedback_preference in ("silent", "light", "active"):
+                conn.execute(
+                    "UPDATE learners SET feedback_preference = ? WHERE learner_id = ?",
+                    (feedback_preference, learner_id),
+                )
+            if opted_in_workouts is not None:
+                conn.execute(
+                    "UPDATE learners SET opted_in_workouts = ? WHERE learner_id = ?",
+                    (1 if opted_in_workouts else 0, learner_id),
+                )
             conn.commit()
 
     def get_learner_settings(self, learner_id: int) -> dict[str, Any]:

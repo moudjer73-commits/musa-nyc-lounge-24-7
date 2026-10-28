@@ -662,6 +662,32 @@ class FullProductionVerificationSuite(unittest.TestCase):
             self.assertEqual(ep["times_feedback_shown"], 1)
 
 
+
+    # TEST 13: Live Control Panel settings persistence (Silent, Active, Directness, Register, Arabic)
+    def test_13_settings_buttons_persistence(self):
+        # Switch to 'silent'
+        self.db.update_learner_preference(self.learner_id, feedback_preference="silent")
+        # Calling get_or_create_active_session and get_learner_settings must NOT reset it to 'light'
+        _ = self.db.get_or_create_active_session(self.learner_id)
+        cfg_silent = self.db.get_learner_settings(self.learner_id)
+        self.assertEqual(cfg_silent["feedback_preference"], "silent")
+
+        # Switch to 'active', 'direct', 'executive', and 'english_only'
+        self.db.update_learner_preference(
+            self.learner_id,
+            feedback_preference="active",
+            default_register="executive",
+            default_directness="direct",
+            arabic_support="english_only",
+        )
+        _ = self.db.get_or_create_active_session(self.learner_id)
+        cfg_active = self.db.get_learner_settings(self.learner_id)
+        self.assertEqual(cfg_active["feedback_preference"], "active")
+        self.assertEqual(cfg_active["default_register"], "executive")
+        self.assertEqual(cfg_active["default_directness"], "direct")
+        self.assertEqual(cfg_active["arabic_support"], "english_only")
+
+
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(FullProductionVerificationSuite)
     runner = unittest.TextTestRunner(verbosity=2)
