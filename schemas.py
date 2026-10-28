@@ -296,3 +296,24 @@ class RegisterShiftResult(BaseModel):
     key_pragmatic_distinction_en: str
     key_pragmatic_distinction_ar: str
     practice_prompt: str
+
+
+
+class DynamicDilemmaScene(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    setting: str = Field(..., min_length=5, max_length=140)
+    relationship: str = Field(..., min_length=3, max_length=80)
+    register_profile: RegisterProfile = RegisterProfile.DIPLOMATIC
+    established_facts: list[str] = Field(..., min_length=2, max_length=4)
+    counterpart_goal: str = Field(..., min_length=5, max_length=160)
+    learner_pragmatic_goal: str = Field(..., min_length=5, max_length=160)
+    opening_line: str = Field(..., min_length=5, max_length=240)
+
+
+class DynamicWorkoutScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    communicative_intention: str = Field(..., min_length=3, max_length=100)
+    situation_setup: str = Field(..., min_length=10, max_length=260)
+    prompt_question: str = Field(..., min_length=5, max_length=120)

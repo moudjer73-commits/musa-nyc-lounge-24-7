@@ -6,6 +6,7 @@ import os
 import time
 import uuid
 import edge_tts
+import requests
 import telebot
 from telebot import types
 from ai_engine import DualLLMEngine
@@ -25,6 +26,54 @@ bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=False) if TELEGRAM_BOT_TOKEN 
 
 def _e(val) -> str:
     return html.escape(str(val if val is not None else ""))
+
+
+def sync_telegram_bot_profile_and_commands() -> None:
+    """
+    Automatically configures the Telegram bot's official commands menu (/),
+    description, and short bio via the Telegram Bot API so the Telegram UI
+    matches the new Spoken English Lab architecture.
+    """
+    if not bot or not TELEGRAM_BOT_TOKEN:
+        return
+    try:
+        commands = [
+            types.BotCommand("start", "Start or refresh your Spoken English Lab"),
+            types.BotCommand("scene", "Open spontaneous conversation scene"),
+            types.BotCommand("dilemma", "Generate a live pragmatic dilemma"),
+            types.BotCommand("shift", "Transform a thought across registers"),
+            types.BotCommand("think", "Analytical Think-Aloud sparring"),
+            types.BotCommand("workout", "Spontaneous phrase retrieval workout"),
+            types.BotCommand("settings", "Adjust register & coaching intensity"),
+            types.BotCommand("progress", "View evidence-based acquisition profile"),
+        ]
+        bot.set_my_commands(commands)
+
+        base_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+        requests.post(
+            f"{base_api}/setMyShortDescription",
+            json={
+                "short_description": "Spoken American English Lab — Real conversation, pragmatic nuance & register mastery for Arabic speakers."
+            },
+            timeout=10,
+        )
+        requests.post(
+            f"{base_api}/setMyDescription",
+            json={
+                "description": (
+                    "Welcome to Spoken English Lab 🎙️\n\n"
+                    "Practice real, unscripted Spoken American English across every register "
+                    "(Casual, Warm, Witty, Diplomatic, Executive, Analytical).\n"
+                    "• Natural conversation first, non-intrusive coaching second\n"
+                    "• L1-Arabic transfer diagnostics & neutral bilingual notes\n"
+                    "• Live pragmatic dilemmas, register shifting & unaided retrieval workouts"
+                )
+            },
+            timeout=10,
+        )
+        logger.info("Telegram bot commands and descriptions synchronized successfully.")
+    except Exception as sync_err:
+        logger.warning(f"Telegram profile sync notice: {sync_err}")
 
 
 def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
@@ -74,17 +123,18 @@ def synthesize_tts_mp3(text: str) -> str:
 
 
 if bot is not None:
-    @bot.message_handler(commands=["start", "reset"])
+    @bot.message_handler(commands=["start", "reset", "scene"])
     def handle_start(message):
         lid = message.from_user.id
         new_sid = f"sess_{uuid.uuid4().hex[:10]}"
         db.upsert_learner(lid)
-        db.create_session(new_sid, lid, training_mode="open_scene", scene_mode="real_conversation", register_profile="casual")
+        cfg = db.get_learner_settings(lid)
+        reg = cfg.get("default_register", "casual")
+        db.create_session(new_sid, lid, training_mode="open_scene", scene_mode="real_conversation", register_profile=reg)
         bot.send_message(
             message.chat.id,
-            "🟢 <b>Spoken English Lab — Ready</b>\n"
-            f"Fresh scene initialized (<code>{new_sid}</code>, Register: <b>casual</b>).\n"
-            "Talk naturally about anything on your mind, or pick a training mode below.",
+            f"🟢 <b>Spoken English Lab</b> (Scene <code>{new_sid}</code> | Register: <b>{_e(reg)}</b>)\n"
+            "Jump in with whatever is on your mind, or use the mode buttons below.",
             parse_mode="HTML",
             reply_markup=build_reply_keyboard(),
         )
@@ -122,6 +172,137 @@ if bot is not None:
                     f"workout={'✅ due' if r['workout_scheduled'] else '—'}"
                 )
         bot.send_message(message.chat.id, "\n".join(out_lines), parse_mode="HTML")
+
+    @bot.message_handler(commands=["settings"])
+    def handle_settings_cmd(message):
+        lid = message.from_user.id
+        sess = db.get_or_create_active_session(lid)
+        cfg = db.get_learner_settings(lid)
+        markup = types.InlineKeyboardMarkup(row_width=3)
+        regs = ["casual", "warm", "witty", "diplomatic", "executive", "analytical"]
+        markup.add(*[types.InlineKeyboardButton(r.capitalize(), callback_data=f"setreg:{r}") for r in regs])
+        markup.add(
+            types.InlineKeyboardButton("🔇 Silent", callback_data="setfb:silent"),
+            types.InlineKeyboardButton("💡 Light (Default)", callback_data="setfb:light"),
+            types.InlineKeyboardButton("🔬 Active", callback_data="setfb:active"),
+        )
+        bot.send_message(
+            message.chat.id,
+            f"⚙️ <b>Session & Coaching Settings</b>\n"
+            f"• Active Register: <b>{_e(sess.get('register_profile', 'casual'))}</b>\n"
+            f"• Feedback Policy: <b>{_e(cfg.get('feedback_preference', 'light'))}</b>\n"
+            "Tap below to adjust:",
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
+
+    def _launch_dynamic_dilemma(chat_id: int, lid: int, sid: str, reg: str):
+        try:
+            bot.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        dilemma = ai.generate_dynamic_dilemma_scene(register_profile=reg)
+        dilemma_bible = {
+            "scene_id": sid,
+            "scene_mode": "explicit_simulation",
+            "setting": dilemma.setting,
+            "relationship": dilemma.relationship,
+            "established_facts": dilemma.established_facts,
+            "counterpart_goal": dilemma.counterpart_goal,
+        }
+        db.update_session_settings(
+            sid,
+            lid,
+            training_mode="pragmatic_dilemma",
+            scene_mode="explicit_simulation",
+            register_profile=dilemma.register_profile.value,
+            scene_bible=dilemma_bible,
+        )
+        corr_id = f"dil_{uuid.uuid4().hex[:8]}"
+        db.append_event(
+            learner_id=lid,
+            session_id=sid,
+            event_type="responder_reply_delivered",
+            payload={"reply_text": dilemma.opening_line, "asked_optional_question": "?" in dilemma.opening_line},
+            correlation_id=corr_id,
+            idempotency_key=f"{corr_id}:open",
+        )
+        bot.send_message(
+            chat_id,
+            f"🤝 <b>Live Pragmatic Dilemma</b> (<i>{_e(dilemma.setting)} — {_e(dilemma.relationship)}</i>)\n"
+            f"• <b>Your Goal:</b> {_e(dilemma.learner_pragmatic_goal)}\n\n"
+            f"💬 <b>Alex:</b> “{_e(dilemma.opening_line)}”",
+            parse_mode="HTML",
+        )
+
+    def _launch_dynamic_workout(chat_id: int, lid: int, sid: str, reg: str):
+        try:
+            bot.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        target = db.select_stealth_target_for_session(lid, reg) or {
+            "phrase_id": DEFAULT_CURATED_PHRASES[0][0],
+            "canonical_form": DEFAULT_CURATED_PHRASES[0][1],
+            "communicative_intention": DEFAULT_CURATED_PHRASES[0][2],
+        }
+        workout = ai.generate_dynamic_workout_scenario(target, register_profile=reg)
+        workout_bible = {
+            "scene_id": sid,
+            "scene_mode": "micro_drill",
+            "setting": workout.situation_setup,
+            "relationship": "conversational counterpart",
+            "established_facts": [workout.situation_setup],
+            "counterpart_goal": f"Evaluate unaided retrieval for intention: {workout.communicative_intention}",
+        }
+        db.update_session_settings(
+            sid,
+            lid,
+            training_mode="phrase_workout",
+            scene_mode="micro_drill",
+            scene_bible=workout_bible,
+        )
+        bot.send_message(
+            chat_id,
+            f"🏋️ <b>Spontaneous Retrieval Workout</b>\n"
+            f"• <b>Communicative Intention:</b> <code>{_e(workout.communicative_intention)}</code>\n\n"
+            f"{_e(workout.situation_setup)}\n\n"
+            f"👉 <b>{_e(workout.prompt_question)}</b>",
+            parse_mode="HTML",
+        )
+
+    @bot.message_handler(commands=["dilemma"])
+    def handle_dilemma_cmd(message):
+        lid = message.from_user.id
+        sess = db.get_or_create_active_session(lid)
+        _launch_dynamic_dilemma(message.chat.id, lid, str(sess["session_id"]), sess.get("register_profile", "diplomatic"))
+
+    @bot.message_handler(commands=["workout"])
+    def handle_workout_cmd(message):
+        lid = message.from_user.id
+        sess = db.get_or_create_active_session(lid)
+        _launch_dynamic_workout(message.chat.id, lid, str(sess["session_id"]), sess.get("register_profile", "casual"))
+
+    @bot.message_handler(commands=["shift"])
+    def handle_shift_cmd(message):
+        lid = message.from_user.id
+        sess = db.get_or_create_active_session(lid)
+        db.update_session_settings(str(sess["session_id"]), lid, training_mode="register_shift", scene_mode="micro_drill")
+        bot.send_message(
+            message.chat.id,
+            "🎛️ <b>Register Shift Mode:</b> Send any message or communicative intention, and I'll calibrate it across Casual, Diplomatic, and Executive registers.",
+            parse_mode="HTML",
+        )
+
+    @bot.message_handler(commands=["think"])
+    def handle_think_cmd(message):
+        lid = message.from_user.id
+        sess = db.get_or_create_active_session(lid)
+        db.update_session_settings(str(sess["session_id"]), lid, training_mode="think_aloud", scene_mode="real_conversation", register_profile="analytical")
+        bot.send_message(
+            message.chat.id,
+            "🧠 <b>Think-Aloud Mode (Analytical):</b> Share a view or argument on any topic, and let's test and refine it.",
+            parse_mode="HTML",
+        )
 
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callback(call):
@@ -163,6 +344,7 @@ if bot is not None:
         elif data.startswith("setreg:"):
             new_reg = data.split(":", 1)[1]
             db.update_session_settings(sid, lid, register_profile=new_reg)
+            db.update_learner_preference(lid, default_register=new_reg)
             bot.answer_callback_query(call.id, f"Register set to {new_reg}")
             bot.edit_message_text(
                 f"⚙️ Active Register updated to: <b>{_e(new_reg)}</b>",
@@ -196,95 +378,32 @@ if bot is not None:
         if text.startswith("📊"):
             handle_progress(message)
             return
+        if text.startswith("⚙️"):
+            handle_settings_cmd(message)
+            return
 
         sess = db.get_or_create_active_session(lid)
         sid = str(sess["session_id"])
 
-        if text.startswith("⚙️"):
-            markup = types.InlineKeyboardMarkup(row_width=3)
-            regs = ["casual", "warm", "witty", "diplomatic", "executive", "analytical"]
-            markup.add(*[types.InlineKeyboardButton(r.capitalize(), callback_data=f"setreg:{r}") for r in regs])
-            markup.add(
-                types.InlineKeyboardButton("🔇 Silent", callback_data="setfb:silent"),
-                types.InlineKeyboardButton("💡 Light (Default)", callback_data="setfb:light"),
-                types.InlineKeyboardButton("🔬 Active", callback_data="setfb:active"),
-            )
-            bot.send_message(
-                chat_id,
-                f"⚙️ <b>Session Settings</b>\n"
-                f"• Current Register: <b>{_e(sess.get('register_profile', 'casual'))}</b>\n"
-                "Select a register or feedback intensity below:",
-                parse_mode="HTML",
-                reply_markup=markup,
-            )
-            return
-
         if text.startswith("💬"):
-            db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation", register_profile="casual")
-            bot.send_message(chat_id, "💬 <b>Open Scene (Casual)</b> active. What's on your mind?", parse_mode="HTML")
+            db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
+            bot.send_message(chat_id, f"💬 <b>Open Scene ({_e(sess.get('register_profile', 'casual'))})</b> active.", parse_mode="HTML")
             return
 
         if text.startswith("🎛️"):
-            db.update_session_settings(sid, lid, training_mode="register_shift", scene_mode="micro_drill", register_profile="diplomatic")
-            bot.send_message(
-                chat_id,
-                "🎛️ <b>Register Shift Mode:</b> Send any thought or intention (e.g., <i>'I want to tell someone their timeline is unrealistic'</i>), and we'll calibrate it across Casual, Diplomatic, and Executive registers.",
-                parse_mode="HTML",
-            )
+            handle_shift_cmd(message)
             return
 
         if text.startswith("🤝"):
-            dilemma_bible = {
-                "scene_id": sid,
-                "scene_mode": "explicit_simulation",
-                "setting": "Project handoff call under tight deadline",
-                "relationship": "peer colleague",
-                "established_facts": [
-                    "Alex is asking you to take over the data section tonight.",
-                    "Your schedule is already full, so you must protect your boundary while keeping rapport.",
-                ],
-                "counterpart_goal": "Get help with Friday's deliverable or agree on a realistic compromise",
-            }
-            db.update_session_settings(
-                sid,
-                lid,
-                training_mode="pragmatic_dilemma",
-                scene_mode="explicit_simulation",
-                register_profile="diplomatic",
-                scene_bible=dilemma_bible,
-            )
-            bot.send_message(
-                chat_id,
-                "🤝 <b>Pragmatic Dilemma (Simulation):</b>\n"
-                "💬 <b>Alex:</b> “Hey, we're really backed up on Friday's deliverable. Can you take over the data section tonight so we don't slip?”\n"
-                "<i>(Respond naturally: protect your schedule while keeping the relationship intact.)</i>",
-                parse_mode="HTML",
-            )
+            _launch_dynamic_dilemma(chat_id, lid, sid, sess.get("register_profile", "diplomatic"))
             return
 
         if text.startswith("🧠"):
-            db.update_session_settings(sid, lid, training_mode="think_aloud", scene_mode="real_conversation", register_profile="analytical")
-            bot.send_message(
-                chat_id,
-                "🧠 <b>Think-Aloud Mode (Analytical):</b> Share an opinion on any topic, and I'll test your reasoning and help you practice nuanced spoken qualifiers.",
-                parse_mode="HTML",
-            )
+            handle_think_cmd(message)
             return
 
         if text.startswith("🏋️"):
-            target = db.select_stealth_target_for_session(lid, sess.get("register_profile", "casual")) or {
-                "phrase_id": DEFAULT_CURATED_PHRASES[0][0],
-                "canonical_form": DEFAULT_CURATED_PHRASES[0][1],
-                "communicative_intention": DEFAULT_CURATED_PHRASES[0][2],
-            }
-            db.update_session_settings(sid, lid, training_mode="phrase_workout", scene_mode="micro_drill")
-            bot.send_message(
-                chat_id,
-                f"🏋️ <b>Phrase Workout (Unaided Retrieval):</b>\n"
-                f"• <b>Communicative Goal:</b> <code>{_e(target['communicative_intention'])}</code>\n"
-                "You have a quick idea for a project and want to briefly present it to a colleague to get their reaction. What do you say naturally?",
-                parse_mode="HTML",
-            )
+            _launch_dynamic_workout(chat_id, lid, sid, sess.get("register_profile", "casual"))
             return
 
         try:
@@ -343,7 +462,7 @@ if bot is not None:
                 pat = turn_res.policy_decision.workout_candidate_pattern_id
                 bot.send_message(
                     chat_id,
-                    f"🎯 <b>Pattern Notice:</b> We've seen <code>{_e(pat)}</code> come up 3 times across your turns. Tap 🎛️ <b>Register Shift</b> or 🏋️ <b>Phrase Workout</b> whenever you'd like a 2-minute practice on it.",
+                    f"🎯 <b>Pattern Notice:</b> <code>{_e(pat)}</code> has come up 3 times across your turns. Tap 🎛️ <b>Register Shift</b> or 🏋️ <b>Phrase Workout</b> whenever you'd like a quick focused practice.",
                     parse_mode="HTML",
                 )
 
@@ -355,12 +474,13 @@ if bot is not None:
 if __name__ == "__main__":
     if not bot:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
-    logger.info("Spoken English Lab starting...")
+    logger.info("Synchronizing Telegram Bot profile & commands...")
+    sync_telegram_bot_profile_and_commands()
     if ADMIN_ID:
         try:
             bot.send_message(
                 ADMIN_ID,
-                "🟢 <b>Spoken English Lab (Clean-Slate Audited Architecture)</b> is live!",
+                "🟢 <b>Spoken English Lab (100% Spontaneous & Dynamic Engine + Telegram Commands Synced)</b> is live!",
                 parse_mode="HTML",
                 reply_markup=build_reply_keyboard(),
             )

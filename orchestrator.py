@@ -162,6 +162,24 @@ class TurnOrchestrator:
                     selected_diag = d
                     break
 
+        if selected_diag and selected_diag.alternative and selected_diag.confidence_band.value == "high":
+            organic_pid = self.db.register_organic_phrase_from_diagnostic(
+                normalized_pattern_id=selected_diag.normalized_pattern_id,
+                canonical_form=selected_diag.alternative,
+                communicative_intention=analysis.communicative_intention,
+                register_profile=register_profile.value,
+            )
+            if policy_dec.intervention == InterventionLevel.BRIEF_CARD:
+                self.db.append_event(
+                    learner_id=learner_id,
+                    session_id=session_id,
+                    event_type="phrase_exposure_recorded",
+                    payload={"phrase_id": organic_pid, "revealed_to_learner": True, "directly_cued": False},
+                    correlation_id=corr_id,
+                    causation_id=diag_ev_id,
+                    idempotency_key=f"{idem_base}:org_exp:{organic_pid}",
+                )
+
         self.db.append_event(
             learner_id=learner_id,
             session_id=session_id,

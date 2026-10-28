@@ -13,6 +13,8 @@ from schemas import (
     Analysis,
     DialogueDecision,
     DirectnessLevel,
+    DynamicDilemmaScene,
+    DynamicWorkoutScenario,
     PersonaCard,
     RegisterProfile,
     RegisterShiftResult,
@@ -101,15 +103,15 @@ def _deterministic_responder_repair(
     advisory_recast_candidate: Optional[str],
     stealth_target_form: Optional[str],
 ) -> ResponderOutput:
-    """
-    Safe deterministic repair when an LLM output violates question or length constraints:
-    removes prohibited question sentences (replacing with a natural declarative observation if needed)
-    and trims excess sentences/words to satisfy `validate_responder_output`.
-    """
     txt = str(raw_dict.get("reply_text") or "").strip()
     sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", txt) if s.strip()]
     if not decision.allow_question:
-        sents = [s for s in sents if not s.endswith("?")]
+        non_q = [s for s in sents if not s.endswith("?")]
+        if non_q:
+            sents = non_q
+        elif sents:
+            # Convert the interrogative punctuation into a declarative clause if no other sentence exists
+            sents = [sents[0].rstrip("?") + "."]
     elif len([s for s in sents if s.endswith("?")]) > 1:
         kept = []
         q_seen = False
@@ -122,11 +124,8 @@ def _deterministic_responder_repair(
                 kept.append(s)
         sents = kept
 
-    if not sents:
-        sents = ["That makes sense."]
-
     sents = sents[: decision.max_sentences]
-    repaired_txt = " ".join(sents)
+    repaired_txt = " ".join(sents).strip()
     words = repaired_txt.split()
     if len(words) > decision.max_words:
         repaired_txt = " ".join(words[: decision.max_words - 1]).rstrip(".,;:") + "."
@@ -351,6 +350,67 @@ class DualLLMEngine:
             system_prompt=sys_p,
             user_prompt=f"Learner's input to shift across registers: {learner_text}",
             validator_fn=RegisterShiftResult.model_validate,
-            temperature=0.3,
+            temperature=0.45,
+            max_tries=2,
+        )
+
+    def generate_dynamic_dilemma_scene(self, register_profile: str = "diplomatic") -> DynamicDilemmaScene:
+        """
+        Generates a 100% spontaneous, non-repetitive real-life pragmatic dilemma across diverse
+        human settings (social, neighborhood, friendship, travel, service, or workplace).
+        """
+        sys_p = (
+            "You design realistic, unscripted Spoken American English pragmatic simulations.\n"
+            "Generate a fresh, relatable real-life situation where the learner faces two competing social/pragmatic constraints "
+            "(e.g., declining an invitation from a close friend without hurting feelings, addressing a neighbor's noise politely, "
+            "renegotiating a shared plan, handling an awkward favor request, or pushing back on an unrealistic expectation).\n"
+            "Vary the setting and relationship naturally so it never feels like a repetitive corporate template.\n"
+            "Return ONLY valid JSON matching DynamicDilemmaScene:\n"
+            "{\n"
+            '  "setting": "...",\n'
+            '  "relationship": "...",\n'
+            '  "register_profile": "casual" | "warm" | "diplomatic" | "executive",\n'
+            '  "established_facts": ["fact 1", "fact 2"],\n'
+            '  "counterpart_goal": "...",\n'
+            '  "learner_pragmatic_goal": "...",\n'
+            '  "opening_line": "Natural spoken line from Alex starting the interaction"\n'
+            "}"
+        )
+        return self._call_gemini_json(
+            system_prompt=sys_p,
+            user_prompt=f"Preferred starting register profile: {register_profile}. Generate a fresh, spontaneous pragmatic dilemma scene.",
+            validator_fn=DynamicDilemmaScene.model_validate,
+            temperature=0.85,
+            max_tries=2,
+        )
+
+    def generate_dynamic_workout_scenario(self, target_info: dict[str, str], register_profile: str = "casual") -> DynamicWorkoutScenario:
+        """
+        Generates a fresh situational retrieval prompt that naturally elicits `communicative_intention`
+        WITHOUT revealing or hinting at the exact words of `canonical_form`.
+        """
+        forbidden_form = target_info.get("canonical_form", "")
+        intention = target_info.get("communicative_intention", "express your point naturally")
+        sys_p = (
+            "You create short, realistic situational prompts for unaided spoken English retrieval.\n"
+            f"Target communicative move: '{intention}'.\n"
+            f"CRITICAL RULE: NEVER include or reveal the phrase '{forbidden_form}' or its key lexical words in `situation_setup` or `prompt_question`!\n"
+            "Describe a concrete 1-2 sentence everyday situation in `situation_setup` where the learner naturally needs to perform this communicative move, "
+            "and ask what they would say in `prompt_question`.\n"
+            "Return ONLY valid JSON matching DynamicWorkoutScenario."
+        )
+
+        def _validate_workout(raw_d: dict[str, Any]) -> DynamicWorkoutScenario:
+            out = DynamicWorkoutScenario.model_validate(raw_d)
+            stem = re.sub(r"\[[^\]]+\]", "", forbidden_form).strip().lower()
+            if len(stem) >= 5 and stem in (out.situation_setup + " " + out.prompt_question).lower():
+                raise ValueError("Workout prompt leaked the target phrase.")
+            return out
+
+        return self._call_gemini_json(
+            system_prompt=sys_p,
+            user_prompt=f"Register context: {register_profile}. Create a spontaneous scenario for communicative move: {intention}",
+            validator_fn=_validate_workout,
+            temperature=0.8,
             max_tries=2,
         )

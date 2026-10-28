@@ -466,6 +466,32 @@ class EventSourcedDatabase:
             )
             conn.commit()
 
+
+    def register_organic_phrase_from_diagnostic(
+        self,
+        *,
+        normalized_pattern_id: str,
+        canonical_form: str,
+        communicative_intention: str,
+        register_profile: str,
+    ) -> str:
+        """
+        Dynamically registers a natural spoken expression discovered during the learner's
+        own spontaneous conversation so the phrase catalog grows organically without static bias.
+        """
+        import re as _re
+        clean_slug = _re.sub(r"[^a-z0-9]+", "_", canonical_form.strip().lower()).strip("_")[:48]
+        phrase_id = f"organic_{clean_slug}" if clean_slug else f"organic_{uuid.uuid4().hex[:8]}"
+        self.register_phrase(
+            phrase_id=phrase_id,
+            canonical_form=canonical_form.strip(),
+            communicative_intention=communicative_intention or normalized_pattern_id,
+            construction_pattern=normalized_pattern_id,
+            register_profiles=[register_profile, "casual", "diplomatic"],
+            applicability="core",
+        )
+        return phrase_id
+
     def append_event(
         self,
         *,
