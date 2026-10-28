@@ -1,21 +1,20 @@
-name: Musa's NYC Lounge 24/7 Autonomous Engine
+name: Spoken English Lab 24-7
 
 on:
-  schedule:
-    - cron: '15 */5 * * *'
-  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */5 * * *'
 
 concurrency:
-  group: nyc-lounge-production-group
+  group: spoken-english-lab-single-instance
   cancel-in-progress: true
 
 jobs:
-  run-nyc-lounge:
+  run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    timeout-minutes: 330
 
     steps:
       - name: Checkout Repository
@@ -25,17 +24,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
-      - name: Verify System Dependencies (Instant Non-Blocking Check)
-        run: |
-          which ffmpeg || true
 
       - name: Install Python Packages
         run: |
-          pip install --prefer-binary -q -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Run Musa's NYC Lounge (4.8-Hour Relay Cycle)
+      - name: Run 12 Production Acceptance Tests
+        run: python tests.py
+
+      - name: Run Musa's NYC Lounge (Spoken English Lab)
+        timeout-minutes: 290
+        continue-on-error: true
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -44,5 +44,11 @@ jobs:
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python app.py
+
+      - name: Trigger Next 24-7 Relay Run
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 -u app.py
+          gh workflow run main.yml --repo ${{ github.repository }} || true

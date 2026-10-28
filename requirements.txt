@@ -1,5 +1,4 @@
-pyTelegramBotAPI>=4.22.0
-google-genai>=1.2.0
-pydantic>=2.9.0
-edge-tts>=6.1.12
-weasyprint>=62.3
+pyTelegramBotAPI>=4.14.0
+pydantic>=2.5.0
+requests>=2.31.0
+edge-tts>=6.1.9
