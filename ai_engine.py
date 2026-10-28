@@ -42,10 +42,12 @@ def is_short_greeting(text: str) -> bool:
     return any(w.strip(".,!?") in greetings for w in words) and words[0].strip(".,!?") in {"hey", "hi", "hello", "yo", "sup", "good"}
 
 
+from transport_core import NYCLoungeAI as _WorkingTransport
+
+
 class CleanAIEngine:
-    def __init__(self, api_key: str = GEMINI_API_KEY, model_name: str = GEMINI_MODEL):
-        self.api_key = api_key
-        self.model_name = model_name
+    def __init__(self, *args, **kwargs):
+        self._transport = _WorkingTransport()
 
     def _call_gemini_json(
         self,
@@ -55,37 +57,13 @@ class CleanAIEngine:
         temperature: float = 0.35,
         max_tries: int = 2,
     ) -> Any:
-        models_to_try = [self.model_name, "gemini-2.5-flash", "gemini-2.0-flash"]
-        seen = set()
-        ordered_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
-
-        last_err = None
-        for m_name in ordered_models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={self.api_key}"
-            for attempt in range(max_tries):
-                prompt_body = user_prompt
-                if last_err:
-                    prompt_body += f"\n\n[SCHEMA REPAIR NOTICE: Previous JSON failed validation ({last_err}). Return strictly valid JSON matching all required keys.]"
-                payload = {
-                    "systemInstruction": {"parts": [{"text": system_prompt}]},
-                    "contents": [{"role": "user", "parts": [{"text": prompt_body}]}],
-                    "generationConfig": {
-                        "temperature": temperature,
-                        "responseMimeType": "application/json",
-                    },
-                }
-                try:
-                    resp = requests.post(url, json=payload, timeout=25)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    raw_txt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    raw_txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_txt, flags=re.IGNORECASE).strip()
-                    parsed = json.loads(raw_txt)
-                    return validator_fn(parsed)
-                except Exception as e:
-                    last_err = str(e)
-                    logger.warning(f"Gemini ({m_name}) attempt {attempt + 1} failed: {e}")
-        raise RuntimeError(f"Gemini JSON validation failed: {last_err}")
+        return self._transport._call_gemini_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_tries=max_tries,
+            validator_fn=validator_fn,
+        )
 
     def generate_banter_turn(self, user_text: str, history_lines: List[str]) -> UnifiedBanterOutput:
         system_prompt = (
