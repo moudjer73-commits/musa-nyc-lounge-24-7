@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 import sqlite3
 import tempfile
@@ -686,6 +687,116 @@ class FullProductionVerificationSuite(unittest.TestCase):
         self.assertEqual(cfg_active["default_register"], "executive")
         self.assertEqual(cfg_active["default_directness"], "direct")
         self.assertEqual(cfg_active["arabic_support"], "english_only")
+
+
+
+    def test_14_arabic_english_formatting_consistency(self):
+        from policy_engine import normalize_arabic_english_formatting
+
+        self.assertEqual(
+            normalize_arabic_english_formatting("في الإنجليزية نستخدم «turn on» للأجهزة وليس «open» كما في العربية «افتح المكيف»."),
+            "في الإنجليزية نستخدم turn on للأجهزة وليس open كما في العربية «افتح المكيف».",
+        )
+        self.assertEqual(
+            normalize_arabic_english_formatting("تجنب تكرار الضمير العائد («it») في نهاية الجملة."),
+            "تجنب تكرار الضمير العائد it في نهاية الجملة.",
+        )
+
+
+
+    def test_15_zero_benchmark_leakage_in_prompts(self):
+        """Ensures zero blind-test sentences or ChatGPT example phrases were hardcoded into ai_engine prompts."""
+        ai_source = Path("ai_engine.py").read_text(encoding="utf-8")
+        forbidden_benchmark_literals = [
+            "Hey, I can't make it today",
+            "Something came up",
+            "an urgent matter has arisen",
+            "today's engagement",
+            "Take easy man and kick back",
+            "get the cool air blowing",
+            "crank up the AC",
+            "I don't want to waste my evening",
+            "Well, that went great",
+            "Whaddaya think? Mighta gone better",
+        ]
+        for phrase in forbidden_benchmark_literals:
+            self.assertNotIn(phrase.lower(), ai_source.lower(), f"Bias/Overfitting detected: '{phrase}' found in ai_engine.py!")
+
+    def test_16_workout_task_completion_and_reinforce(self):
+        """Verifies workout task tracking separates linguistic diagnostics from communicative task completion."""
+        from policy_engine import (
+            get_active_workout_task,
+            register_workout_task,
+            update_workout_task_after_turn,
+        )
+        from schemas import DynamicWorkoutScenario
+
+        scen = DynamicWorkoutScenario(
+            communicative_intention="request_action",
+            situation_setup="You and your friend just sat down in a warm room.",
+            prompt_question="Ask your friend to get some fresh air moving.",
+        )
+        register_workout_task(scen, {"canonical_form": "turn on the fan", "target_id": "t_fan"}, learner_id="u_work")
+        active = get_active_workout_task("u_work")
+        self.assertIsNotNone(active)
+        self.assertEqual(active["status"], "ACTIVE")
+
+        # Turn 1: Learner misses the communicative task -> MISSED + reinforce_required=True
+        res1 = update_workout_task_after_turn("u_work", goal_achieved=False)
+        self.assertEqual(res1["task_status"], "MISSED")
+        self.assertTrue(res1["reinforce_required"])
+        self.assertIsNotNone(get_active_workout_task("u_work"))
+
+        # Turn 2: Learner fulfills the communicative task -> FULFILLED + task cleared
+        res2 = update_workout_task_after_turn("u_work", goal_achieved=True)
+        self.assertEqual(res2["task_status"], "FULFILLED")
+        self.assertFalse(res2["reinforce_required"])
+        self.assertIsNone(get_active_workout_task("u_work"))
+
+    def test_17_listen_decode_two_phase_state_machine(self):
+        """Verifies Listen & Decode Phase 1 never leaks the unpacked form, IPA, or subtext before learner reply."""
+        from policy_engine import (
+            complete_decode_session,
+            format_decode_phase1_message,
+            format_decode_phase2_reveal,
+            get_active_decode_session,
+            start_decode_session,
+        )
+        from schemas import DecodeEvaluationResult, ListenDecodeChallenge
+
+        ch = ListenDecodeChallenge(
+            context_line="Two colleagues chatting after a client call.",
+            spoken_clip_text="Didja catch what she meant at the end?",
+            full_unreduced_form="Did you catch what she meant at the end?",
+            acoustic_reduction_note="'Did you' assimilates into 'Didja' (/dɪdʒə/).",
+            pragmatic_subtext_en="The speaker suspects there was a hidden message in the client's closing remark.",
+            pragmatic_subtext_ar="يشك المتحدث في وجود رسالة مبطنة في تعليق العميل الأخير.",
+            decode_question="Why is the speaker asking about the end of the call?",
+        )
+        start_decode_session("u_dec", ch, "chat_1")
+        self.assertIsNotNone(get_active_decode_session("u_dec"))
+
+        phase1_msg = format_decode_phase1_message(ch, "casual")
+        self.assertIn("Didja catch what she meant at the end?", phase1_msg)
+        self.assertIn("Why is the speaker asking about the end of the call?", phase1_msg)
+        # Zero premature leakage allowed in Phase 1
+        self.assertNotIn("Did you catch", phase1_msg)
+        self.assertNotIn("/dɪdʒə/", phase1_msg)
+        self.assertNotIn("hidden message", phase1_msg)
+        self.assertNotIn("رسالة مبطنة", phase1_msg)
+
+        # Phase 2: After learner replies, evaluation + full breakdown is revealed and session completes
+        eval_res = DecodeEvaluationResult(
+            comprehension_accurate=True,
+            coach_feedback_en="Exactly—you spotted that the speaker noticed a subtle hint.",
+            coach_feedback_ar="أحسنت، التقطت إشارة المتحدث إلى التلميح الخفي.",
+        )
+        complete_decode_session("u_dec")
+        self.assertIsNone(get_active_decode_session("u_dec"))
+        phase2_msg = format_decode_phase2_reveal(ch, eval_res)
+        self.assertIn("Did you catch what she meant at the end?", phase2_msg)
+        self.assertIn("/dɪdʒə/", phase2_msg)
+        self.assertIn("hidden message", phase2_msg)
 
 
 if __name__ == "__main__":

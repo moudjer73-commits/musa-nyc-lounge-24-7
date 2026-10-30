@@ -5,6 +5,8 @@ from typing import Any, Callable, Optional
 from ai_engine import DualLLMEngine
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
 from policy_engine import (
+    get_active_workout_task,
+    update_workout_task_after_turn,
     DialogueController,
     _normalize_text_for_match,
     compute_learner_strain,
@@ -159,6 +161,8 @@ class TurnOrchestrator:
             except Exception:
                 pass
         analysis = fut_analyst.result()
+        if get_active_workout_task(learner_id) is not None:
+            update_workout_task_after_turn(learner_id, bool(analysis.communicative_goal_achieved))
 
         policy_dec = decide(
             analysis=analysis,

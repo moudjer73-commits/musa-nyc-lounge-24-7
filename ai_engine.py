@@ -13,11 +13,14 @@ from config import (
 )
 from policy_engine import (
     DialogueController,
+    normalize_arabic_english_formatting,
+    register_workout_task,
     validate_analyst_output_against_turn,
     validate_responder_output,
 )
 from schemas import (
     Analysis,
+    DecodeEvaluationResult,
     DialogueDecision,
     DirectnessLevel,
     DynamicDilemmaScene,
@@ -43,12 +46,14 @@ Rules:
    - If `allow_question` is false, do NOT ask any question or end with `?`.
    - Do NOT start your reply with any word in `avoid_openers`.
    - If `advisory_recast_candidate` is given, weave it naturally only if it fits organically.
+4. If `active_workout_task` is provided: check whether `learner_message` accomplishes `active_workout_task.prompt_question` (accept any natural phrasing). If the learner missed or ignored the task goal, respond naturally to what they said AND re-open the situation in-character so they still have an organic reason to fulfill `prompt_question`—never scold, quiz, or leak `forbidden_form`.
 Return ONLY valid JSON:
 {"reply_text": "1-2 natural spoken sentences", "second_bubble_text": null, "recast_used": false, "elicitation_used": false}"""
 
 ANALYST_SYSTEM_PROMPT = """You are a fast, silent linguistic & pragmatic diagnostician for an L1-Arabic speaker of Spoken American English.
 Rules:
 1. If `learner_message` is natural and effective, return `"diagnostics": []`.
+   If `active_workout_task` is provided, evaluate linguistic quality and task completion independently: set `"communicative_goal_achieved": true` ONLY if `learner_message` fulfills `active_workout_task.prompt_question` (via any natural expression) or logically declines it in-scene; set `"communicative_goal_achieved": false` if the learner ignores or misses the task.
 2. Otherwise return up to 3 diagnostics ordered by impact. `original_span` MUST be an exact substring of `learner_message`.
 3. False-Alarm Calibration & Directness (Groups 4 & 6):
    - NEVER flag idiomatic, acceptable spoken American English just to sound "fancier" or "softer".
@@ -192,7 +197,7 @@ def _fast_normalize_raw_analysis(raw_dict: dict[str, Any], learner_text: str) ->
         d["explanation_en"] = exp_en[:235]
 
         if d.get("explanation_ar"):
-            d["explanation_ar"] = str(d["explanation_ar"]).strip()[:195]
+            d["explanation_ar"] = normalize_arabic_english_formatting(str(d["explanation_ar"]).strip())[:195]
         if d.get("listener_effect"):
             d["listener_effect"] = str(d["listener_effect"]).strip()[:195]
         if d.get("l1_pattern"):
@@ -439,6 +444,7 @@ class DualLLMEngine:
         revealed_target_ids: set[str],
         directly_cued_target_ids: set[str],
         catalog_targets: list[dict[str, Any]],
+        active_workout_task: Optional[dict[str, Any]] = None,
     ) -> Analysis:
         words = learner_text.strip().split()
         if len(words) <= 3 and all(w.lower().strip(".,!?") in {"hey", "hi", "hello", "yo", "sup", "morning", "evening", "alex", "guys", "there", "ok", "okay", "thanks", "yes", "no"} for w in words):
@@ -450,6 +456,7 @@ class DualLLMEngine:
                 "directness": directness.value,
                 "recent_history": recent_history[-3:],
                 "learner_message": learner_text,
+                "active_workout_task": active_workout_task,
             },
             ensure_ascii=False,
         )
@@ -490,6 +497,7 @@ class DualLLMEngine:
         dialogue_decision: DialogueDecision,
         advisory_recast_candidate: Optional[str] = None,
         stealth_target_info: Optional[dict[str, str]] = None,
+        active_workout_task: Optional[dict[str, Any]] = None,
     ) -> ResponderOutput:
         stealth_form = stealth_target_info.get("canonical_form") if stealth_target_info else None
         user_prompt = json.dumps(
@@ -508,6 +516,7 @@ class DualLLMEngine:
                 "advisory_recast_candidate": advisory_recast_candidate,
                 "recent_history": recent_history[-4:],
                 "learner_message": learner_text,
+                "active_workout_task": active_workout_task,
             },
             ensure_ascii=False,
         )
@@ -539,8 +548,14 @@ class DualLLMEngine:
 
     def generate_register_shift_coaching(self, learner_text: str) -> RegisterShiftResult:
         sys_p = (
-            "Express the learner's thought across 3 spoken American registers.\n"
-            "Follow `ar_note` rules for `key_pragmatic_distinction_ar`: MSA, <=180 chars, quote Arabic with « », Latin script for English.\n"
+            "You are an American spoken-register coach. Express the learner's thought across 3 SPOKEN American registers.\n"
+            "SPOKEN_FIRST_REGISTER_POLICY:\n"
+            "1. Every transformation MUST remain natural spoken American English said out loud in person, on a call, or in a meeting—unless the learner explicitly requests written communication.\n"
+            "2. Professional does NOT mean literary or bureaucratic: changing register adjusts interpersonal tone and formality, not the medium.\n"
+            "   - `casual_friend_version`: relaxed everyday speech with a close peer.\n"
+            "   - `diplomatic_colleague_version`: considerate, collaborative spoken phrasing with a coworker.\n"
+            "   - `executive_manager_version`: crisp, concise, decisive spoken phrasing used by an American leader in a live meeting (more direct and economical, never ceremonial written memo prose).\n"
+            "3. Follow `ar_note` rules for `key_pragmatic_distinction_ar`: MSA, <=180 chars, quote Arabic with « », Latin script for English without brackets or quotes.\n"
             "Return ONLY JSON with keys: communicative_intention, casual_friend_version, diplomatic_colleague_version, "
             "executive_manager_version, key_pragmatic_distinction_en, key_pragmatic_distinction_ar, practice_prompt."
         )
@@ -582,6 +597,7 @@ class DualLLMEngine:
             if len(stem) >= 5 and stem in (out.situation_setup + " " + out.prompt_question).lower():
                 cleaned_setup = re.sub(re.escape(stem), "handle this situation", out.situation_setup, flags=re.IGNORECASE)
                 out = out.model_copy(update={"situation_setup": cleaned_setup})
+            register_workout_task(out, target_info)
             return out
 
         return self._call_gemini_json(
@@ -615,7 +631,49 @@ class DualLLMEngine:
         return self._call_gemini_json(
             system_prompt=sys_p,
             user_prompt=json.dumps({"history": recent_history[-8:], "diagnostics": recent_diagnostics[-5:]}, ensure_ascii=False),
-            validator_fn=SceneDebriefResult.model_validate,
+            validator_fn=lambda raw: SceneDebriefResult.model_validate({
+                **raw,
+                "top_shifts": [
+                    {**s, "arabic_note": normalize_arabic_english_formatting(s.get("arabic_note", ""))}
+                    for s in (raw.get("top_shifts") or [])
+                ],
+            }),
             temperature=0.25,
             max_tries=1,
         )
+
+    def evaluate_listen_decode_attempt(
+        self,
+        challenge: ListenDecodeChallenge,
+        learner_attempt: str,
+    ) -> DecodeEvaluationResult:
+        sys_p = (
+            "Evaluate the learner's comprehension of the spoken American clip and its pragmatic subtext.\n"
+            "1. Acknowledge what they understood accurately and gently clarify any missed nuance in 1-2 crisp sentences.\n"
+            "2. `coach_feedback_ar`: MSA, <=180 chars, quote Arabic with « », keep English words in Latin script without brackets.\n"
+            "Return ONLY JSON with keys: comprehension_accurate (bool), coach_feedback_en, coach_feedback_ar."
+        )
+        user_p = json.dumps(
+            {
+                "spoken_clip": challenge.spoken_clip_text,
+                "unpacked_form": challenge.full_unreduced_form,
+                "expected_subtext": challenge.pragmatic_subtext_en,
+                "question": challenge.decode_question,
+                "learner_attempt": learner_attempt,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            return self._call_gemini_json(
+                system_prompt=sys_p,
+                user_prompt=user_p,
+                validator_fn=lambda raw: DecodeEvaluationResult.model_validate({
+                    **raw,
+                    "coach_feedback_ar": normalize_arabic_english_formatting(raw.get("coach_feedback_ar", "")) or "أصبت في فهم المقصود العام للمتحدث.",
+                }),
+                temperature=0.25,
+                max_tries=1,
+            )
+        except Exception:
+            return DecodeEvaluationResult()
+

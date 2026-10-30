@@ -1,3 +1,4 @@
+from enum import Enum
 from enum import StrEnum
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -358,3 +359,17 @@ class SceneDebriefResult(BaseModel):
     spontaneous_wins: list[str] = Field(default_factory=list, max_length=3)
     top_shifts: list[DebriefShiftItem] = Field(default_factory=list, max_length=3)
     closing_note: str
+
+
+class DecodePhase(str, Enum):
+    CHALLENGE_SENT = "challenge_sent"
+    AWAITING_LEARNER = "awaiting_learner"
+    FEEDBACK_READY = "feedback_ready"
+    COMPLETED = "completed"
+
+
+class DecodeEvaluationResult(BaseModel):
+    comprehension_accurate: bool = True
+    coach_feedback_en: str = Field(default="Spot on—you caught the real subtext.", min_length=5, max_length=320)
+    coach_feedback_ar: str = Field(default="أصبت في التقاط المعنى المبطن للمتحدث.", min_length=5, max_length=240)
+

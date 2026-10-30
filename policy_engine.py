@@ -1,3 +1,9 @@
+from typing import Any, Optional
+import html
+import re
+import threading
+import html
+import threading
 import re
 from typing import Literal, Optional
 from schemas import (
@@ -520,3 +526,127 @@ def decide(
         schedule_micro_workout=workout_due,
         defer_workout_until_scene_end=True,
     )
+
+
+def normalize_arabic_english_formatting(text: Optional[str]) -> Optional[str]:
+    """Removes guillemets « » or parentheses ( ) wrapping pure Latin/English spans inside Arabic notes."""
+    if not text:
+        return text
+    cleaned = re.sub(r"«\s*([A-Za-z0-9][A-Za-z0-9\s'\-/.,?!]*?)\s*»", r"\1", str(text))
+    cleaned = re.sub(r"\(\s*([A-Za-z0-9][A-Za-z0-9\s'\-/.,?!]*?)\s*\)", r"\1", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+_DECODE_STATES: dict[str, dict[str, Any]] = {}
+_DECODE_LOCK = threading.Lock()
+
+_WORKOUT_TASKS: dict[str, dict[str, Any]] = {}
+_WORKOUT_LOCK = threading.Lock()
+
+
+def start_decode_session(learner_key: str, challenge: Any, chat_key: Optional[str] = None) -> dict[str, Any]:
+    with _DECODE_LOCK:
+        state = {
+            "phase": "awaiting_learner",
+            "challenge": challenge,
+        }
+        _DECODE_STATES[str(learner_key)] = state
+        if chat_key:
+            _DECODE_STATES[str(chat_key)] = state
+        return dict(state)
+
+
+def get_active_decode_session(key: str) -> Optional[dict[str, Any]]:
+    with _DECODE_LOCK:
+        st = _DECODE_STATES.get(str(key))
+        if st and st.get("phase") == "awaiting_learner":
+            return dict(st)
+        return None
+
+
+def complete_decode_session(key: str) -> Optional[dict[str, Any]]:
+    with _DECODE_LOCK:
+        st = _DECODE_STATES.get(str(key))
+        if st:
+            st["phase"] = "completed"
+            return dict(st)
+        return None
+
+
+def format_decode_phase1_message(challenge: Any, register_label: str = "CASUAL") -> str:
+    """Phase 1: Sends ONLY context, spoken clip, and comprehension question. Zero answer/IPA leakage."""
+    return (
+        f"🎧 <b>Listen &amp; Decode</b> (Register: {html.escape(str(register_label).upper())})\n"
+        f"• <b>Context:</b> {html.escape(challenge.context_line)}\n"
+        f"• <b>Spoken Clip:</b> “{html.escape(challenge.spoken_clip_text)}”\n\n"
+        f"👉 <b>{html.escape(challenge.decode_question)}</b>\n\n"
+        f"<i>Reply with what you think the speaker really means, or tap the button below to reveal the breakdown.</i>"
+    )
+
+
+def format_decode_phase2_reveal(challenge: Any, eval_res: Optional[Any] = None) -> str:
+    """Phase 2: Reveals comprehension feedback + full unpacked form, IPA, and subtext AFTER attempt."""
+    subtext_ar = normalize_arabic_english_formatting(challenge.pragmatic_subtext_ar) or challenge.pragmatic_subtext_ar
+    header = ""
+    if eval_res is not None:
+        icon = "✅" if getattr(eval_res, "comprehension_accurate", True) else "💡"
+        fb_ar = normalize_arabic_english_formatting(getattr(eval_res, "coach_feedback_ar", "")) or ""
+        header = (
+            f"{icon} <b>Decoding Feedback:</b> {html.escape(eval_res.coach_feedback_en)}\n"
+            + (f"• <b>بالعربية:</b> {html.escape(fb_ar)}\n" if fb_ar else "")
+            + "━━━━━━━━━━━━━━━━━━━━\n"
+        )
+    return (
+        f"{header}"
+        f"🔍 <b>Sound &amp; Subtext Breakdown:</b>\n"
+        f"• <b>Unpacked Form:</b> {html.escape(challenge.full_unreduced_form)} — {html.escape(challenge.acoustic_reduction_note)}\n"
+        f"• <b>Hidden Subtext (EN):</b> {html.escape(challenge.pragmatic_subtext_en)}\n"
+        f"• <b>المعنى المبطن (AR):</b> {html.escape(subtext_ar)}"
+    )
+
+
+def register_workout_task(scenario: Any, target_info: dict[str, Any], learner_id: Optional[str] = None) -> dict[str, Any]:
+    with _WORKOUT_LOCK:
+        task = {
+            "communicative_intention": getattr(scenario, "communicative_intention", target_info.get("communicative_intention", "")),
+            "situation_setup": getattr(scenario, "situation_setup", ""),
+            "prompt_question": getattr(scenario, "prompt_question", ""),
+            "forbidden_form": target_info.get("canonical_form", ""),
+            "target_id": target_info.get("target_id", ""),
+            "attempts": 0,
+            "max_attempts": 2,
+            "status": "ACTIVE",
+            "reinforce_required": False,
+        }
+        if learner_id:
+            _WORKOUT_TASKS[str(learner_id)] = task
+        _WORKOUT_TASKS["_latest"] = task
+        return dict(task)
+
+
+def get_active_workout_task(learner_id: str) -> Optional[dict[str, Any]]:
+    with _WORKOUT_LOCK:
+        task = _WORKOUT_TASKS.get(str(learner_id)) or _WORKOUT_TASKS.get("_latest")
+        if task and task.get("status") == "ACTIVE":
+            _WORKOUT_TASKS[str(learner_id)] = task
+            return dict(task)
+        return None
+
+
+def update_workout_task_after_turn(learner_id: str, goal_achieved: bool) -> dict[str, Any]:
+    with _WORKOUT_LOCK:
+        task = _WORKOUT_TASKS.get(str(learner_id)) or _WORKOUT_TASKS.get("_latest")
+        if not task or task.get("status") != "ACTIVE":
+            return {"task_status": "NONE", "reinforce_required": False, "attempts": 0}
+        task["attempts"] = int(task.get("attempts", 0)) + 1
+        if goal_achieved:
+            task["status"] = "COMPLETED"
+            task["reinforce_required"] = False
+            return {"task_status": "FULFILLED", "reinforce_required": False, "attempts": task["attempts"]}
+        if task["attempts"] >= int(task.get("max_attempts", 2)):
+            task["status"] = "COMPLETED_UNFULFILLED"
+            task["reinforce_required"] = False
+            return {"task_status": "EXHAUSTED", "reinforce_required": False, "attempts": task["attempts"]}
+        task["reinforce_required"] = True
+        return {"task_status": "MISSED", "reinforce_required": True, "attempts": task["attempts"]}
+
