@@ -64,6 +64,8 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         {"command": "shift", "description": "Transform a thought across registers"},
         {"command": "think", "description": "Analytical Think-Aloud sparring"},
         {"command": "workout", "description": "Spontaneous phrase retrieval workout"},
+        {"command": "decode", "description": "Connected speech & subtext Listen-and-Decode"},
+        {"command": "debrief", "description": "End-of-scene summary of wins & top shifts"},
         {"command": "progress", "description": "View evidence-based acquisition profile"},
         {"command": "guide", "description": "Interactive User Guide (EN + AR)"},
     ]
@@ -102,7 +104,7 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         "• 💬 Natural Flow First: Chat with Alex without robotic interrogations or textbook scripts.\n"
         "• 💡 Surgical On-Demand Coaching: Fix L1-Arabic transfer traps, collocations & tone on your terms.\n"
         "• 🎛️ 6 Live Registers: Shift seamlessly between Casual, Warm, Witty, Diplomatic, Executive & Analytical.\n"
-        "• 🤝 Pragmatic Dilemmas & Unaided Retrieval.\n\n"
+        "• 🤝 Pragmatic Dilemmas, Listen & Decode, and Unaided Retrieval.\n\n"
         "اضغط Start لبدء المحادثة والتدريب العملي فوراً 👇"
     )
 
@@ -127,8 +129,10 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("🤝 Pragmatic Dilemma"),
         types.KeyboardButton("🧠 Think-Aloud"),
         types.KeyboardButton("🏋️ Phrase Workout"),
+        types.KeyboardButton("🎧 Listen & Decode"),
         types.KeyboardButton("⚙️ Register & Tone"),
         types.KeyboardButton("📊 My Progress"),
+        types.KeyboardButton("🏁 Scene Debrief"),
         types.KeyboardButton("📖 User Guide"),
         types.KeyboardButton("🔄 New Scene"),
     )
@@ -164,7 +168,6 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
 
     markup = types.InlineKeyboardMarkup(row_width=3)
 
-    # Row 1 & 2: 6 Registers
     regs = [
         ("casual", "Casual"),
         ("warm", "Warm"),
@@ -183,7 +186,6 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     markup.row(*reg_btns[:3])
     markup.row(*reg_btns[3:])
 
-    # Row 3: 3 Directness levels
     dirs = [("soft", "🕊️ Soft"), ("balanced", "⚖️ Balanced"), ("direct", "🎯 Direct")]
     dir_btns = [
         types.InlineKeyboardButton(
@@ -194,7 +196,6 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     ]
     markup.row(*dir_btns)
 
-    # Row 4: 3 Feedback Intensity levels
     fbs = [("silent", "🔇 Silent"), ("light", "💡 Light"), ("active", "🔬 Active")]
     fb_btns = [
         types.InlineKeyboardButton(
@@ -205,7 +206,6 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     ]
     markup.row(*fb_btns)
 
-    # Row 5: Arabic Support toggle
     ars = [("bilingual", "🇦🇪 AR Notes: ON"), ("english_only", "🇺🇸 English Only")]
     ar_btns = [
         types.InlineKeyboardButton(
@@ -216,7 +216,6 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     ]
     markup.row(*ar_btns)
 
-    # Row 6: Gemini Model Tier (Flash Speed vs Pro Deep Reasoning)
     tiers = [("flash", "⚡ Flash (Fastest)"), ("pro", "🧠 Pro (Deepest)")]
     tier_btns = [
         types.InlineKeyboardButton(
@@ -244,9 +243,25 @@ def render_layer2_card_html(reply_text: str, diag: dict) -> str:
             f"• <b>Also natural ({_e(alt.get('register_profile', 'casual'))}):</b> "
             f"“<b>{_e(alt.get('phrase', ''))}</b>” — <i>{_e(alt.get('pragmatic_effect', ''))}</i>"
         )
+    if diag.get("listener_effect"):
+        lines.append(f"• <b>How it sounds:</b> <i>{_e(diag['listener_effect'])}</i>")
     lines.append(f"• <b>Why:</b> {_e(diag.get('explanation_en', ''))}")
+    if diag.get("l1_source_ar") or diag.get("l1_pattern"):
+        src_ar = f"«{_e(diag['l1_source_ar'])}» " if diag.get("l1_source_ar") else ""
+        pat_code = f"(<code>{_e(diag['l1_pattern'])}</code>)" if diag.get("l1_pattern") else ""
+        lines.append(f"• <b>L1 Transfer:</b> {src_ar}{pat_code}")
     if diag.get("explanation_ar"):
         lines.append(f"• <b>بالعربية:</b> <tg-spoiler>{_e(diag['explanation_ar'])}</tg-spoiler>")
+
+    extra_list = diag.get("additional_turn_findings") or []
+    if extra_list:
+        lines.append("\n🔎 <b>Also spotted in your turn:</b>")
+        for ex in extra_list:
+            ex_ar = f" — <tg-spoiler>{_e(ex['explanation_ar'])}</tg-spoiler>" if ex.get("explanation_ar") else ""
+            lines.append(
+                f"• “<s>{_e(ex.get('original_span', ''))}</s>” → “<b>{_e(ex.get('alternative', ''))}</b>”{ex_ar}"
+            )
+
     return "\n".join(lines)
 
 
@@ -281,10 +296,10 @@ if bot is not None:
         )
         bot.send_message(
             message.chat.id,
-            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️</b>\n"
+            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ (v2_complete)</b>\n"
             f"• Scene: <code>{new_sid}</code>\n"
             f"• Register: <b>{_e(reg.upper())}</b> | Directness: <b>{_e(direct.upper())}</b> | Coaching: <b>{_e(fb.upper())}</b>\n\n"
-            "Talk naturally about anything on your mind, or tap <b>⚙️ Register & Tone</b> below to customize your session.",
+            "Talk naturally about anything on your mind, or use the mode buttons below.",
             parse_mode="HTML",
             reply_markup=build_reply_keyboard(),
         )
@@ -294,8 +309,7 @@ if bot is not None:
         force_sync_all_telegram_scopes_and_profile(message.chat.id)
         bot.send_message(
             message.chat.id,
-            "✅ <b>Telegram Profile, Scopes & Commands Force-Synced!</b>\n"
-            "<i>Note: Close and reopen the Telegram app once to clear mobile profile cache.</i>",
+            "✅ <b>Telegram Profile, Scopes & Commands Force-Synced!</b>",
             parse_mode="HTML",
             reply_markup=build_reply_keyboard(),
         )
@@ -358,6 +372,7 @@ if bot is not None:
             "relationship": dilemma.relationship,
             "established_facts": dilemma.established_facts,
             "counterpart_goal": dilemma.counterpart_goal,
+            "counterpart_pushback_plan": dilemma.counterpart_pushback_plan,
         }
         db.update_session_settings(
             sid,
@@ -458,12 +473,90 @@ if bot is not None:
             parse_mode="HTML",
         )
 
+    @bot.message_handler(commands=["decode"])
+    def handle_decode_cmd(message):
+        lid = message.from_user.id
+        chat_id = message.chat.id
+        sess = db.get_or_create_active_session(lid)
+        reg = sess.get("register_profile", "casual")
+        try:
+            bot.send_chat_action(chat_id, "record_voice")
+        except Exception:
+            pass
+        ch = ai.generate_listen_decode_challenge(register_profile=reg)
+        db.update_session_settings(str(sess["session_id"]), lid, training_mode="listen_and_decode", scene_mode="micro_drill")
+        try:
+            mp3_p = synthesize_tts_mp3(ch.spoken_clip_text)
+            with open(mp3_p, "rb") as f_audio:
+                bot.send_voice(chat_id, f_audio, caption=f"🎧 <b>Context:</b> {_e(ch.context_line)}", parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"Decode TTS fallback: {e}")
+
+        msg_html = (
+            f"🎧 <b>Listen & Decode</b> (Register: <b>{_e(reg.upper())}</b>)\n"
+            f"• <b>Context:</b> <i>{_e(ch.context_line)}</i>\n"
+            f"• <b>Spoken Clip:</b> “<b>{_e(ch.spoken_clip_text)}</b>”\n\n"
+            f"👉 <b>{_e(ch.decode_question)}</b>\n\n"
+            "<b>🔍 Tap below after replying to check your decoding:</b>\n"
+            f"• <b>Unpacked Form:</b> <tg-spoiler>{_e(ch.full_unreduced_form)} — {_e(ch.acoustic_reduction_note)}</tg-spoiler>\n"
+            f"• <b>Hidden Subtext (EN):</b> <tg-spoiler>{_e(ch.pragmatic_subtext_en)}</tg-spoiler>\n"
+            f"• <b>المعنى المبطن (AR):</b> <tg-spoiler>{_e(ch.pragmatic_subtext_ar)}</tg-spoiler>"
+        )
+        bot.send_message(chat_id, msg_html, parse_mode="HTML")
+
+    @bot.message_handler(commands=["debrief"])
+    def handle_debrief_cmd(message):
+        lid = message.from_user.id
+        chat_id = message.chat.id
+        sess = db.get_or_create_active_session(lid)
+        sid = str(sess["session_id"])
+        try:
+            bot.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        hist = db.get_recent_dialogue_history(sid, limit=10)
+        with db._conn() as conn:
+            diag_rows = conn.execute(
+                "SELECT payload_json FROM event_log WHERE session_id = ? AND event_type = 'analyst_diagnosis_recorded' ORDER BY occurred_at_utc DESC LIMIT 5",
+                (sid,),
+            ).fetchall()
+        diags = []
+        for r in diag_rows:
+            p = json.loads(r["payload_json"])
+            diags.extend(p.get("diagnostics", []))
+
+        if not hist:
+            bot.send_message(chat_id, "🏁 <b>Scene Debrief:</b> Exchange a few turns in the current scene first, then tap <b>🏁 Scene Debrief</b>!", parse_mode="HTML")
+            return
+
+        deb = ai.generate_scene_debrief(hist, diags)
+        lines = [
+            "🏁 <b>End-of-Scene Debrief</b>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"<b>Scene Outcome:</b> {_e(deb.scene_outcome)}",
+        ]
+        if deb.spontaneous_wins:
+            lines.append("\n✅ <b>Spontaneous Wins:</b>")
+            for w in deb.spontaneous_wins:
+                lines.append(f"• {_e(w)}")
+        if deb.top_shifts:
+            lines.append("\n🔧 <b>Top Shifts to Keep:</b>")
+            for s in deb.top_shifts:
+                lines.append(
+                    f"• “<s>{_e(s.you_said)}</s>” → “<b>{_e(s.natural_alternative)}</b>”\n"
+                    f"  <i>{_e(s.why_it_matters)}</i>"
+                )
+                if s.arabic_note:
+                    lines.append(f"  <tg-spoiler>{_e(s.arabic_note)}</tg-spoiler>")
+        lines.append(f"\n💡 <i>{_e(deb.closing_note)}</i>")
+        bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
+
     def build_guide_inline_markup(active_key: str = "overview") -> types.InlineKeyboardMarkup:
         markup = types.InlineKeyboardMarkup(row_width=2)
         chapters = [
             ("overview", "📖 Overview"),
             ("ch1_layers", "🏛️ 1. 3-Layer System"),
-            ("ch2_modes", "🎯 2. 5 Training Modes"),
+            ("ch2_modes", "🎯 2. Training Modes"),
             ("ch3_registers", "⚙️ 3. Registers & Tone"),
             ("ch4_mastery", "📊 4. Mastery Ladder"),
         ]
@@ -495,14 +588,14 @@ if bot is not None:
             bot.send_photo(
                 chat_id,
                 fp,
-                caption="🖼️ <b>1. Bot Profile Picture (800×800)</b>\nUse this in <code>@BotFather</code> → <code>/setuserpic</code> (or Edit Botpic).",
+                caption="🖼️ <b>1. Bot Profile Picture (800×800)</b>",
                 parse_mode="HTML",
             )
         with open(d_img, "rb") as fd_doc:
             bot.send_document(
                 chat_id,
                 fd_doc,
-                caption="📎 <b>2. Uncompressed 640×360 PNG</b> for <code>@BotFather</code> → <code>Edit Description Picture</code>.",
+                caption="📎 <b>2. Uncompressed 640×360 PNG</b>",
                 parse_mode="HTML",
             )
 
@@ -644,6 +737,14 @@ if bot is not None:
             _launch_dynamic_workout(chat_id, lid, sid, active_reg)
             return
 
+        if text.startswith("🎧"):
+            handle_decode_cmd(message)
+            return
+
+        if text.startswith("🏁"):
+            handle_debrief_cmd(message)
+            return
+
         try:
             bot.send_chat_action(chat_id, "typing")
         except Exception:
@@ -720,18 +821,11 @@ if __name__ == "__main__":
             active_m = ai.get_active_model_chain()[0]
             bot.send_message(
                 ADMIN_ID,
-                f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — Turbo Engine Live!</b>\n"
+                f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — v2_complete Prompts & Card Format Wired!</b>\n"
                 f"• Primary Discovered Model: <code>{_e(active_m)}</code>\n"
-                "• Zero-Retry JSON Schemas + Parallel Execution enabled.",
+                "• Full Card (How it sounds + L1 Transfer «...» + Additional turn findings) & Anti-Mirroring active.",
                 parse_mode="HTML",
                 reply_markup=build_reply_keyboard(),
-            )
-            panel_html, panel_markup = build_live_settings_panel(ADMIN_ID)
-            bot.send_message(
-                ADMIN_ID,
-                panel_html,
-                parse_mode="HTML",
-                reply_markup=panel_markup,
             )
         except Exception as e:
             logger.warning(f"Boot notification skipped: {e}")

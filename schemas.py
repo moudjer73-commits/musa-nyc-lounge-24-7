@@ -59,7 +59,7 @@ class PersonaCard(BaseModel):
     name: str = "Alex"
     role: str = "33-year-old American conversational partner & colleague"
     relationship: str = "friendly peer"
-    style: str = "Grounded, observant, natural spoken rhythm, zero textbook lecturing."
+    style: str = "Grounded, observant, natural spoken rhythm, zero textbook lecturing, never fabricates parallel 'me-too' personal stories."
 
 
 class SceneBible(BaseModel):
@@ -70,9 +70,10 @@ class SceneBible(BaseModel):
     setting: str = "Everyday conversation"
     relationship: str = "friendly peer"
     established_facts: list[str] = Field(
-        default_factory=lambda: ["Respond directly to the learner's real topic; never invent fake crises."]
+        default_factory=lambda: ["Respond directly to the learner's real topic; never invent fake crises or 'me-too' mirroring stories."]
     )
     counterpart_goal: str = "Engage naturally and authentically"
+    counterpart_pushback_plan: Optional[str] = None
 
 
 class DialogueDecision(BaseModel):
@@ -83,7 +84,11 @@ class DialogueDecision(BaseModel):
     allow_question: bool
     max_questions: int = Field(ge=0, le=1)
     max_sentences: int = Field(default=2, ge=1, le=4)
+    min_words: int = Field(default=4, ge=1, le=30)
     max_words: int = Field(default=40, ge=10, le=90)
+    target_bubbles: int = Field(default=1, ge=1, le=2)
+    avoid_openers: list[str] = Field(default_factory=list)
+    strain_score: float = Field(default=0.0, ge=0.0, le=1.0)
     reason_code: str = "standard_flow"
 
     @model_validator(mode="after")
@@ -105,6 +110,7 @@ class IssueKind(StrEnum):
     IDIOMATICITY = "idiomaticity"
     REGISTER = "register"
     PRAGMATICS = "pragmatics"
+    DISCOURSE = "discourse"
     OPTIONAL_UPGRADE = "optional_upgrade"
     ACCEPTABLE_VARIATION = "acceptable_variation"
     INSUFFICIENT_CONTEXT = "insufficient_context"
@@ -159,10 +165,14 @@ class Diagnostic(BaseModel):
     secondary_alternatives: list[CandidateAlternative] = Field(default_factory=list, max_length=2)
     alternative_status: AlternativeStatus
     recast_candidate: Optional[str] = None
+    listener_effect: Optional[str] = Field(default=None, max_length=200)
     explanation_en: str = Field(..., min_length=5, max_length=240)
-    explanation_ar: Optional[str] = Field(default=None, max_length=180)
+    explanation_ar: Optional[str] = Field(default=None, max_length=200)
+    l1_pattern: Optional[str] = Field(default=None, max_length=64)
+    l1_source_ar: Optional[str] = Field(default=None, max_length=80)
     l1_transfer_likely: bool = False
     l1_transfer_evidence: Optional[str] = None
+    teachable_now: bool = True
     preserves_intended_meaning: bool
     context_fit_verified: bool
     confidence_band: ConfidenceBand
@@ -246,6 +256,7 @@ class Analysis(BaseModel):
     communicative_intention: str = "share_comment"
     learner_invites_question: bool = False
     communicative_goal_achieved: bool = True
+    pragmatic_cave_in: bool = False
     requires_clarification: bool = False
     in_emotional_or_story_flow: bool = False
     diagnostics: list[Diagnostic] = Field(default_factory=list, max_length=4)
@@ -298,7 +309,6 @@ class RegisterShiftResult(BaseModel):
     practice_prompt: str
 
 
-
 class DynamicDilemmaScene(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -307,6 +317,7 @@ class DynamicDilemmaScene(BaseModel):
     register_profile: RegisterProfile = RegisterProfile.DIPLOMATIC
     established_facts: list[str] = Field(..., min_length=2, max_length=4)
     counterpart_goal: str = Field(..., min_length=5, max_length=160)
+    counterpart_pushback_plan: str = Field(default="Push back gently once before accepting a compromise.", max_length=180)
     learner_pragmatic_goal: str = Field(..., min_length=5, max_length=160)
     opening_line: str = Field(..., min_length=5, max_length=240)
 
@@ -317,3 +328,33 @@ class DynamicWorkoutScenario(BaseModel):
     communicative_intention: str = Field(..., min_length=3, max_length=100)
     situation_setup: str = Field(..., min_length=10, max_length=260)
     prompt_question: str = Field(..., min_length=5, max_length=120)
+
+
+class ListenDecodeChallenge(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    context_line: str = Field(..., min_length=5, max_length=160)
+    spoken_clip_text: str = Field(..., min_length=5, max_length=200)
+    full_unreduced_form: str = Field(..., min_length=5, max_length=220)
+    acoustic_reduction_note: str = Field(..., min_length=5, max_length=220)
+    pragmatic_subtext_en: str = Field(..., min_length=5, max_length=220)
+    pragmatic_subtext_ar: str = Field(..., min_length=5, max_length=200)
+    decode_question: str = Field(..., min_length=5, max_length=160)
+
+
+class DebriefShiftItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    you_said: str
+    natural_alternative: str
+    why_it_matters: str
+    arabic_note: Optional[str] = None
+
+
+class SceneDebriefResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scene_outcome: str
+    spontaneous_wins: list[str] = Field(default_factory=list, max_length=3)
+    top_shifts: list[DebriefShiftItem] = Field(default_factory=list, max_length=3)
+    closing_note: str

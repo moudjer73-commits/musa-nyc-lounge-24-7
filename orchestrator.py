@@ -1,10 +1,18 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import uuid
 from typing import Any, Optional
 from ai_engine import DualLLMEngine
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
-from policy_engine import DialogueController, decide
+from policy_engine import (
+    DialogueController,
+    _normalize_text_for_match,
+    compute_learner_strain,
+    decide,
+    extract_recent_partner_openers,
+)
 from schemas import (
+    Analysis,
     Diagnostic,
     DirectnessLevel,
     InterventionLevel,
@@ -18,6 +26,8 @@ from schemas import (
     TrainingMode,
 )
 
+_TURN_EXECUTOR = ThreadPoolExecutor(max_workers=6)
+
 
 class TurnResult:
     def __init__(
@@ -28,6 +38,7 @@ class TurnResult:
         responder_output: ResponderOutput,
         policy_decision: PolicyDecision,
         selected_diagnostic: Optional[Diagnostic],
+        all_diagnostics: list[Diagnostic],
         card_id: Optional[str],
     ):
         self.correlation_id = correlation_id
@@ -35,6 +46,7 @@ class TurnResult:
         self.responder_output = responder_output
         self.policy_decision = policy_decision
         self.selected_diagnostic = selected_diagnostic
+        self.all_diagnostics = all_diagnostics
         self.card_id = card_id
 
 
@@ -76,34 +88,45 @@ class TurnOrchestrator:
                 relationship=raw_bible.get("relationship", "friendly peer"),
                 established_facts=raw_bible.get(
                     "established_facts",
-                    ["Respond directly to the learner's real topic; never invent fake crises."],
+                    ["Respond directly to the learner's real topic; never invent fake crises or 'me-too' mirroring stories."],
                 ),
                 counterpart_goal=raw_bible.get("counterpart_goal", "Engage naturally and authentically"),
+                counterpart_pushback_plan=raw_bible.get("counterpart_pushback_plan"),
             )
         except Exception:
             scene_bible = SceneBible(scene_id=session_id, scene_mode=scene_mode)
 
         recent_history = self.db.get_recent_dialogue_history(session_id, limit=6)
         runtime_state = self.db.get_session_runtime_state(session_id, learner_id)
+        prior_occurrence_counts = self.db.get_authoritative_occurrence_counts(learner_id)
 
-        # STEP 1: Persist incoming learner message event
-        _, msg_ev_id = self.db.append_event(
-            learner_id=learner_id,
-            session_id=session_id,
-            event_type="learner_message_received",
-            payload={"text": learner_text, "is_voice": is_voice_message},
-            correlation_id=corr_id,
-            idempotency_key=f"{idem_base}:msg",
+        learner_turns_txt = [h["text"] for h in recent_history if h.get("role") == "learner"] + [learner_text]
+        partner_turns_txt = [h["text"] for h in recent_history if h.get("role") == "partner"]
+        strain_val = compute_learner_strain(learner_turns_txt)
+        avoid_ops = extract_recent_partner_openers(partner_turns_txt)
+
+        fast_intent = "ask_opinion" if "?" in learner_text else "share_comment"
+        pre_analysis = Analysis(
+            communicative_intention=fast_intent,
+            learner_invites_question=("?" in learner_text),
         )
+        dialogue_dec = DialogueController.select_dialogue_decision(
+            learner_text=learner_text,
+            analysis=pre_analysis,
+            recent_optional_question_flags=runtime_state["recent_questions"],
+            register=register_profile,
+            training_mode=training_mode,
+        ).model_copy(update={"avoid_openers": avoid_ops, "strain_score": strain_val})
 
-        # STEP 2: Run Analyst LLM & persist diagnostic/acquisition events
+        stealth_target_info = self.db.select_stealth_target_for_session(learner_id, register_profile.value)
+
         catalog_targets = [
             {"target_id": p[0], "canonical_form": p[1], "communicative_intention": p[2]}
             for p in DEFAULT_CURATED_PHRASES
         ]
-        prior_occurrence_counts = self.db.get_authoritative_occurrence_counts(learner_id)
 
-        analysis = self.ai.run_analyst(
+        fut_analyst = _TURN_EXECUTOR.submit(
+            self.ai.run_analyst,
             learner_text=learner_text,
             recent_history=recent_history,
             register_profile=register_profile,
@@ -114,6 +137,57 @@ class TurnOrchestrator:
             directly_cued_target_ids=runtime_state["cued_targets"],
             catalog_targets=catalog_targets,
         )
+        fut_responder = _TURN_EXECUTOR.submit(
+            self.ai.run_responder,
+            learner_text=learner_text,
+            recent_history=recent_history,
+            persona=self.default_persona,
+            scene_bible=scene_bible,
+            register_profile=register_profile,
+            directness=directness,
+            training_mode=training_mode,
+            dialogue_decision=dialogue_dec,
+            advisory_recast_candidate=None,
+            stealth_target_info=stealth_target_info,
+        )
+
+        analysis = fut_analyst.result()
+        resp_out = fut_responder.result()
+
+        policy_dec = decide(
+            analysis=analysis,
+            learner_id=learner_id,
+            turns_since_last_visible_card=runtime_state["turns_since_visible_card"],
+            authoritative_occurrence_counts=prior_occurrence_counts,
+            already_counted_in_message_keys=set(),
+            active_learning_goals=[],
+            feedback_preference=feedback_pref,
+            learner_opted_in_workouts=opted_in_workouts,
+            workout_already_scheduled=False,
+            is_voice_message=is_voice_message,
+        )
+
+        if policy_dec.advisory_recast_candidate:
+            norm_rec = _normalize_text_for_match(policy_dec.advisory_recast_candidate)
+            if norm_rec and norm_rec in _normalize_text_for_match(resp_out.reply_text):
+                resp_out = resp_out.model_copy(update={"recast_used": True})
+
+        selected_diag: Optional[Diagnostic] = None
+        if policy_dec.selected_diagnostic_id:
+            for d in analysis.diagnostics:
+                if d.diagnostic_id == policy_dec.selected_diagnostic_id:
+                    selected_diag = d
+                    break
+
+        _, msg_ev_id = self.db.append_event(
+            learner_id=learner_id,
+            session_id=session_id,
+            event_type="learner_message_received",
+            payload={"text": learner_text, "is_voice": is_voice_message},
+            correlation_id=corr_id,
+            idempotency_key=f"{idem_base}:msg",
+            rebuild=False,
+        )
 
         _, diag_ev_id = self.db.append_event(
             learner_id=learner_id,
@@ -123,6 +197,7 @@ class TurnOrchestrator:
             correlation_id=corr_id,
             causation_id=msg_ev_id,
             idempotency_key=f"{idem_base}:diag",
+            rebuild=False,
         )
 
         for idx, ta in enumerate(analysis.target_assessments):
@@ -140,28 +215,8 @@ class TurnOrchestrator:
                     correlation_id=corr_id,
                     causation_id=diag_ev_id,
                     idempotency_key=f"{idem_base}:target:{idx}:{ta.target_id}",
+                    rebuild=False,
                 )
-
-        # STEP 3: Run deterministic Policy Engine (`decide()`)
-        policy_dec = decide(
-            analysis=analysis,
-            learner_id=learner_id,
-            turns_since_last_visible_card=runtime_state["turns_since_visible_card"],
-            authoritative_occurrence_counts=prior_occurrence_counts,
-            already_counted_in_message_keys=set(),
-            active_learning_goals=[],
-            feedback_preference=feedback_pref,
-            learner_opted_in_workouts=opted_in_workouts,
-            workout_already_scheduled=False,
-            is_voice_message=is_voice_message,
-        )
-
-        selected_diag: Optional[Diagnostic] = None
-        if policy_dec.selected_diagnostic_id:
-            for d in analysis.diagnostics:
-                if d.diagnostic_id == policy_dec.selected_diagnostic_id:
-                    selected_diag = d
-                    break
 
         if selected_diag and selected_diag.alternative and selected_diag.confidence_band.value == "high":
             organic_pid = self.db.register_organic_phrase_from_diagnostic(
@@ -179,6 +234,7 @@ class TurnOrchestrator:
                     correlation_id=corr_id,
                     causation_id=diag_ev_id,
                     idempotency_key=f"{idem_base}:org_exp:{organic_pid}",
+                    rebuild=False,
                 )
 
         self.db.append_event(
@@ -197,6 +253,7 @@ class TurnOrchestrator:
             correlation_id=corr_id,
             causation_id=diag_ev_id,
             idempotency_key=f"{idem_base}:pol",
+            rebuild=False,
         )
 
         if policy_dec.schedule_micro_workout and policy_dec.workout_candidate_pattern_id:
@@ -211,35 +268,8 @@ class TurnOrchestrator:
                 correlation_id=corr_id,
                 causation_id=diag_ev_id,
                 idempotency_key=f"{idem_base}:workout:{policy_dec.workout_candidate_pattern_id}",
+                rebuild=False,
             )
-
-        # STEP 4: Select orthogonal DialogueDecision via DialogueController
-        dialogue_dec = DialogueController.select_dialogue_decision(
-            learner_text=learner_text,
-            analysis=analysis,
-            recent_optional_question_flags=runtime_state["recent_questions"],
-            register=register_profile,
-            training_mode=training_mode,
-        )
-
-        # Advisory Stealth Target selection (only when no error intervention is competing)
-        stealth_target_info = None
-        if policy_dec.intervention == InterventionLevel.NONE and not analysis.in_emotional_or_story_flow:
-            stealth_target_info = self.db.select_stealth_target_for_session(learner_id, register_profile.value)
-
-        # STEP 5: Run Responder LLM & validate output
-        resp_out = self.ai.run_responder(
-            learner_text=learner_text,
-            recent_history=recent_history,
-            persona=self.default_persona,
-            scene_bible=scene_bible,
-            register_profile=register_profile,
-            directness=directness,
-            training_mode=training_mode,
-            dialogue_decision=dialogue_dec,
-            advisory_recast_candidate=policy_dec.advisory_recast_candidate,
-            stealth_target_info=stealth_target_info,
-        )
 
         asked_q = DialogueController.count_genuine_questions(resp_out.reply_text) > 0
         self.db.append_event(
@@ -256,6 +286,7 @@ class TurnOrchestrator:
             correlation_id=corr_id,
             causation_id=msg_ev_id,
             idempotency_key=f"{idem_base}:resp",
+            rebuild=True,
         )
 
         if selected_diag and arabic_support == "english_only":
@@ -264,13 +295,22 @@ class TurnOrchestrator:
         card_id: Optional[str] = None
         if policy_dec.intervention == InterventionLevel.BRIEF_CARD and selected_diag:
             card_id = f"card_{uuid.uuid4().hex[:10]}"
+            diag_payload = selected_diag.model_dump()
+            # Attach secondary turn findings (e.g. 'discuss about', 'took a decision') as extra compact bullets if in Active mode
+            other_diags = [
+                d.model_dump()
+                for d in analysis.diagnostics
+                if d.diagnostic_id != selected_diag.diagnostic_id and d.alternative
+            ]
+            if other_diags:
+                diag_payload["additional_turn_findings"] = other_diags[:2]
             self.db.save_pending_card(
                 card_id=card_id,
                 learner_id=learner_id,
                 session_id=session_id,
                 correlation_id=corr_id,
                 reply_text=resp_out.reply_text,
-                diagnostic_dict=selected_diag.model_dump(),
+                diagnostic_dict=diag_payload,
             )
 
         return TurnResult(
@@ -279,6 +319,7 @@ class TurnOrchestrator:
             responder_output=resp_out,
             policy_decision=policy_dec,
             selected_diagnostic=selected_diag,
+            all_diagnostics=analysis.diagnostics,
             card_id=card_id,
         )
 
@@ -306,4 +347,5 @@ class TurnOrchestrator:
             },
             correlation_id=correlation_id,
             idempotency_key=f"{correlation_id}:card_delivered:{diagnostic.diagnostic_id}",
+            rebuild=True,
         )

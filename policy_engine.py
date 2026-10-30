@@ -70,11 +70,44 @@ def validate_analyst_output_against_turn(
         communicative_intention=analysis.communicative_intention,
         learner_invites_question=analysis.learner_invites_question,
         communicative_goal_achieved=analysis.communicative_goal_achieved,
+        pragmatic_cave_in=analysis.pragmatic_cave_in,
         requires_clarification=analysis.requires_clarification,
         in_emotional_or_story_flow=analysis.in_emotional_or_story_flow,
         diagnostics=verified_diagnostics,
         target_assessments=verified_targets,
     )
+
+
+
+def compute_learner_strain(recent_learner_turns: list[str], baseline_words: float = 14.0) -> float:
+    if not recent_learner_turns:
+        return 0.0
+    window = recent_learner_turns[-3:]
+    word_counts = [len(t.strip().split()) for t in window if t.strip()]
+    if not word_counts:
+        return 0.0
+    avg_len = sum(word_counts) / len(word_counts)
+    len_drop = max(0.0, (baseline_words - avg_len) / max(baseline_words, 1.0))
+
+    joined = " ".join(window).lower()
+    hesitation_markers = ("...", "uh", "um", "i don't know how to say", "not sure how", "what do you call")
+    hes_hits = sum(1 for m in hesitation_markers if m in joined)
+    hes_score = min(1.0, hes_hits * 0.25)
+
+    return round(min(1.0, 0.65 * len_drop + 0.35 * hes_score), 2)
+
+
+def extract_recent_partner_openers(recent_partner_turns: list[str], max_items: int = 5) -> list[str]:
+    openers: list[str] = []
+    for txt in recent_partner_turns[-6:]:
+        cleaned = re.sub(r"^[^\w]+", "", (txt or "").strip())
+        words = cleaned.split()
+        if not words:
+            continue
+        first_tok = words[0].rstrip(",.!?;:—-")
+        if first_tok and first_tok not in openers:
+            openers.append(first_tok)
+    return openers[-max_items:]
 
 
 class DialogueController:

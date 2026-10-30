@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -214,10 +215,6 @@ class EventSourcedDatabase:
         feedback_preference: Optional[str] = None,
         opted_in_workouts: Optional[bool] = None,
     ) -> None:
-        """
-        Ensures the learner row exists using INSERT OR IGNORE so existing preferences
-        (like 'silent' or 'active') are NEVER overwritten when reading settings.
-        """
         with self._conn() as conn:
             conn.execute(
                 """
@@ -393,10 +390,6 @@ class EventSourcedDatabase:
         }
 
     def select_stealth_target_for_session(self, learner_id: int, register_profile: str) -> Optional[dict[str, str]]:
-        """
-        Selects at most 1 non-Stable core expression that fits the active register
-        for organic stealth elicitation.
-        """
         with self._conn() as conn:
             rows = conn.execute(
                 """
@@ -506,7 +499,6 @@ class EventSourcedDatabase:
             )
             conn.commit()
 
-
     def register_organic_phrase_from_diagnostic(
         self,
         *,
@@ -515,12 +507,7 @@ class EventSourcedDatabase:
         communicative_intention: str,
         register_profile: str,
     ) -> str:
-        """
-        Dynamically registers a natural spoken expression discovered during the learner's
-        own spontaneous conversation so the phrase catalog grows organically without static bias.
-        """
-        import re as _re
-        clean_slug = _re.sub(r"[^a-z0-9]+", "_", canonical_form.strip().lower()).strip("_")[:48]
+        clean_slug = re.sub(r"[^a-z0-9]+", "_", canonical_form.strip().lower()).strip("_")[:48]
         phrase_id = f"organic_{clean_slug}" if clean_slug else f"organic_{uuid.uuid4().hex[:8]}"
         self.register_phrase(
             phrase_id=phrase_id,
@@ -544,6 +531,7 @@ class EventSourcedDatabase:
         causation_id: Optional[str] = None,
         occurred_at_utc: Optional[str] = None,
         event_id: Optional[str] = None,
+        rebuild: bool = True,
     ) -> tuple[bool, str]:
         occ = occurred_at_utc or _now_iso_utc()
         rec = _now_iso_utc()
@@ -578,7 +566,8 @@ class EventSourcedDatabase:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True),
                 ),
             )
-            self._rebuild_projections_in_tx(conn, learner_id=learner_id)
+            if rebuild:
+                self._rebuild_projections_in_tx(conn, learner_id=learner_id)
             conn.commit()
             return (True, ev_id)
 
