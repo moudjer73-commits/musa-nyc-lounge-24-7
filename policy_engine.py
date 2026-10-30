@@ -650,3 +650,46 @@ def update_workout_task_after_turn(learner_id: str, goal_achieved: bool) -> dict
         task["reinforce_required"] = True
         return {"task_status": "MISSED", "reinforce_required": True, "attempts": task["attempts"]}
 
+
+BOT_COMMANDS_SPEC: list[tuple[str, str]] = [
+    ("scene", "🎬 Start a fresh spoken scene"),
+    ("workout", "🏋️ Spontaneous phrase retrieval workout"),
+    ("dilemma", "🤝 High-stakes pragmatic roleplay"),
+    ("decode", "🎧 Two-phase connected speech & subtext challenge"),
+    ("register", "🎛️ Spoken register shift (Casual / Diplomatic / Executive)"),
+    ("settings", "⚙️ Live control panel (Register, Directness, Coaching)"),
+    ("debrief", "🏁 End-of-scene debrief & top shifts"),
+    ("progress", "📈 Mastery lifecycle & cross-register stats"),
+    ("guide", "📖 Updated v2 User Guide (EN / AR)"),
+    ("start", "🟢 Open lab & restore keyboard"),
+]
+
+
+def get_updated_user_guide_html() -> str:
+    return (
+        "📖 <b>Spoken English Lab — v2 User Guide</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🎙️ <b>1. Instant Dual-Engine Conversation</b>\n"
+        "Talk naturally with <b>Alex</b>. Replies arrive in under a second while the silent analyst attaches a "
+        "<b>💡 Quick Upgrade</b> button only when a real spoken upgrade exists.\n"
+        "• <b>🌤️ Light:</b> Paced cards with cooldown.\n"
+        "• <b>🔬 Active:</b> Instant upgrade card on every turn with an issue.\n\n"
+        "🏋️ <b>2. Phrase Workout (Task-Aware)</b>\n"
+        "Tests spontaneous retrieval in a fresh scenario without leaking the target phrase. Any natural American phrasing "
+        "that fulfills the goal counts! If you drift off-task, Alex will naturally re-open the opportunity in-character.\n\n"
+        "🎧 <b>3. Listen &amp; Decode (2-Phase Interactive)</b>\n"
+        "• <b>Phase 1:</b> Listen to the reduced American clip (<i>Whaddaya, Mighta, Didja</i>) and reply with what the speaker <i>really</i> means.\n"
+        "• <b>Phase 2:</b> Get instant comprehension feedback plus the full unpacked form, IPA, and Arabic/English subtext (or tap <b>🔍 Reveal Breakdown</b> anytime).\n\n"
+        "🎛️ <b>4. Spoken-First Register Shift</b>\n"
+        "Send any thought in <b>🎛️ Register Shift</b> to hear how Americans say it out loud across <b>Casual</b>, "
+        "<b>Diplomatic</b>, and crisp <b>Executive</b> meeting speech—never stiff written memo prose.\n\n"
+        "📈 <b>5. Cross-Register Mastery Lifecycle</b>\n"
+        "Phrases progress from <code>EXPOSED → ATTEMPTED → CONSOLIDATING → STABLE</code>. Reaching <b>STABLE</b> requires "
+        "using the phrase naturally across at least <b>2 formality bands</b> (Informal / Neutral / Executive) with 24h spacing.\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <b>ملخص سريع بالعربية:</b>\n"
+        "• اضغط على <b>💡 Quick Upgrade</b> أسفل رد Alex لعرض بطاقة التصحيح والأثر السماعي الأمريكي.\n"
+        "• في <b>🎧 Listen &amp; Decode</b> أرسل تفسيرك للمعنى المبطن أولاً ليقيمه البوت ويكشف التفكيك الصوتي.\n"
+        "• استخدم زر القائمة <b>( / )</b> أسفل الشاشة للوصول السريع لجميع الأوامر في أي وقت."
+    )
+

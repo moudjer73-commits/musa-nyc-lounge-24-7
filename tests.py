@@ -799,10 +799,25 @@ class FullProductionVerificationSuite(unittest.TestCase):
         self.assertIn("hidden message", phase2_msg)
 
 
+
+    def test_18_user_guide_and_bot_commands_sync(self):
+        """Verifies the updated 5-chapter v2 user guide and Telegram commands/handlers in app.py."""
+        from guide_and_branding import GUIDE_CHAPTERS_HTML
+
+        for ch_key in ("overview", "ch1_layers", "ch2_modes", "ch3_registers", "ch4_mastery"):
+            self.assertIn(ch_key, GUIDE_CHAPTERS_HTML)
+        self.assertIn("2-Phase Listen", GUIDE_CHAPTERS_HTML["overview"])
+        self.assertIn("Spoken-First Register Shift", GUIDE_CHAPTERS_HTML["overview"])
+        self.assertIn("2 distinct formality bands", GUIDE_CHAPTERS_HTML["ch4_mastery"])
+
+        app_src = Path("app.py").read_text(encoding="utf-8")
+        self.assertIn("force_sync_all_telegram_scopes_and_profile", app_src)
+        self.assertIn("format_decode_phase1_message", app_src)
+        self.assertIn("format_decode_phase2_reveal", app_src)
+        self.assertIn("register_workout_task", app_src)
+        self.assertIn("_get_learner_lock", app_src)
+        self.assertNotIn("<tg-spoiler>{_e(ch.full_unreduced_form)}", app_src)
+
+
 if __name__ == "__main__":
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(FullProductionVerificationSuite)
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
-    if not result.wasSuccessful():
-        raise SystemExit(1)
-    print("\n🎉 ALL 12 DETAILED ACCEPTANCE + END-TO-END ORCHESTRATOR TESTS PASSED (12/12 OK)!")
+    unittest.main(verbosity=2)

@@ -15,6 +15,14 @@ from ai_engine import DualLLMEngine
 from config import ADMIN_ID, DEFAULT_VOICE, TELEGRAM_BOT_TOKEN, TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
 from orchestrator import TurnOrchestrator
+from policy_engine import (
+    complete_decode_session,
+    format_decode_phase1_message,
+    format_decode_phase2_reveal,
+    get_active_decode_session,
+    register_workout_task,
+    start_decode_session,
+)
 from guide_and_branding import GUIDE_CHAPTERS_HTML, generate_bot_branding_images
 from schemas import DirectnessLevel, InterventionLevel, RegisterProfile, TrainingMode
 
@@ -26,6 +34,16 @@ ai = DualLLMEngine()
 orchestrator = TurnOrchestrator(db=db, ai=ai)
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=True, num_threads=4) if TELEGRAM_BOT_TOKEN else None
 
+
+_LEARNER_LOCKS: dict[str, threading.Lock] = {}
+_LEARNER_LOCKS_GUARD = threading.Lock()
+
+def _get_learner_lock(lid) -> threading.Lock:
+    key = str(lid)
+    with _LEARNER_LOCKS_GUARD:
+        if key not in _LEARNER_LOCKS:
+            _LEARNER_LOCKS[key] = threading.Lock()
+        return _LEARNER_LOCKS[key]
 
 def _e(val) -> str:
     return html.escape(str(val if val is not None else ""))
@@ -63,13 +81,14 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         {"command": "settings", "description": "Adjust register, directness, engine & coaching"},
         {"command": "scene", "description": "Open spontaneous conversation scene"},
         {"command": "dilemma", "description": "Generate a live pragmatic dilemma"},
-        {"command": "shift", "description": "Transform a thought across registers"},
+        {"command": "shift", "description": "Spoken-first register shift (Casual/Diplomatic/Executive)"},
+        {"command": "register", "description": "Transform a thought across spoken registers"},
         {"command": "think", "description": "Analytical Think-Aloud sparring"},
         {"command": "workout", "description": "Spontaneous phrase retrieval workout"},
-        {"command": "decode", "description": "Connected speech & subtext Listen-and-Decode"},
+        {"command": "decode", "description": "2-phase connected speech & subtext challenge"},
         {"command": "debrief", "description": "End-of-scene summary of wins & top shifts"},
         {"command": "progress", "description": "View evidence-based acquisition profile"},
-        {"command": "guide", "description": "Interactive User Guide (EN + AR)"},
+        {"command": "guide", "description": "Interactive 5-chapter v2 User Guide (EN + AR)"},
     ]
     active_scopes = [{"type": "default"}, {"type": "all_private_chats"}]
     if target_chat_id:
@@ -413,6 +432,7 @@ if bot is not None:
             "communicative_intention": DEFAULT_CURATED_PHRASES[0][2],
         }
         workout = ai.generate_dynamic_workout_scenario(target, register_profile=reg)
+        register_workout_task(workout, target, learner_id=str(lid))
         workout_bible = {
             "scene_id": sid,
             "scene_mode": "micro_drill",
@@ -453,7 +473,7 @@ if bot is not None:
         reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
         _launch_dynamic_workout(message.chat.id, lid, str(sess["session_id"]), reg)
 
-    @bot.message_handler(commands=["shift"])
+    @bot.message_handler(commands=["shift", "register"])
     def handle_shift_cmd(message):
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
@@ -494,17 +514,15 @@ if bot is not None:
         except Exception as e:
             logger.warning(f"Decode TTS fallback: {e}")
 
-        msg_html = (
-            f"🎧 <b>Listen & Decode</b> (Register: <b>{_e(reg.upper())}</b>)\n"
-            f"• <b>Context:</b> <i>{_e(ch.context_line)}</i>\n"
-            f"• <b>Spoken Clip:</b> “<b>{_e(ch.spoken_clip_text)}</b>”\n\n"
-            f"👉 <b>{_e(ch.decode_question)}</b>\n\n"
-            "<b>🔍 Tap below after replying to check your decoding:</b>\n"
-            f"• <b>Unpacked Form:</b> <tg-spoiler>{_e(ch.full_unreduced_form)} — {_e(ch.acoustic_reduction_note)}</tg-spoiler>\n"
-            f"• <b>Hidden Subtext (EN):</b> <tg-spoiler>{_e(ch.pragmatic_subtext_en)}</tg-spoiler>\n"
-            f"• <b>المعنى المبطن (AR):</b> <tg-spoiler>{_e(ch.pragmatic_subtext_ar)}</tg-spoiler>"
+        start_decode_session(str(lid), ch, str(chat_id))
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔍 Reveal Breakdown", callback_data="decode_reveal"))
+        bot.send_message(
+            chat_id,
+            format_decode_phase1_message(ch, reg),
+            parse_mode="HTML",
+            reply_markup=markup,
         )
-        bot.send_message(chat_id, msg_html, parse_mode="HTML")
 
     @bot.message_handler(commands=["debrief"])
     def handle_debrief_cmd(message):
@@ -607,6 +625,17 @@ if bot is not None:
         lid = call.from_user.id
         sess = db.get_or_create_active_session(lid)
         sid = str(sess["session_id"])
+
+        if data == "decode_reveal":
+            st = complete_decode_session(str(lid)) or complete_decode_session(str(call.message.chat.id))
+            if not st:
+                bot.answer_callback_query(call.id, "Breakdown already revealed.")
+                return
+            ch_obj = st["challenge"]
+            db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
+            bot.answer_callback_query(call.id, "Revealing sound & subtext breakdown...")
+            bot.send_message(call.message.chat.id, format_decode_phase2_reveal(ch_obj, None), parse_mode="HTML")
+            return
 
         if data.startswith("guide:"):
             ch_key = data.split(":", 1)[1]
@@ -748,70 +777,80 @@ if bot is not None:
             return
 
         try:
-            if sess.get("training_mode") == "register_shift":
-                rs_out = ai.generate_register_shift_coaching(text)
-                db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
-                rs_html = (
-                    f"🎛️ <b>Register Shift: {_e(rs_out.communicative_intention)}</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>Casual (Friend):</b> “{_e(rs_out.casual_friend_version)}”\n"
-                    f"• <b>Diplomatic (Colleague):</b> “{_e(rs_out.diplomatic_colleague_version)}”\n"
-                    f"• <b>Executive (Manager):</b> “{_e(rs_out.executive_manager_version)}”\n\n"
-                    f"<b>Why it shifts:</b> {_e(rs_out.key_pragmatic_distinction_en)}\n"
-                    f"<b>بالعربية:</b> <tg-spoiler>{_e(rs_out.key_pragmatic_distinction_ar)}</tg-spoiler>\n\n"
-                    f"🎯 <b>Try it:</b> {_e(rs_out.practice_prompt)}"
-                )
-                bot.send_message(chat_id, rs_html, parse_mode="HTML")
-                return
+            with _get_learner_lock(lid):
+                active_dec = get_active_decode_session(str(lid)) or get_active_decode_session(str(chat_id))
+                if active_dec is not None:
+                    ch_obj = active_dec["challenge"]
+                    eval_res = ai.evaluate_listen_decode_attempt(ch_obj, text)
+                    complete_decode_session(str(lid))
+                    complete_decode_session(str(chat_id))
+                    db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
+                    bot.send_message(chat_id, format_decode_phase2_reveal(ch_obj, eval_res), parse_mode="HTML")
+                    return
 
-            fast_sent_holder = {"msg": None}
+                if sess.get("training_mode") == "register_shift":
+                    rs_out = ai.generate_register_shift_coaching(text)
+                    db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
+                    rs_html = (
+                        f"🎛️ <b>Register Shift: {_e(rs_out.communicative_intention)}</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        f"• <b>Casual (Friend):</b> “{_e(rs_out.casual_friend_version)}”\n"
+                        f"• <b>Diplomatic (Colleague):</b> “{_e(rs_out.diplomatic_colleague_version)}”\n"
+                        f"• <b>Executive (Manager):</b> “{_e(rs_out.executive_manager_version)}”\n\n"
+                        f"<b>Why it shifts:</b> {_e(rs_out.key_pragmatic_distinction_en)}\n"
+                        f"<b>بالعربية:</b> <tg-spoiler>{_e(rs_out.key_pragmatic_distinction_ar)}</tg-spoiler>\n\n"
+                        f"🎯 <b>Try it:</b> {_e(rs_out.practice_prompt)}"
+                    )
+                    bot.send_message(chat_id, rs_html, parse_mode="HTML")
+                    return
 
-            def _deliver_fast_reply(resp_out):
-                reply_html = f"💬 <b>Alex:</b> {_e(resp_out.reply_text)}"
-                fast_sent_holder["msg"] = bot.send_message(chat_id, reply_html, parse_mode="HTML")
-                if resp_out.second_bubble_text:
-                    bot.send_message(chat_id, f"💬 <b>Alex:</b> {_e(resp_out.second_bubble_text)}", parse_mode="HTML")
+                fast_sent_holder = {"msg": None}
 
-            turn_res = orchestrator.process_turn(
-                learner_id=lid,
-                learner_text=text,
-                message_idempotency_key=f"tg_msg_{chat_id}_{message.message_id}",
-                is_voice_message=False,
-                on_fast_reply=_deliver_fast_reply,
-            )
+                def _deliver_fast_reply(resp_out):
+                    reply_html = f"💬 <b>Alex:</b> {_e(resp_out.reply_text)}"
+                    fast_sent_holder["msg"] = bot.send_message(chat_id, reply_html, parse_mode="HTML")
+                    if resp_out.second_bubble_text:
+                        bot.send_message(chat_id, f"💬 <b>Alex:</b> {_e(resp_out.second_bubble_text)}", parse_mode="HTML")
 
-            sent_msg = fast_sent_holder["msg"]
-            if turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.card_id and turn_res.selected_diagnostic:
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(
-                    types.InlineKeyboardButton("💡 Quick Upgrade", callback_data=f"card:{turn_res.card_id}"),
-                    types.InlineKeyboardButton("🎧 Listen", callback_data=f"tts:{turn_res.card_id}"),
-                )
-                if sent_msg is not None:
-                    try:
-                        bot.edit_message_reply_markup(chat_id=chat_id, message_id=sent_msg.message_id, reply_markup=markup)
-                    except Exception:
-                        pass
-                else:
-                    reply_html = f"💬 <b>Alex:</b> {_e(turn_res.responder_output.reply_text)}"
-                    sent_msg = bot.send_message(chat_id, reply_html, parse_mode="HTML", reply_markup=markup)
-
-            if sent_msg and turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.selected_diagnostic:
-                orchestrator.confirm_card_delivered(
+                turn_res = orchestrator.process_turn(
                     learner_id=lid,
-                    session_id=turn_res.session_id,
-                    correlation_id=turn_res.correlation_id,
-                    diagnostic=turn_res.selected_diagnostic,
+                    learner_text=text,
+                    message_idempotency_key=f"tg_msg_{chat_id}_{message.message_id}",
+                    is_voice_message=False,
+                    on_fast_reply=_deliver_fast_reply,
                 )
 
-            if turn_res.policy_decision.schedule_micro_workout and not turn_res.policy_decision.defer_workout_until_scene_end:
-                pat = turn_res.policy_decision.workout_candidate_pattern_id
-                bot.send_message(
-                    chat_id,
-                    f"🎯 <b>Pattern Notice:</b> <code>{_e(pat)}</code> has come up 3 times across your turns. Tap 🎛️ <b>Register Shift</b> or 🏋️ <b>Phrase Workout</b> whenever you'd like a quick focused practice.",
-                    parse_mode="HTML",
-                )
+                sent_msg = fast_sent_holder["msg"]
+                if turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.card_id and turn_res.selected_diagnostic:
+                    markup = types.InlineKeyboardMarkup(row_width=2)
+                    markup.add(
+                        types.InlineKeyboardButton("💡 Quick Upgrade", callback_data=f"card:{turn_res.card_id}"),
+                        types.InlineKeyboardButton("🎧 Listen", callback_data=f"tts:{turn_res.card_id}"),
+                    )
+                    if sent_msg is not None:
+                        try:
+                            bot.edit_message_reply_markup(chat_id=chat_id, message_id=sent_msg.message_id, reply_markup=markup)
+                        except Exception:
+                            pass
+                    else:
+                        reply_html = f"💬 <b>Alex:</b> {_e(turn_res.responder_output.reply_text)}"
+                        sent_msg = bot.send_message(chat_id, reply_html, parse_mode="HTML", reply_markup=markup)
 
+                if sent_msg and turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.selected_diagnostic:
+                    orchestrator.confirm_card_delivered(
+                        learner_id=lid,
+                        session_id=turn_res.session_id,
+                        correlation_id=turn_res.correlation_id,
+                        diagnostic=turn_res.selected_diagnostic,
+                    )
+
+                if turn_res.policy_decision.schedule_micro_workout and not turn_res.policy_decision.defer_workout_until_scene_end:
+                    pat = turn_res.policy_decision.workout_candidate_pattern_id
+                    bot.send_message(
+                        chat_id,
+                        f"🎯 <b>Pattern Notice:</b> <code>{_e(pat)}</code> has come up 3 times across your turns. Tap 🎛️ <b>Register Shift</b> or 🏋️ <b>Phrase Workout</b> whenever you'd like a quick focused practice.",
+                        parse_mode="HTML",
+                    )
         except Exception as err:
             logger.error(f"Turn error: {err}", exc_info=True)
             bot.send_message(chat_id, f"⚠️ <i>Service notice: {_e(str(err)[:160])}</i>", parse_mode="HTML")
