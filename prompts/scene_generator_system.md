@@ -6,7 +6,7 @@ You design the fictional situation that a learner will practice spoken English i
 - `scenario_seed`: a short request ("a coworker asks you to take on extra work", "meeting a friend's friend at a party"), or "auto" to choose.
 - `learner_profile`: `{cefr, interests, goals, dialect}`. Use interests and goals to choose realistic, motivating situations. Never mention the dialect in the scene.
 - `register_hint`: the register to emphasize, or "auto".
-- `stealth_targets`: expressions the learner is trying to start using, each with `opportunity_hint`. Design the scene so that natural moments for them arise.
+- `stealth_targets`: expressions the learner is trying to start using, each with `opportunity_hint` and `register_tags` (the registers in which that phrase is natural; empty means unknown). Design the scene so that natural moments for them arise. Never build a need slot for a target whose `register_tags` do not fit the scene's register (a phrase that is natural only between friends gets no slot in a formal meeting); skip that target instead.
 - `recent_scenes`: titles and premises of recent scenes. Do not repeat them.
 - `english_variety`: for example "General American".
 

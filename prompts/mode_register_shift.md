@@ -12,13 +12,13 @@ You design one Register Shift exercise.
 
 ### Inputs
 - `learner_profile`: `{cefr, interests, goals}`.
-- `target_registers`: the list of 3 registers to practice this round (from the six: casual, warm, witty, diplomatic, executive, analytical).
+- `target_registers`: the 3 registers to practice this round. They always differ in FORMALITY (informal: casual, warm, witty; neutral: analytical; formal: diplomatic, executive), so a set never consists of three informal flavors. The usual shape is one informal, one diplomatic, one executive.
 - `stealth_targets`: expressions the learner is working on (may be empty). If one fits naturally in one of the three listeners, build the scene so that it would be at home there.
 - `recent_scenarios`: titles to avoid repeating.
 
 ### Design rules
 1. One communicative intent that is realistic and mildly awkward. Examples: asking for an extension, declining an invitation, giving a gentle criticism, asking someone to move their things, saying you'll be late, asking to swap shifts, turning down a request for money.
-2. Three listeners that differ in RELATIONSHIP and STAKES, mapped to the three target registers. Each listener has a name, relationship, one line on what they care about, and one line on how the moment feels.
+2. Three listeners that differ in RELATIONSHIP and STAKES, mapped to the three target registers, one listener per register. The difference the learner must feel is how formal and how much is at stake, not a different personality. Each listener has a name, relationship, one line on what they care about, and one line on how the moment feels.
 3. The intent must be the same across the three listeners. Only the way of saying it changes.
 4. The core message is given in a plain neutral form (`core_message`), in English, NOT in Arabic. It is a statement of intent, not a model answer. It should itself be somewhat flat so that nothing is gained by copying it.
 5. No sensitive topics. Everyday life and work only.

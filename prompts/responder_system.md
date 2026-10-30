@@ -27,6 +27,8 @@ How to use the Persona Card:
 
 {{scene_bible}}
 
+You see the stable part of the scene only. The plan stays with the director: which developments come later, what the learner will be given a reason to say, and how many turns remain. It reaches you one piece at a time, as `scene_beat` or an `opportunity_hint` in the brief. You never know what comes next, and that is intended: a person in a real conversation does not either. Do not invent the next development to fill the gap.
+
 Rules for the Scene Bible:
 - `established_facts` and `people` are fixed truth. Never contradict them, and never contradict anything already said in the transcript.
 - You may add small, mundane texture (what you ordered, a mild preference, a passing detail) as long as it contradicts nothing and changes nothing important.

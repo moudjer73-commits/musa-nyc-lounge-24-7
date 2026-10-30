@@ -58,9 +58,14 @@ def main(out_path: Path) -> None:
     for mode in MODES:
         for sec in pl.mode_sections(mode):
             kwargs = {}
+            note = ""
             if mode == "think_aloud" and sec.upper().startswith("INTERLOCUTOR"):
-                kwargs = {"persona_name": ps.persona.name, "persona_card": pl.voice_only_persona_json(ps.persona)}
-            section(f"{n}. Mode `{mode}`: {sec}", pl.load_mode_prompt(mode, sec, **kwargs))
+                # exactly what ModeRunner sends: the persona's voice, without the errand of the scene it came from
+                voice = pl.voice_only_persona(ps.persona, ps.scene)
+                kwargs = {"persona_name": voice.name, "persona_card": pl.persona_card_json(voice)}
+                note = ("The persona card is the voice-only view (coach.prompt_loader.voice_only_persona) of the example persona: "
+                        "role, errand and scene-bound speech samples are replaced or dropped before this prompt is built.")
+            section(f"{n}. Mode `{mode}`: {sec}", pl.load_mode_prompt(mode, sec, **kwargs), note)
             n += 1
 
     toc = "\n## Contents\n\n" + "\n".join(f"- {t}" for t in titles) + "\n"

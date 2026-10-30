@@ -15,14 +15,16 @@ from typing import Any, Sequence
 
 from pydantic import BaseModel
 
+from .checks import fuzzy_contains, normalize_text
 from .db import Database
-from .llm import LLMClient
+from .llm import LLMClient, LLMError
 from .mastery import workout_event_fields
 from .models import (
-    DilemmaEval, DilemmaSetup, InterlocutorReply, PersonaCard, RegisterShiftEval, RegisterShiftSetup,
-    ThinkAloudEval, ThinkAloudSetup, UsedTarget, WorkoutEval, WorkoutSetup,
+    DilemmaEval, DilemmaSetup, Expression, InterlocutorReply, PersonaCard, RegisterShiftEval, RegisterShiftSetup,
+    SceneBible, ThinkAloudEval, ThinkAloudSetup, UsedTarget, WorkoutEval, WorkoutSetup,
 )
-from .prompt_loader import load_mode_prompt, voice_only_persona_json
+from .registers import fits
+from .prompt_loader import load_mode_prompt, persona_card_json, voice_only_persona
 
 MODE_SCHEMAS: dict[tuple[str, str], type[BaseModel]] = {
     ("register_shift", "SETUP"): RegisterShiftSetup,
@@ -45,14 +47,19 @@ class ModeRunner:
         self.llm = llm
         self.timeout = timeout
 
-    async def run(self, mode: str, section: str, payload: dict[str, Any], *, persona: PersonaCard | None = None) -> Any:
+    async def run(
+        self, mode: str, section: str, payload: dict[str, Any], *, persona: PersonaCard | None = None,
+        scene: SceneBible | None = None,
+    ) -> Any:
         section = section.upper()
         schema = MODE_SCHEMAS[(mode, section)]
         variables: dict[str, Any] = {}
         if (mode, section) == ("think_aloud", "INTERLOCUTOR"):
             if persona is None:
                 raise ValueError("the think-aloud interlocutor needs a persona")
-            variables = {"persona_name": persona.name, "persona_card": voice_only_persona_json(persona)}
+            # the topic has nothing to do with the scene this persona was written for: keep the voice only
+            persona = voice_only_persona(persona, scene)
+            variables = {"persona_name": persona.name, "persona_card": persona_card_json(persona)}
         system = load_mode_prompt(mode, section, **variables)
         return await self.llm.generate_json(
             role=f"{mode}.{section.lower()}",
@@ -62,6 +69,69 @@ class ModeRunner:
             temperature=MODE_TEMPERATURE[section],
             timeout=self.timeout,
         )
+
+
+# --------------------------------------------------------------------------------------
+# Phrase Workout: the expression's own range decides where a drill may place it
+# --------------------------------------------------------------------------------------
+
+
+def workout_expression_payload(expr: Expression) -> dict[str, Any]:
+    """The `expression` object of the SETUP / REINFORCE prompts."""
+    return {
+        "id": expr.id,
+        "form": expr.form,
+        "meaning": expr.meaning,
+        "register_tags": expr.register_tags,
+        "variants": [v.model_dump() for v in expr.variants],
+        "l1_trap": expr.l1_trap,
+    }
+
+
+def workout_setup_problems(setup: WorkoutSetup, expr: Expression) -> list[str]:
+    """Code-side guard for what the prompt asks: stay inside the range, do not leak the answer."""
+    problems: list[str] = []
+    if not fits(expr.register_tags, setup.register):
+        problems.append(
+            f"register {setup.register!r} is outside this expression's range {expr.register_tags}; "
+            "keep the register and vary setting, relationship and stakes instead"
+        )
+    by_form = {normalize_text(v.form): v for v in expr.variants}
+    for form in setup.acceptable_forms:
+        v = by_form.get(normalize_text(form))
+        if v is not None and not fits(v.register_tags, setup.register):
+            problems.append(f"acceptable form {form!r} is not natural in a {setup.register!r} situation")
+    if fuzzy_contains(setup.situation, expr.form):
+        problems.append("the situation contains the expression itself")
+    return problems
+
+
+async def run_workout_setup(
+    runner: "ModeRunner", expr: Expression, *, section: str = "SETUP", previous_contexts: Sequence[str] = (),
+    difficulty: str = "medium", stage: str = "seen", learner_cefr: str = "B2", extra: dict[str, Any] | None = None,
+) -> tuple[WorkoutSetup, list[str]]:
+    """Run SETUP (or REINFORCE) and check the result in code; one retry with `fix_notes`.
+
+    Returns the setup and any problems that remain (empty when it is clean).
+    """
+    payload: dict[str, Any] = {
+        "expression": workout_expression_payload(expr), "previous_contexts": list(previous_contexts),
+        "stage": stage, "learner_cefr": learner_cefr, "difficulty": difficulty, **(extra or {}),
+    }
+    setup: WorkoutSetup | None = None
+    problems: list[str] = ["not generated"]
+    for _ in range(2):
+        try:
+            setup = await runner.run("phrase_workout", section, payload)
+        except LLMError:
+            continue
+        problems = workout_setup_problems(setup, expr)
+        if not problems:
+            break
+        payload = {**payload, "fix_notes": problems}
+    if setup is None:
+        raise LLMError("phrase workout setup was never generated")
+    return setup, problems
 
 
 def record_workout_result(

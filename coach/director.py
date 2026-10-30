@@ -20,6 +20,7 @@ from .models import (
 )
 from .move_sampler import MoveContext, choose_length, choose_move
 from .policy import Decision
+from .registers import fits
 from .state import LearnerState
 
 OPPORTUNITY_COOLDOWN_TURNS = 2     # no new stealth opportunity within this many character turns of the last
@@ -49,12 +50,14 @@ def pick_targets(
         hint = slots.get(e.id) or e.opportunity_hint
         if not hint:
             continue
+        if not fits(e.register_tags, register):
+            continue          # never create a need for a phrase that would be out of place in this scene
         out.append(
             StealthTarget(
                 id=e.id,
                 expression=e.form,
                 meaning=e.meaning,
-                register=(e.register_tags[0] if e.register_tags else register),
+                register=register,           # `fits` above guarantees the phrase is natural here
                 opportunity_hint=hint,
             )
         )

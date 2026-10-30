@@ -156,7 +156,9 @@ def test_metrics_are_derived_from_events(db):
     m = db.metrics(uid, NOW + DAY)
     assert m["spontaneous_uses"] == 2 and m["opportunities"] == 4
     assert m["spontaneous_rate"] == 0.5
-    assert m["register_diversity"] == pytest.approx(2 / 6)
+    assert m["formality_diversity"] == pytest.approx(2 / 3)       # informal + formal
+    db.record_event(uid, "x1", "spontaneous", NOW + 12, correct=True, naturalness=3, register="warm", session_id=3)
+    assert db.metrics(uid, NOW + DAY)["formality_diversity"] == pytest.approx(2 / 3)   # warm is still informal
     assert m["stage_counts"] == {"PRODUCED_SPONTANEOUS": 1}
 
 

@@ -26,8 +26,9 @@ from contextlib import contextmanager
 from typing import Any, Iterable, Iterator, Sequence
 
 from .checks import strip_tags
-from .mastery import DAY, Event, Stage, compute_stage, infer_formality_band, infer_relationship, is_due, next_due
-from .models import AlternativeScope, Expression, Finding, PersonaCard, SceneBible
+from .mastery import DAY, Event, Stage, compute_stage, is_due, next_due
+from .registers import FORMALITIES, formality_of, required_formalities
+from .models import Expression, Finding, PersonaCard, SceneBible, SessionFacts, Variant
 from .state import LearnerState
 
 MAX_ACTIVE_TARGETS = 3
@@ -76,9 +77,9 @@ CREATE TABLE IF NOT EXISTS expressions (
     form             TEXT    NOT NULL,
     meaning          TEXT    NOT NULL DEFAULT '',
     register_tags    TEXT    NOT NULL DEFAULT '[]',
+    variants         TEXT    NOT NULL DEFAULT '[]',
     l1_trap          TEXT,
     acceptable_forms TEXT    NOT NULL DEFAULT '[]',
-    form_scopes      TEXT    NOT NULL DEFAULT '[]',
     opportunity_hint TEXT,
     source           TEXT    NOT NULL DEFAULT 'card',
     created_at       REAL    NOT NULL,
@@ -106,12 +107,10 @@ CREATE TABLE IF NOT EXISTS events (
     correct     INTEGER,
     outcome     TEXT,
     naturalness INTEGER CHECK (naturalness IS NULL OR naturalness BETWEEN 1 AND 3),
-    register     TEXT,
-    formality    TEXT,
-    relationship TEXT,
-    hint_level   INTEGER,
-    context_id   TEXT,
-    mode         TEXT,
+    register    TEXT,
+    hint_level  INTEGER,
+    context_id  TEXT,
+    mode        TEXT,
     FOREIGN KEY (user_id, expr_id) REFERENCES expressions(user_id, expr_id)
 );
 CREATE INDEX IF NOT EXISTS idx_events_user_expr ON events(user_id, expr_id, ts);
@@ -167,7 +166,6 @@ class TargetCapError(RuntimeError):
 
 
 def _row_to_event(r: sqlite3.Row) -> Event:
-    keys = r.keys()
     return Event(
         ts=r["ts"],
         type=r["type"],
@@ -177,22 +175,29 @@ def _row_to_event(r: sqlite3.Row) -> Event:
         naturalness=r["naturalness"],
         hint_level=r["hint_level"],
         outcome=r["outcome"],
-        formality=r["formality"] if "formality" in keys else None,
-        relationship=r["relationship"] if "relationship" in keys else None,
     )
 
 
+def _merge_unique(a: list[str], b: list[str]) -> list[str]:
+    return list(dict.fromkeys([*a, *b]))
+
+
+def _merge_variants(old: list[Variant], new: list[Variant]) -> list[Variant]:
+    merged: dict[str, list[str]] = {}
+    for v in [*old, *new]:
+        merged[v.form] = _merge_unique(merged.get(v.form, []), v.register_tags)
+    return [Variant(form=f, register_tags=t) for f, t in merged.items()]
+
+
 def _row_to_expression(r: sqlite3.Row) -> Expression:
-    keys = r.keys()
-    raw_scopes = json.loads(r["form_scopes"]) if "form_scopes" in keys and r["form_scopes"] else []
     return Expression(
         id=r["expr_id"],
         form=r["form"],
         meaning=r["meaning"],
         register_tags=json.loads(r["register_tags"]),
+        variants=[Variant.model_validate(v) for v in json.loads(r["variants"])],
         l1_trap=r["l1_trap"],
         acceptable_forms=json.loads(r["acceptable_forms"]),
-        form_scopes=[AlternativeScope.model_validate(s) for s in raw_scopes],
         opportunity_hint=r["opportunity_hint"],
     )
 
@@ -204,17 +209,6 @@ class Database:
         if path != ":memory:":
             self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
-        self._migrate()
-
-    def _migrate(self) -> None:
-        expr_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(expressions)").fetchall()}
-        if "form_scopes" not in expr_cols:
-            self.conn.execute("ALTER TABLE expressions ADD COLUMN form_scopes TEXT NOT NULL DEFAULT '[]'")
-        ev_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(events)").fetchall()}
-        if "formality" not in ev_cols:
-            self.conn.execute("ALTER TABLE events ADD COLUMN formality TEXT")
-        if "relationship" not in ev_cols:
-            self.conn.execute("ALTER TABLE events ADD COLUMN relationship TEXT")
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -343,6 +337,37 @@ class Database:
             "SELECT COUNT(*) FROM turns WHERE session_id = ? AND speaker = 'learner'", (session_id,)
         ).fetchone()[0])
 
+    def session_facts(self, session_id: int) -> SessionFacts:
+        """What can honestly be said about how a scene went, straight from the turn log."""
+        rows = self.conn.execute(
+            "SELECT words, modality, text FROM turns WHERE session_id = ? AND speaker = 'learner' ORDER BY turn_id",
+            (session_id,),
+        ).fetchall()
+        words = [int(r["words"]) for r in rows]
+        n = len(words)
+        facts: dict[str, Any] = {
+            "learner_turns": n,
+            "questions_asked": sum("?" in r["text"] for r in rows),
+            "voice_turns": sum(r["modality"] == "voice" for r in rows),
+            "text_turns": sum(r["modality"] != "voice" for r in rows),
+            "beats_reached": len(self.used_beat_ids(session_id)),
+            "cards_shown": int(self.conn.execute(
+                "SELECT COUNT(*) FROM finding_events WHERE session_id = ? AND action = 'offer_card'", (session_id,)
+            ).fetchone()[0]),
+        }
+        scene_json = self.get_session(session_id)["scene_json"]      # a mode session has no scene, hence no beats
+        facts["beats_total"] = len(SceneBible.model_validate_json(scene_json).beats) if scene_json else 0
+        if n:
+            facts["avg_words"] = round(sum(words) / n)
+            facts["longest_turn_words"] = max(words)
+        if n >= 4:
+            half = n // 2
+            first, second = sum(words[:half]) / half, sum(words[-half:]) / half
+            facts["first_half_avg_words"], facts["second_half_avg_words"] = round(first), round(second)
+            ratio = second / first if first else 1.0
+            facts["length_trend"] = "longer" if ratio >= 1.3 else "shorter" if ratio <= 0.7 else "steady"
+        return SessionFacts(**facts)
+
     def used_beat_ids(self, session_id: int) -> set[str]:
         used: set[str] = set()
         for t in self.recent_turns(session_id, 200):
@@ -354,22 +379,30 @@ class Database:
     # ------------------------------------------------------------ expressions
 
     def upsert_expression(self, user_id: int, expr: Expression, now: float, source: str = "card") -> None:
-        scopes_json = json.dumps([s.model_dump() for s in expr.form_scopes], ensure_ascii=False)
+        """Insert, or merge evidence into an existing item.
+
+        Each time the same form is shown as natural in a new register, that register is added to its
+        range; each variant keeps its own range. Ranges only grow from evidence, never from a blind union.
+        """
+        existing = self.get_expression(user_id, expr.id)
+        tags = _merge_unique(existing.register_tags if existing else [], expr.register_tags)
+        variants = _merge_variants(existing.variants if existing else [], expr.variants)
         with self.tx() as c:
             c.execute(
-                """INSERT INTO expressions(user_id, expr_id, form, meaning, register_tags, l1_trap,
-                                           acceptable_forms, form_scopes, opportunity_hint, source, created_at)
+                """INSERT INTO expressions(user_id, expr_id, form, meaning, register_tags, variants, l1_trap,
+                                           acceptable_forms, opportunity_hint, source, created_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(user_id, expr_id) DO UPDATE SET
                        meaning = excluded.meaning,
                        register_tags = excluded.register_tags,
+                       variants = excluded.variants,
                        acceptable_forms = excluded.acceptable_forms,
-                       form_scopes = excluded.form_scopes,
                        opportunity_hint = COALESCE(excluded.opportunity_hint, expressions.opportunity_hint),
                        l1_trap = COALESCE(excluded.l1_trap, expressions.l1_trap)""",
                 (
-                    user_id, expr.id, expr.form, expr.meaning, json.dumps(expr.register_tags),
-                    expr.l1_trap, json.dumps(expr.acceptable_forms), scopes_json, expr.opportunity_hint, source, now,
+                    user_id, expr.id, expr.form, expr.meaning, json.dumps(tags),
+                    json.dumps([v.model_dump() for v in variants], ensure_ascii=False),
+                    expr.l1_trap, json.dumps(expr.acceptable_forms), expr.opportunity_hint, source, now,
                 ),
             )
 
@@ -388,20 +421,18 @@ class Database:
     def record_event(
         self, user_id: int, expr_id: str, type_: str, now: float, *,
         correct: bool | None = None, outcome: str | None = None, naturalness: int | None = None,
-        register: str | None = None, formality: str | None = None, relationship: str | None = None,
-        hint_level: int | None = None, context_id: str | None = None,
+        register: str | None = None, hint_level: int | None = None, context_id: str | None = None,
         session_id: int | None = None, turn_id: int | None = None, mode: str | None = None,
     ) -> int:
-        resolved_formality = infer_formality_band(register, formality)
         with self.tx() as c:
             cur = c.execute(
                 """INSERT INTO events(user_id, expr_id, session_id, turn_id, ts, type, correct, outcome,
-                                      naturalness, register, formality, relationship, hint_level, context_id, mode)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                      naturalness, register, hint_level, context_id, mode)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     user_id, expr_id, session_id, turn_id, now, type_,
                     None if correct is None else int(correct), outcome, naturalness,
-                    register, resolved_formality, relationship, hint_level, context_id, mode,
+                    register, hint_level, context_id, mode,
                 ),
             )
             return int(cur.lastrowid)
@@ -413,7 +444,9 @@ class Database:
         return [_row_to_event(r) for r in rows]
 
     def stage_of(self, user_id: int, expr_id: str, now: float) -> Stage:
-        return compute_stage(self.events_for(user_id, expr_id), now)
+        expr = self.get_expression(user_id, expr_id)
+        need = required_formalities(expr.register_tags if expr else [])
+        return compute_stage(self.events_for(user_id, expr_id), now, min_formalities=need)
 
     def due_at(self, user_id: int, expr_id: str) -> float | None:
         return next_due(self.events_for(user_id, expr_id))
@@ -660,7 +693,8 @@ class Database:
         spontaneous_rate   spontaneous correct uses / opportunities the character created (approximate:
                            opportunities are what the Responder says it created).
         stage_counts       how many vault expressions sit at each rung of the ladder right now.
-        register_diversity distinct registers among good spontaneous uses, out of six.
+        formality_diversity distinct formality buckets (informal/neutral/formal) among good spontaneous uses,
+                           out of three. Register labels are not counted: casual and warm are one bucket.
         repeat_after_drill findings of drilled patterns in the 14 days after a drill vs the 14 days before
                            (< 1.0 means the pattern is recurring less often).
         """
@@ -672,8 +706,8 @@ class Database:
         opps = int(self.conn.execute(
             "SELECT COUNT(*) FROM events WHERE user_id = ? AND type = 'opportunity' AND ts >= ?", (user_id, since)
         ).fetchone()[0])
-        regs = {
-            r["register"] for r in self.conn.execute(
+        formalities = {
+            formality_of(r["register"]) for r in self.conn.execute(
                 "SELECT DISTINCT register FROM events WHERE user_id = ? AND type = 'spontaneous' AND correct = 1 "
                 "AND register IS NOT NULL AND ts >= ?",
                 (user_id, since),
@@ -695,6 +729,6 @@ class Database:
             "opportunities": opps,
             "spontaneous_rate": (spont / opps) if opps else None,
             "stage_counts": dict(stages),
-            "register_diversity": len(regs) / 6,
+            "formality_diversity": len(formalities - {None}) / len(FORMALITIES),
             "repeat_after_drill": (after / before) if before else None,
         }

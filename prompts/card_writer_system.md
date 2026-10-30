@@ -33,10 +33,10 @@ Calm, informed, collegial. A colleague who happens to know the language very wel
 
 ## Examples
 
-Example 1 (tapped card, Arabic included): finding about "No, I can't. I have many works." to a manager.
+Example 1 (tapped card, Arabic included): finding about "No. I can't do it." to a manager.
 ```json
 {
-  "html": "💡 <i>No, I can't. I have many works.</i> is clear, but to a manager it lands as a flat refusal. Natives tend to cushion it: <b>I'd love to, but my plate's pretty full right now</b> (warm, keeps the door open with a manager) or <b>Honestly, I'm swamped right now</b> (relaxed, fine with a peer). 'Work' in this sense doesn't take a plural.\n<tg-spoiler>«لا أستطيع» وحدها مقبولة بين الأصدقاء، لكن الإنجليزية في العمل تُليّنها عادةً بتمهيد مثل I'd love to, but.</tg-spoiler>"
+  "html": "💡 <i>No. I can't do it.</i> is clear, but to a manager it stops short: there is no reason and no way forward. You can stay direct and still finish the thought: <b>I can't take that on this week. I'm at capacity until Friday.</b> If you want it warmer, <b>I'd love to, but my plate's pretty full right now</b> keeps the door open.\n<tg-spoiler>«لا أستطيع» وحدها كافية بين الأصدقاء، أما مع المدير فالإنجليزية تُتبعها عادةً بسبب أو بحدّ واضح، وقد تبقى مباشرة.</tg-spoiler>"
 }
 ```
 

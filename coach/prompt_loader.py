@@ -113,23 +113,69 @@ _HIDDEN_FROM_PERFORMER = {"beats", "need_slots", "max_turns", "register_plan"}
 def persona_card_json(card: PersonaCard) -> str:
     return json.dumps(card.model_dump(), ensure_ascii=False, indent=2)
 
-def voice_only_persona_json(card: PersonaCard) -> str:
-    """Persona identity and speaking style without scene-specific goals or role.
 
-    Think-Aloud uses its own topic and interlocutor task; carrying a scene agenda into
-    that mode can leak an unrelated want/role from a previous scene.
+# --- voice-only view of a persona, for modes that are not the scene it was written for -------------
+
+_WORD = re.compile(r"[A-Za-z][A-Za-z'-]+")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_STOP = frozenset(
+    "about after again also always because been before being both could does doing done each even ever from "
+    "going gonna have having here into just kind like made make many more most much never only other over "
+    "really same some still such than that their them then there these they thing this those very want were "
+    "what when where which while will with would your yours you're don't didn't isn't it's that's i've i'm".split()
+)
+
+
+_CONTENT_FREE_MOVES = frozenset({"REACT", "BACKCHANNEL", "TEASE"})
+
+
+def _content_words(text: str) -> set[str]:
+    return {w.lower() for w in _WORD.findall(text) if len(w) >= 4 and w.lower() not in _STOP}
+
+
+def _scene_words(card: PersonaCard, scene: SceneBible | None) -> set[str]:
+    """Everything that ties a persona to ONE scene: its errand, the people and things in the room."""
+    words = _content_words(card.role_in_scene) | _content_words(card.wants_in_scene)
+    if scene is not None:
+        parts = [scene.title, scene.situation, scene.setting.where, *scene.established_facts, *scene.open_threads]
+        for person in scene.people:
+            parts += [person.name, person.relation, *person.facts]
+        for part in parts:
+            words |= _content_words(part)
+    # the persona's own name is theirs in every scene
+    return words - {w.lower() for w in _WORD.findall(card.name)}
+
+
+def voice_only_persona(card: PersonaCard, scene: SceneBible | None = None) -> PersonaCard:
+    """Keep how this person talks; drop what they wanted in the scene they came from.
+
+    A Persona Card mixes idiolect (voice, habits, fillers, never_does) with scene errands
+    (`wants_in_scene`, `role_in_scene`, samples about the deck, the manager, the deadline).
+    Handing the whole card to another mode would drag that errand along. Conservative on purpose:
+      * speech samples survive only for the content-free moves (REACT, BACKCHANNEL, TEASE) and only when
+        they share no content word with the scene; ASK/SHARE/BUILD/PUSHBACK lines are about the errand by nature
+        ("any chance you'd have an hour this afternoon?") and share no keyword with it, so a word filter cannot catch them;
+      * background sentences that share a content word with the scene are dropped (personality traits stay).
+    Losing a sample costs a little tone anchoring; keeping one leaks the plot. The `voice` object
+    (habits, fillers, humor) carries the idiolect either way.
+    Pass `scene` whenever the card came from one; without it only the card's own errand fields are used.
     """
-    data = {
-        "name": card.name,
-        "age_range": card.age_range,
-        "background": card.background,
-        "default_register": card.default_register,
-        "voice": card.voice.model_dump(),
-        "attitude_to_learner": card.attitude_to_learner,
-        "never_does": card.never_does,
-        "speech_samples": [sample.model_dump() for sample in card.speech_samples],
-    }
-    return json.dumps(data, ensure_ascii=False, indent=2)
+    bound = _scene_words(card, scene)
+
+    def free(text: str) -> bool:
+        return not (_content_words(text) & bound)
+
+    background = " ".join(x for x in _SENTENCE.split(card.background.strip()) if x and free(x))
+    return card.model_copy(
+        update={
+            "role_in_scene": "a thoughtful conversation partner",
+            "wants_in_scene": "to understand how the learner reasons about the topic, and to keep them talking",
+            "attitude_to_learner": "curious and respectful; treats the learner as a capable adult",
+            "default_register": "analytical",
+            "background": background,
+            "speech_samples": [x for x in card.speech_samples if x.move.upper() in _CONTENT_FREE_MOVES and free(x.line)],
+        }
+    )
 
 
 def scene_bible_json(scene: SceneBible) -> str:

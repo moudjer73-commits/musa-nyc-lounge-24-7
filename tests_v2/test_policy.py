@@ -182,22 +182,3 @@ def test_strain_from_length_and_hesitation():
 
 def test_card_threshold_is_what_the_docs_say():
     assert CARD_THRESHOLD == 2.0
-
-
-def test_over_softening_calibration_and_drill_routing():
-    over_soft = mk_finding(
-        span="I am so sorry to disturb you, please forgive me, maybe I can't",
-        category="pragmatic",
-        l1_transfer=True,
-        l1_pattern="DIRECTNESS",
-        l1_source_ar="آسف جدًا على الإزعاج، سامحني",
-        severity=2,
-        pattern_key="pragmatic.DIRECTNESS.over_softening",
-        recast_form="I won't be able to make it today",
-        recast_meaning="unable to attend today",
-    )
-    d1 = decide(analysis(over_soft), BUDGET, mk_state())
-    assert d1.action == "offer_card" and d1.wants_recast
-    d3 = decide(analysis(over_soft), BUDGET, mk_state(pattern_counts={"pragmatic.DIRECTNESS.over_softening": 2}))
-    assert "pragmatic.DIRECTNESS.over_softening" in d3.drill_patterns
-    assert suggest_drill_mode(over_soft) == "pragmatic_dilemma"

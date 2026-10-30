@@ -1,0 +1,698 @@
+{
+  "version": 1,
+  "note": "Seed set written by hand. Replace and extend with real learner utterances before trusting any number.",
+  "cases": [
+    {
+      "id": "neg_direct_refusal_with_reason",
+      "kind": "negative",
+      "tag": "direct_but_professional",
+      "scene": {
+        "register": "executive",
+        "relationship": "their manager",
+        "situation": "The manager is asking the learner to take on extra work this week."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I can't take that on this week. I'm at capacity until Friday.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Direct and complete: reason plus limit. Fine with a manager."
+    },
+    {
+      "id": "neg_direct_disagreement",
+      "kind": "negative",
+      "tag": "direct_but_professional",
+      "scene": {
+        "register": "executive",
+        "relationship": "their manager",
+        "situation": "The manager is asking the learner to take on extra work this week."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I don't agree. The numbers don't support it.",
+      "expect": {
+        "findings": []
+      },
+      "why": "A plain, reasoned disagreement is normal at work."
+    },
+    {
+      "id": "neg_direct_request_with_offer",
+      "kind": "negative",
+      "tag": "direct_but_professional",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Can you cover my shift Friday? I'll take yours Sunday.",
+      "expect": {
+        "findings": []
+      },
+      "why": "A direct request that offers something back."
+    },
+    {
+      "id": "neg_polite_decline",
+      "kind": "negative",
+      "tag": "direct_but_professional",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I'd love to, but I can't this week.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Ordinary, proportionate softening."
+    },
+    {
+      "id": "neg_short_no_markers",
+      "kind": "negative",
+      "tag": "short_natural_no_markers",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Sure. Tomorrow works. Seven?",
+      "expect": {
+        "findings": []
+      },
+      "why": "Short and fluent; no discourse markers is not a defect."
+    },
+    {
+      "id": "neg_short_reply",
+      "kind": "negative",
+      "tag": "short_natural_no_markers",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Yeah, I'll grab the tickets.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Complete, natural, brief."
+    },
+    {
+      "id": "neg_fragments",
+      "kind": "negative",
+      "tag": "short_natural_no_markers",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Long day. You?",
+      "expect": {
+        "findings": []
+      },
+      "why": "Fragments and ellipsis are normal speech."
+    },
+    {
+      "id": "neg_self_repair",
+      "kind": "negative",
+      "tag": "short_natural_no_markers",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I was going to - well, I thought we could, you know, start at nine.",
+      "expect": {
+        "findings": []
+      },
+      "why": "A normal restart with fillers."
+    },
+    {
+      "id": "neg_slang_with_friend",
+      "kind": "negative",
+      "tag": "register_fits_scene",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Dude, that's insane. I'm so down.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Slang that fits friends texting."
+    },
+    {
+      "id": "neg_banter_hyperbole",
+      "kind": "negative",
+      "tag": "register_fits_scene",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I'm literally dying, this line is taking forever.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Idiomatic hyperbole between friendly coworkers."
+    },
+    {
+      "id": "neg_formal_in_formal_scene",
+      "kind": "negative",
+      "tag": "register_fits_scene",
+      "scene": {
+        "register": "diplomatic",
+        "relationship": "a senior stakeholder",
+        "situation": "A formal review with a senior stakeholder."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I would suggest that we revisit the timeline before committing to a date.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Formal wording in a formal scene."
+    },
+    {
+      "id": "neg_correct_but_uncommon",
+      "kind": "negative",
+      "tag": "correct_but_uncommon",
+      "scene": {
+        "register": "analytical",
+        "relationship": "a colleague in a project meeting",
+        "situation": "A planning meeting about a product launch timeline."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "One could argue that the timeline is optimistic.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Slightly formal, fully natural in a meeting."
+    },
+    {
+      "id": "neg_correct_but_slightly_formal",
+      "kind": "negative",
+      "tag": "correct_but_uncommon",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I'd rather not, if it's all the same to you.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Correct and a little formal; a native would not react."
+    },
+    {
+      "id": "neg_british_variant",
+      "kind": "negative",
+      "tag": "natural_variety",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I'll ring you at the weekend.",
+      "expect": {
+        "findings": []
+      },
+      "why": "British variety, natural English."
+    },
+    {
+      "id": "neg_american_gotten",
+      "kind": "negative",
+      "tag": "natural_variety",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "She's gotten really good at it.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Standard American usage."
+    },
+    {
+      "id": "neg_final_preposition",
+      "kind": "negative",
+      "tag": "natural_variety",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Who are you going with?",
+      "expect": {
+        "findings": []
+      },
+      "why": "Sentence-final preposition and 'who' are normal speech."
+    },
+    {
+      "id": "neg_singular_they",
+      "kind": "negative",
+      "tag": "natural_variety",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Someone left their jacket here. They'll want it back.",
+      "expect": {
+        "findings": []
+      },
+      "why": "Singular 'they' is standard."
+    },
+    {
+      "id": "neg_gonna",
+      "kind": "negative",
+      "tag": "natural_variety",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I'm gonna grab a coffee, you want one?",
+      "expect": {
+        "findings": []
+      },
+      "why": "Spoken reductions are natural here."
+    },
+    {
+      "id": "neg_proportionate_cushioning",
+      "kind": "negative",
+      "tag": "proportionate_softening",
+      "scene": {
+        "register": "diplomatic",
+        "relationship": "a client",
+        "situation": "A call with a client about a delayed delivery."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I'm really sorry to bring this up, but I think we might miss the deadline. Could we talk about options?",
+      "expect": {
+        "findings": []
+      },
+      "why": "Bad news to a client: heavy cushioning is right."
+    },
+    {
+      "id": "neg_single_please",
+      "kind": "negative",
+      "tag": "proportionate_softening",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Could you send me the file, please?",
+      "expect": {
+        "findings": []
+      },
+      "why": "One 'could you' and one 'please' is ordinary politeness."
+    },
+    {
+      "id": "neg_religious_formula",
+      "kind": "negative",
+      "tag": "cultural_formula",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "God willing, I'll see you Friday.",
+      "expect": {
+        "findings": []
+      },
+      "why": "A formula the learner chose; not an error."
+    },
+    {
+      "id": "neg_stt_artifacts",
+      "kind": "negative",
+      "tag": "speech_to_text",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "voice",
+      "learner_message": "yeah i think thats right we should probably move it to thursday",
+      "expect": {
+        "findings": []
+      },
+      "why": "Lowercase and no punctuation are transcription artifacts."
+    },
+    {
+      "id": "pos_light_verb",
+      "kind": "positive",
+      "tag": "collocation",
+      "scene": {
+        "register": "analytical",
+        "relationship": "a colleague in a project meeting",
+        "situation": "A planning meeting about a product launch timeline."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I need to take a decision by Friday.",
+      "expect": {
+        "findings": [
+          {
+            "span": "take a decision",
+            "categories": [
+              "collocation"
+            ]
+          }
+        ]
+      },
+      "why": "English says make a decision."
+    },
+    {
+      "id": "pos_uncountable_work",
+      "kind": "positive",
+      "tag": "grammar",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I have many works to finish today.",
+      "expect": {
+        "findings": [
+          {
+            "span": "many works",
+            "categories": [
+              "grammar",
+              "collocation"
+            ]
+          }
+        ]
+      },
+      "why": "'Work' (tasks) is uncountable."
+    },
+    {
+      "id": "pos_bare_refusal",
+      "kind": "positive",
+      "tag": "pragmatic",
+      "scene": {
+        "register": "executive",
+        "relationship": "their manager",
+        "situation": "The manager is asking the learner to take on extra work this week."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "No. I can't do it.",
+      "expect": {
+        "findings": [
+          {
+            "span": "No. I can't do it.",
+            "categories": [
+              "pragmatic"
+            ]
+          }
+        ]
+      },
+      "why": "To a manager a refusal with no reason and no way forward is curt."
+    },
+    {
+      "id": "pos_over_softening",
+      "kind": "positive",
+      "tag": "pragmatic",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Excuse me, sorry, if you don't mind, if it's possible, could you maybe possibly send me the file, please?",
+      "expect": {
+        "findings": [
+          {
+            "span": "if you don't mind, if it's possible, could you maybe possibly",
+            "categories": [
+              "pragmatic"
+            ]
+          }
+        ]
+      },
+      "why": "Politeness stacked until the request is lost."
+    },
+    {
+      "id": "pos_written_connector",
+      "kind": "positive",
+      "tag": "register",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Moreover, I would like to inform you that I am hungry.",
+      "expect": {
+        "findings": [
+          {
+            "span": "Moreover",
+            "categories": [
+              "register",
+              "pragmatic"
+            ]
+          }
+        ]
+      },
+      "why": "Written connector and stiff phrasing in a casual chat."
+    },
+    {
+      "id": "pos_please_be_informed",
+      "kind": "positive",
+      "tag": "register",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Please be informed that the meeting is moved to Thursday.",
+      "expect": {
+        "findings": [
+          {
+            "span": "Please be informed",
+            "categories": [
+              "register",
+              "pragmatic"
+            ]
+          }
+        ]
+      },
+      "why": "Bureaucratic opener between peers."
+    },
+    {
+      "id": "pos_address_term",
+      "kind": "positive",
+      "tag": "pragmatic",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Hello my friend, can you send me the report?",
+      "expect": {
+        "findings": [
+          {
+            "span": "my friend",
+            "categories": [
+              "pragmatic",
+              "register"
+            ]
+          }
+        ]
+      },
+      "why": "'My friend' to a coworker can sound patronising."
+    },
+    {
+      "id": "pos_make_a_party",
+      "kind": "positive",
+      "tag": "collocation",
+      "scene": {
+        "register": "casual",
+        "relationship": "a close friend",
+        "situation": "Two friends making weekend plans over text."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I will make a party tomorrow.",
+      "expect": {
+        "findings": [
+          {
+            "span": "make a party",
+            "categories": [
+              "collocation"
+            ]
+          }
+        ]
+      },
+      "why": "English says throw or have a party."
+    },
+    {
+      "id": "pos_am_agree",
+      "kind": "positive",
+      "tag": "grammar",
+      "scene": {
+        "register": "analytical",
+        "relationship": "a colleague in a project meeting",
+        "situation": "A planning meeting about a product launch timeline."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I'm agree with you.",
+      "expect": {
+        "findings": [
+          {
+            "span": "I'm agree",
+            "categories": [
+              "grammar"
+            ]
+          }
+        ]
+      },
+      "why": "'Agree' is a verb, not an adjective: I agree."
+    },
+    {
+      "id": "pos_said_me",
+      "kind": "positive",
+      "tag": "grammar",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "She said me that she was busy.",
+      "expect": {
+        "findings": [
+          {
+            "span": "said me",
+            "categories": [
+              "grammar"
+            ]
+          }
+        ]
+      },
+      "why": "She told me / she said that."
+    },
+    {
+      "id": "pos_missing_article",
+      "kind": "positive",
+      "tag": "grammar",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I have meeting at three.",
+      "expect": {
+        "findings": [
+          {
+            "span": "have meeting",
+            "categories": [
+              "grammar"
+            ]
+          }
+        ]
+      },
+      "why": "Article missing: I have a meeting."
+    },
+    {
+      "id": "pos_comprehension",
+      "kind": "positive",
+      "tag": "comprehension",
+      "scene": {
+        "register": "casual",
+        "relationship": "a coworker they get along with",
+        "situation": "Two coworkers chatting at the next desks about the day."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "Yesterday I lost the bus and so I was late for the meeting then angry the boss.",
+      "expect": {
+        "findings": [
+          {
+            "span": "then angry the boss",
+            "categories": [
+              "comprehension",
+              "grammar"
+            ]
+          }
+        ]
+      },
+      "why": "A listener would not know who was angry at whom."
+    },
+    {
+      "id": "pos_rhetorical_intensity",
+      "kind": "positive",
+      "tag": "pragmatic",
+      "scene": {
+        "register": "analytical",
+        "relationship": "a colleague in a project meeting",
+        "situation": "A planning meeting about a product launch timeline."
+      },
+      "cefr": "B2",
+      "modality": "text",
+      "learner_message": "I swear to God this is the worst meeting in the history of the world, I will die.",
+      "expect": {
+        "findings": [
+          {
+            "span": "I swear to God",
+            "categories": [
+              "pragmatic",
+              "register"
+            ]
+          }
+        ]
+      },
+      "why": "Over-intense for a work meeting."
+    }
+  ]
+}

@@ -50,7 +50,10 @@ ANALYST_SYSTEM_PROMPT = """You are a fast, silent linguistic & pragmatic diagnos
 Rules:
 1. If `learner_message` is natural and effective, return `"diagnostics": []`.
 2. Otherwise return up to 3 diagnostics ordered by impact. `original_span` MUST be an exact substring of `learner_message`.
-3. Arabic L1 codes (`l1_pattern` & `l1_source_ar`):
+3. False-Alarm Calibration & Directness (Groups 4 & 6):
+   - NEVER flag idiomatic, acceptable spoken American English just to sound "fancier" or "softer".
+   - Direct is NOT rude, and softer is NOT always better: in `direct` or `executive` contexts, crisp directness is a strength; only flag pragmatics when a bare imperative or blunt refusal violates the active relationship/register or when the learner caves in (`pragmatic_cave_in: true`).
+4. Arabic L1 codes (`l1_pattern` & `l1_source_ar`):
    - `COLLOC_LIGHT_VERB`: "did an effort", "took a decision", "do a mistake" («بذل جهدًا»، «اتّخذ قرارًا») -> `made an effort`, `made a decision`.
    - `COLLOC_PREP_VERB`: "discuss about", "explain me", "reply my message", "reach to" («ناقش في»، «شرح لي»، «ردّ على») -> `discuss`, `explain to me`, `reply to`.
    - `COLLOC_OPEN_CLOSE`: "open/close the AC, light, TV" («افتح/أغلق المكيف أو النور») -> `turn on / turn off`.

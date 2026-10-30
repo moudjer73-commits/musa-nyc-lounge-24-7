@@ -57,22 +57,21 @@ The chosen English word matches the range of the Arabic word, not of the English
 
 DIRECTNESS
 Bare imperatives, "I want", "you must", flat refusals and "why" questions where spoken English expects a modal, a softener, a past-tense or progressive softening, or a question frame. Arabic politeness is often carried by formulas and address terms; English spoken politeness is carried by grammar and hedging.
-
-Also assess the opposite transfer: **over-softening**. Repeated apologies, stacked hedges,
-or excessive permission-seeking can make a clear, reasonable request or refusal sound
-uncertain or unnecessarily deferential. Do not flag one ordinary softener. Use the
-pattern key `pragmatic.DIRECTNESS.over_softening` only when the excess is clear in context.
-A concise professional refusal can be fully appropriate; do not require a cushion when a
-direct answer plus a clear reason fits the relationship and stakes.
-- Positive match (flag as `pragmatic.DIRECTNESS.over_softening`): "I am really so sorry to bother you, please forgive me, if you don't mind maybe I cannot take this task today" (stacked apologies + permission-seeking + hedge on a legitimate refusal).
-- Negative match (do NOT flag): "I'd love to help, but I'm at capacity today" (one natural cushion + clear reason) or "I can't take that on this week—my plate's full until Friday" (direct professional refusal).
 - "Give me the menu." → "Could I get the menu?" / "Can we see the menu?"
 - "I want a coffee." → "I'll have a coffee." / "Can I get a coffee?"
 - "Tell me your opinion." → "I'd love to hear what you think."
 - "You must do X." → "You might want to do X." / "Have you thought about X?"
-- "No, I can't." → "I'd love to, but I can't." / "I wish I could, but…"
+- A refusal that stops at "No." or "No, I can't." with no reason and no way forward, to someone senior or distant → "I can't take that on this week." (direct and complete) / "I'd love to, but I can't." / "I wish I could, but…" (warmer). Offer the direct, complete form first.
 - "Why you didn't call me?" → "Hey, I was trying to reach you. Everything okay?"
-Context rule: bluntness between close friends is often fine. Judge against the scene's relationship and register before flagging.
+Context rules: bluntness between close friends is often fine. English at work is also often direct: a sentence that carries its reason or its limit ("That won't work for me", "I can't take that on this week", "I don't agree, the numbers don't support it") is complete and professional even with a manager, so do not flag it. Flag only the bare form that stops after the "no" or the demand. Judge against the scene's relationship and register before flagging.
+
+OVER_SOFTENING
+The mirror of DIRECTNESS: politeness stacked until the message gets lost or the speaker sounds unsure, where English wants one plain, polite sentence. Arabic courtesy formulas often come in strings (لو سمحت، إن أمكن، إذا ما عندك مانع), and carried over word for word they pile up.
+- "Excuse me, sorry, if you don't mind, if it's possible, could you maybe possibly send me the file, please?" → "Could you send me the file?"
+- "I think maybe we could perhaps try to start on Monday, if that's okay" for a decision that is the speaker's own → "Let's start on Monday."
+- Asking permission for something that is the speaker's own call: "Is it okay if I send you my update?" → "I'll send you my update."
+- "I'm very sorry, I apologize, sorry for disturbing you" for a one-line question → "Sorry, quick question."
+Context rule: heavy cushioning is RIGHT for a real imposition, bad news, or disagreeing with someone senior. Flag only when the stack is out of proportion to the situation or hides the point, usually severity 1 (2 only if the listener would read the speaker as unsure, or the point is lost). A single "please", "could you", "I think" or "sorry" is ordinary politeness and is never flagged.
 
 RHETORICAL_INTENSITY
 Emphasis built from absolutes, oaths, repetition, superlatives and stacked gratitude, which sounds hyperbolic or heavy in casual or professional English.
@@ -99,8 +98,7 @@ Forms of address transferred from Arabic social norms.
 - "Sir / Madam" in a casual scene → a name or nothing
 
 DISCOURSE_MARKER_GAP
-Spoken connective tissue that is missing, mismatched or too formal.
-- Do not flag a learner merely for using few or no fillers. Their absence is not an error; assess whether the spoken turn is coherent and appropriately connected.
+Spoken connective tissue that is present but mismatched, or too formal. NEVER flag the absence of "so, well, I mean, you know, kind of, I guess, honestly": many fluent native speakers use very few, and an absence has no words to quote. Only flag what the learner actually said:
 - Written connectors in speech: "moreover", "furthermore", "in addition", "in conclusion", "on the other hand" in casual talk.
 - Opening every turn with "In my opinion" / "As for me" (أما أنا) / "From my point of view" → "Honestly," / "Personally," / "For me," or just say it.
 - "Frankly speaking" (بصراحة) → "Honestly" / "To be honest"

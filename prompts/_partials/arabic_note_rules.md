@@ -26,8 +26,8 @@ The Arabic note exists for one job: to make a subtle semantic or pragmatic diffe
   في العربية نقول «اتّخذ قرارًا»، أما الإنجليزية فتختار make مع decision، وفي الكلام اليومي كثيرًا make the call.
 - (open the light → turn on the light)
   الفعل «فتح» في «افتح النور» لا ينتقل إلى الإنجليزية؛ الضوء هناك يُشغَّل ويُطفأ: turn on / turn off.
-- (No, I can't → I'd love to, but I can't)
-  «لا أستطيع» وحدها مقبولة بين الأصدقاء، لكن الإنجليزية في العمل تُليّنها عادةً بتمهيد مثل I'd love to, but.
+- (No. I can't do it. → I can't take that on this week.)
+  «لا أستطيع» وحدها كافية بين الأصدقاء، أما مع المدير فالإنجليزية تُتبعها عادةً بسبب أو بحدّ واضح، وقد تبقى مباشرة.
 - (married with → married to)
   في العربية «متزوج بـ»، والإنجليزية تستعمل to هنا: married to.
 - (my friend as address → first name)

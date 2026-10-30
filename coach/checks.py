@@ -14,7 +14,7 @@ import re
 import unicodedata
 from html import unescape
 from html.parser import HTMLParser
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from .models import Analysis, DirectorBrief, Expression, Finding, ResponderReply, UsedTarget
 
@@ -171,7 +171,7 @@ def arabic_note_problems(note: str) -> list[str]:
 L1_PATTERN_CODES = frozenset(
     {
         "COLLOC_LIGHT_VERB", "PREP_CALQUE", "IDIOM_CALQUE", "SEMANTIC_RANGE", "DIRECTNESS",
-        "RHETORICAL_INTENSITY", "OVER_FORMAL", "ADDRESS_TERM", "DISCOURSE_MARKER_GAP",
+        "RHETORICAL_INTENSITY", "OVER_FORMAL", "OVER_SOFTENING", "ADDRESS_TERM", "DISCOURSE_MARKER_GAP",
         "SYNTAX_CALQUE", "COUNTABILITY", "TENSE_ASPECT", "SPEECH_ACT_RITUAL",
     }
 )
@@ -386,6 +386,44 @@ def validate_telegram_html(html: str, *, max_visible: int, allow_arabic: bool = 
         problems += [f"arabic spoiler: {p}" for p in arabic_note_problems_in_spoiler(m.group(1))]
     if not allow_arabic and _AR_LETTER_RE.search(visible):
         problems.append("Arabic text present but include_arabic is false")
+    return problems
+
+
+def debrief_unsupported_numbers(html: str, payload: dict, grounding: Sequence[Any] = ()) -> list[str]:
+    """Every figure in the debrief must be declared, and every declaration must be true.
+
+    The writer lists each number it takes from `session_facts` as `{field, value}`. The code checks the
+    declaration against the facts (so "asked 7 questions" fails when `questions_asked` is 1, even if some
+    other field happens to equal 7) and rejects any figure in the text that nobody declared. Digits that
+    belong to the learner's own phrases in `items`/`wins` or to the scene title are free.
+
+    Limit: a writer that declares a TRUE field but attaches the number to the wrong noun
+    ("asked 7 questions" while declaring `avg_words`=7) is not caught; that rests on the prompt.
+    """
+    import json as _json
+    from html import unescape
+
+    facts = payload.get("session_facts") or {}
+    problems: list[str] = []
+    declared: set[str] = set()
+    for g in grounding:
+        field, value = getattr(g, "field", None), getattr(g, "value", None)
+        declared.add(str(value))        # a wrong declaration is reported once, below, not again as "undeclared"
+        if field not in facts or facts.get(field) != value:
+            actual = facts.get(field, "missing")
+            problems.append(f"grounding {field}={value} does not match session_facts ({field}={actual})")
+
+    free_text = [str(payload.get("scene_title", ""))]
+    for item in payload.get("items", []):
+        free_text += [str(item.get("span", "")), str(item.get("recast_form") or "")]
+        free_text += [str(a.get("text", "")) for a in item.get("alternatives", [])]
+    free_text += [str(w.get("expression", "")) for w in payload.get("wins", [])]
+    free = set(re.findall(r"\d+", _json.dumps(free_text, ensure_ascii=False)))
+
+    cited = re.findall(r"\d+", unescape(strip_tags(html)))
+    for n in dict.fromkeys(cited):
+        if n not in declared and n not in free:
+            problems.append(f"number {n} is not declared in grounding; list it as {{field, value}} from session_facts or leave it out")
     return problems
 
 

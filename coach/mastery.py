@@ -16,7 +16,9 @@ UNSEEN -> SEEN -> RECOGNIZED -> PRODUCED_PROMPTED -> PRODUCED_SPONTANEOUS -> STA
                         conversation, and it was not an echo of what the character or a card
                         had just said. Only free scenes can write `spontaneous` events.
   STABLE                spontaneous correct use in >= 3 different sessions, in >= 2 different
-                        registers, with the first and last qualifying events >= 7 days apart.
+                        FORMALITY buckets (informal / neutral / formal, see registers.py; casual and
+                        warm count as one), with the first and last qualifying events >= 7 days
+                        apart. An expression that is only natural in one bucket needs just one.
 
 Lapses and decay
 ----------------
@@ -39,9 +41,11 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterable, Sequence
 
+from .registers import formality_of
+
 DAY = 86400.0
 STABLE_MIN_SESSIONS = 3
-STABLE_MIN_REGISTERS = 2
+STABLE_MIN_FORMALITIES = 2
 STABLE_MIN_SPAN_DAYS = 7
 STABLE_DECAY_DAYS = 90
 MAX_LIGHT_HINT_LEVEL = 2          # hint_level 3 = the answer was revealed
@@ -61,37 +65,6 @@ class Stage(IntEnum):
     STABLE = 5
 
 
-REGISTER_FORMALITY_BAND: dict[str, str] = {
-    "casual": "informal",
-    "warm": "informal",
-    "witty": "informal",
-    "analytical": "neutral",
-    "diplomatic": "professional",
-    "executive": "professional",
-}
-
-
-def infer_formality_band(register: str | None, explicit_formality: str | None = None) -> str | None:
-    if explicit_formality:
-        return explicit_formality
-    if not register:
-        return None
-    return REGISTER_FORMALITY_BAND.get(register, register)
-
-
-def infer_relationship(role_in_scene: str | None) -> str | None:
-    if not role_in_scene:
-        return None
-    low = role_in_scene.lower()
-    if any(k in low for k in ("manager", "boss", "director", "lead", "supervisor", "client", "dean", "professor")):
-        return "authority"
-    if any(k in low for k in ("friend", "roommate", "brother", "sister", "cousin", "partner")):
-        return "close"
-    if any(k in low for k in ("stranger", "receptionist", "clerk", "agent", "acquaintance", "neighbor")):
-        return "stranger"
-    return "peer"
-
-
 @dataclass(frozen=True)
 class Event:
     ts: float
@@ -102,40 +75,27 @@ class Event:
     naturalness: int | None = None
     hint_level: int | None = None
     outcome: str | None = None      # target_correct|target_attempt|equivalent|miss|None
-    formality: str | None = None    # informal|neutral|professional
-    relationship: str | None = None # peer|close|authority|stranger
 
 
 def _is_good_spontaneous(e: Event) -> bool:
     return e.type == "spontaneous" and bool(e.correct) and (e.naturalness is None or e.naturalness >= 2)
 
 
-def stable_criteria_met(spontaneous_events: Sequence[Event]) -> bool:
+def stable_criteria_met(spontaneous_events: Sequence[Event], *, min_formalities: int = STABLE_MIN_FORMALITIES) -> bool:
     if not spontaneous_events:
         return False
     evs = sorted(spontaneous_events, key=lambda e: e.ts)
     sessions = {e.session_id for e in evs if e.session_id is not None}
-    registers = {e.register for e in evs if e.register}
-    formality_bands = {
-        infer_formality_band(e.register, e.formality)
-        for e in evs
-        if infer_formality_band(e.register, e.formality)
-    }
-    relationships = {e.relationship for e in evs if e.relationship}
+    formalities = {formality_of(e.register) for e in evs} - {None}
     span_days = (evs[-1].ts - evs[0].ts) / DAY
-    has_context_diversity = (
-        len(formality_bands) >= STABLE_MIN_REGISTERS
-        or (len(relationships) >= 2 and len(registers) >= STABLE_MIN_REGISTERS)
-    )
     return (
         len(sessions) >= STABLE_MIN_SESSIONS
-        and len(registers) >= STABLE_MIN_REGISTERS
-        and has_context_diversity
+        and len(formalities) >= min_formalities
         and span_days >= STABLE_MIN_SPAN_DAYS
     )
 
 
-def compute_stage(events: Iterable[Event], now: float) -> Stage:
+def compute_stage(events: Iterable[Event], now: float, *, min_formalities: int = STABLE_MIN_FORMALITIES) -> Stage:
     evs = sorted(events, key=lambda e: e.ts)
     if not evs:
         return Stage.UNSEEN
@@ -152,7 +112,7 @@ def compute_stage(events: Iterable[Event], now: float) -> Stage:
     spontaneous = [e for e in evs if _is_good_spontaneous(e)]
     if spontaneous:
         stage = max(stage, Stage.PRODUCED_SPONTANEOUS)
-        if stable_criteria_met(spontaneous):
+        if stable_criteria_met(spontaneous, min_formalities=min_formalities):
             decayed = (now - spontaneous[-1].ts) > STABLE_DECAY_DAYS * DAY
             stage = max(stage, Stage.PRODUCED_SPONTANEOUS if decayed else Stage.STABLE)
 

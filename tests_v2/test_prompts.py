@@ -11,7 +11,7 @@ from coach import prompt_loader as pl
 from coach.checks import CARD_MAX_VISIBLE, DEBRIEF_MAX_VISIBLE, validate_telegram_html
 from coach.models import (
     Analysis, DilemmaEval, DilemmaSetup, Finding, HtmlOut, InterlocutorReply, PersonaCard, RegisterShiftEval,
-    RegisterShiftSetup, ResponderReply, SceneBible, ThinkAloudEval, ThinkAloudSetup, WorkoutEval, WorkoutSetup,
+    RegisterShiftSetup, ResponderReply, SceneBible, SessionFacts, Grounding, DebriefOut, ThinkAloudEval, ThinkAloudSetup, WorkoutEval, WorkoutSetup,
 )
 
 ALL_PROMPTS = [
@@ -90,7 +90,7 @@ def test_mode_sections_load_separately(mode, sections, example_scene):
     for sec in sections:
         kwargs = {}
         if (mode, sec) == ("think_aloud", "INTERLOCUTOR"):
-            kwargs = {"persona_name": "Priya", "persona_card": pl.voice_only_persona_json(example_scene.persona)}
+            kwargs = {"persona_name": "Priya", "persona_card": pl.persona_card_json(example_scene.persona)}
         texts[sec] = pl.load_mode_prompt(mode, sec, **kwargs)
         assert texts[sec].strip() and "{{" not in texts[sec]
     assert len(set(texts.values())) == len(texts)     # sections are different prompts
@@ -187,6 +187,9 @@ def _field_names(model) -> set[str]:
         (ThinkAloudEval, "mode_think_aloud.md"),
         (WorkoutSetup, "mode_phrase_workout.md"),
         (WorkoutEval, "mode_phrase_workout.md"),
+        (SessionFacts, "debrief_writer_system.md"),
+        (Grounding, "debrief_writer_system.md"),
+        (DebriefOut, "debrief_writer_system.md"),
     ],
 )
 def test_every_schema_field_is_documented_in_its_prompt(model, prompt):
@@ -202,64 +205,3 @@ def test_director_brief_fields_are_documented_in_the_responder_prompt():
     missing = [f for f in DirectorBrief.model_fields if f"`{f}`" not in text and f != "clarification_focus"]
     assert not missing, missing
     assert "clarification_focus" in text
-
-
-def test_think_aloud_uses_voice_only_persona(example_scene):
-    from coach.prompt_loader import voice_only_persona_json
-    data = json.loads(voice_only_persona_json(example_scene.persona))
-    assert "name" in data and "voice" in data
-    assert "role_in_scene" not in data
-    assert "wants_in_scene" not in data
-    assert "attitude_to_learner" in data
-
-
-def test_analyst_does_not_treat_absent_fillers_as_an_error():
-    taxonomy = pl.load_text("_partials/l1_taxonomy.md")
-    assert "Do not flag a learner merely for using few or no fillers" in taxonomy
-    assert 'Almost no "so, well, I mean' not in taxonomy
-
-
-def test_phrase_vault_register_tags_include_all_alternatives():
-    from coach.pipeline import expression_from_finding
-    from coach.models import Alternative
-    finding = Finding(
-        span="I disagree",
-        category="pragmatic",
-        severity=2,
-        pattern_key="pragmatic.DIRECTNESS.test",
-        recast_form="I see your point, but...",
-        recast_meaning="polite disagreement",
-        alternatives=[
-            Alternative(text="I see your point, but...", register="diplomatic"),
-            Alternative(text="I get that, but...", register="casual"),
-            Alternative(text="I understand the concern; however...", register="executive"),
-        ],
-    )
-    expr = expression_from_finding(finding)
-    assert expr.register_tags == ["diplomatic", "casual", "executive"]
-
-
-def test_phrase_vault_form_scopes_filter_by_register_compatibility():
-    from coach.pipeline import expression_from_finding
-    from coach.models import Alternative
-    finding = Finding(
-        span="No, I can't",
-        category="pragmatic",
-        severity=2,
-        pattern_key="pragmatic.DIRECTNESS.bare_refusal",
-        recast_form="my plate's pretty full",
-        recast_meaning="too busy to take on more",
-        alternatives=[
-            Alternative(text="my plate's pretty full", register="diplomatic", nuance="warm", best_for="a manager"),
-            Alternative(text="I'm at capacity this week", register="executive", nuance="formal", best_for="senior leadership"),
-            Alternative(text="Honestly, I'm swamped", register="casual", nuance="relaxed", best_for="close friends"),
-        ],
-    )
-    expr = expression_from_finding(finding)
-    assert len(expr.form_scopes) == 3
-    exec_forms = expr.compatible_forms_for("executive")
-    assert "I'm at capacity this week" in exec_forms
-    assert "Honestly, I'm swamped" not in exec_forms
-    casual_forms = expr.compatible_forms_for("casual")
-    assert "Honestly, I'm swamped" in casual_forms
-    assert "I'm at capacity this week" not in casual_forms

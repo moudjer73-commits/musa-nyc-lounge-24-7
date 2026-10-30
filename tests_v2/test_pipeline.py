@@ -310,17 +310,3 @@ def test_expression_ids_are_stable_for_the_same_phrase():
     assert a.id == b.id and a.form == "my plate's pretty full"
     assert "Honestly, I'm swamped right now." in a.acceptable_forms or a.acceptable_forms == ["my plate's pretty full"]
     assert expression_from_finding(mk_finding(recast_form=None, alternatives=[])) is None
-
-
-def test_end_scene_session_facts_include_questions_and_beats_reached(db, example_scene):
-    pipe, llm, sid = make(db, example_scene)
-    turn(pipe, llm, sid, "Which deck are we talking about?")
-    turn(pipe, llm, sid, "Okay, that sounds fair, right?")
-    llm.push("debrief", {"html": "You asked a clarifying question early on."})
-    asyncio.run(pipe.end_scene(sid))
-    payload = json.loads(llm.calls_for("debrief")[-1].user)
-    facts = payload["session_facts"]
-    assert facts["learner_questions_asked"] == 1
-    assert facts["learner_question_turns"] == 1
-    assert "beats_reached" in facts and "beats_planned_count" in facts
-    assert facts["beats_planned_count"] == len(example_scene.scene.beats)

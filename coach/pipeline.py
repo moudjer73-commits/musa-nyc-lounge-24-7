@@ -27,15 +27,15 @@ from html import escape
 from typing import Any, Callable
 
 from .checks import (
-    CARD_MAX_VISIBLE, DEBRIEF_MAX_VISIBLE, check_reply, first_word, forbidden_phrases_for, fuzzy_contains,
-    normalize_text, real_questions, sanitize_analysis, validate_telegram_html, word_count,
+    CARD_MAX_VISIBLE, DEBRIEF_MAX_VISIBLE, check_reply, debrief_unsupported_numbers, first_word, forbidden_phrases_for, fuzzy_contains,
+    normalize_text, sanitize_analysis, validate_telegram_html, word_count,
 )
 from .db import Database, TargetCapError
 from .director import build_brief
 from .llm import DEFAULT_TEMPERATURES, LLMClient, LLMError
-from .mastery import Stage, infer_formality_band, infer_relationship
+from .mastery import Stage
 from .models import (
-    AlternativeScope, Analysis, Expression, Finding, HtmlOut, PersonaCard, PersonaScene, ResponderReply, SceneBible, TurnResult,
+    Analysis, DebriefOut, Expression, Finding, HtmlOut, PersonaCard, PersonaScene, ResponderReply, SceneBible, TurnResult, Variant,
 )
 from .policy import CorrectionBudget, Decision, decide, suggest_drill_mode
 from .prompt_loader import (
@@ -73,60 +73,31 @@ def hesitation_from_voice(voice_metrics: dict[str, Any] | None, words: int) -> f
     return round(min(1.0, rate / 4.0), 3)
 
 
-def _excluded_registers_for(reg: str, nuance: str, best_for: str) -> list[str]:
-    low = f"{nuance} {best_for}".lower()
-    excluded: list[str] = []
-    if reg in ("casual", "witty") or "friends" in low or "informal" in low or "peer" in low:
-        if "manager" not in low and "any" not in low:
-            excluded.extend(["executive", "diplomatic"])
-    if reg == "executive" or "avoid with peers" in low or "formal" in low:
-        excluded.extend(["casual", "warm", "witty"])
-    return list(dict.fromkeys(excluded))
+def expression_from_finding(f: Finding, scene_register: str | None = None) -> Expression | None:
+    """Turn the natural form a card or recast showed into a Phrase Vault item.
 
-
-def expression_from_finding(f: Finding) -> Expression | None:
-    """Turn the natural form a card or recast showed into a Phrase Vault item."""
+    The range of the form itself comes from two kinds of evidence only: alternatives that actually
+    CONTAIN it, and the scene it was shown in (the Analyst defines `recast_form` as the natural form
+    for that scene's register). Never from the other alternatives: "I'm swamped" being natural in a
+    casual refusal says nothing about "my plate's pretty full" there. Every other short alternative
+    becomes a variant that keeps its own range.
+    """
     form = f.recast_form or (f.alternatives[0].text if f.alternatives else None)
     if not form:
         return None
     expr_id = "x_" + hashlib.sha1(normalize_text(form).encode()).hexdigest()[:10]
-    short_alts = [a.text for a in f.alternatives if word_count(a.text) <= 7]
-    tags = list(dict.fromkeys(a.register for a in f.alternatives if a.register != "neutral"))
-    scopes: list[AlternativeScope] = []
-    seen_forms: set[str] = set()
-    for a in f.alternatives:
-        if word_count(a.text) <= 7 and a.text not in seen_forms:
-            seen_forms.add(a.text)
-            scopes.append(
-                AlternativeScope(
-                    form=a.text,
-                    register=a.register,
-                    nuance=a.nuance,
-                    best_for=a.best_for,
-                    excluded_registers=_excluded_registers_for(a.register, a.nuance, a.best_for),
-                )
-            )
-    if form not in seen_forms:
-        primary_reg = f.alternatives[0].register if f.alternatives else "neutral"
-        scopes.insert(
-            0,
-            AlternativeScope(
-                form=form,
-                register=primary_reg,
-                nuance=f.recast_meaning or "",
-                best_for="general spoken use",
-                excluded_registers=[],
-            ),
-        )
+    containing = [a for a in f.alternatives if fuzzy_contains(a.text, form)]
+    tags = list(dict.fromkeys([*(a.register for a in containing), *([scene_register] if scene_register else [])]))
+    others = [a for a in f.alternatives if a not in containing and word_count(a.text) <= 7]
     hint = f"a moment where the learner would naturally need to say something meaning: {f.recast_meaning}" if f.recast_meaning else None
     return Expression(
         id=expr_id,
         form=form,
         meaning=f.recast_meaning or "",
         register_tags=tags,
+        variants=[Variant(form=a.text, register_tags=[a.register]) for a in others],
         l1_trap=f.span,
-        acceptable_forms=list(dict.fromkeys([form, *short_alts])),
-        form_scopes=scopes,
+        acceptable_forms=list(dict.fromkeys([form, *(a.text for a in others)])),
         opportunity_hint=hint,
     )
 
@@ -169,7 +140,9 @@ class CoachPipeline:
             },
             "register_hint": register_hint,
             "stealth_targets": [
-                {"id": t.id, "expression": t.form, "opportunity_hint": t.opportunity_hint or t.meaning} for t in targets
+                {"id": t.id, "expression": t.form, "register_tags": t.register_tags,
+                 "opportunity_hint": t.opportunity_hint or t.meaning}
+                for t in targets
             ],
             "recent_scenes": recent_scenes or [],
             "english_variety": self.config.english_variety,
@@ -232,10 +205,7 @@ class CoachPipeline:
         decision = decide(analysis, self.budget, state)
 
         finding_id = self._persist_findings(user_id, session_id, turn_id, analysis, decision, now)
-        self._record_target_use(
-            user_id, session_id, turn_id, analysis, register, state.mode, now,
-            relationship=infer_relationship(persona.role_in_scene),
-        )
+        self._record_target_use(user_id, session_id, turn_id, analysis, register, state.mode, now)
 
         due_ids = {e.id for e in self.db.due_expressions(user_id, now)}
         brief = build_brief(
@@ -362,7 +332,6 @@ class CoachPipeline:
 
     def _record_target_use(
         self, user_id: int, session_id: int, turn_id: int, analysis: Analysis, register: str, mode: str, now: float,
-        *, relationship: str | None = None,
     ) -> None:
         """Spontaneous events come ONLY from free scenes and ONLY when the Analyst saw non-echo use."""
         for u in analysis.used_targets:
@@ -371,9 +340,7 @@ class CoachPipeline:
             self.db.record_event(
                 user_id, u.target_id, "spontaneous" if mode == "open_scene" else "prompted", now,
                 correct=u.correct, outcome="target_correct" if u.correct else "target_attempt",
-                naturalness=u.naturalness, register=register,
-                formality=infer_formality_band(register), relationship=relationship,
-                session_id=session_id, turn_id=turn_id, mode=mode,
+                naturalness=u.naturalness, register=register, session_id=session_id, turn_id=turn_id, mode=mode,
             )
 
     # ---------------------------------------------------------------- responder
@@ -408,7 +375,7 @@ class CoachPipeline:
         self, user_id: int, finding: Finding, now: float, session_id: int | None, turn_id: int | None,
         register: str | None, *, activate: bool,
     ) -> Expression | None:
-        expr = expression_from_finding(finding)
+        expr = expression_from_finding(finding, register)
         if expr is None:
             return None
         self.db.upsert_expression(user_id, expr, now, source="card" if activate else "recast")
@@ -483,59 +450,29 @@ class CoachPipeline:
         persona, scene = self.db.load_persona_scene(session_id)
         items = self.db.recap_items(session_id, 3)
         include_arabic = bool(user["include_arabic"])
-        all_turns = self.db.recent_turns(session_id, limit=10000)
-        learner_messages = [t for t in all_turns if t.get("speaker") == "learner"]
-        learner_lengths = [word_count(t.get("text", "")) for t in learner_messages]
-        used_beats = self.db.used_beat_ids(session_id)
-        beats_reached = [b.id for b in scene.beats if b.id in used_beats]
-        question_counts_per_turn = [len(real_questions(t.get("text", ""))) for t in learner_messages]
-        registers_used = list(
-            dict.fromkeys(
-                t.get("meta", {}).get("register")
-                for t in all_turns
-                if t.get("speaker") == "persona" and t.get("meta", {}).get("register")
-            )
-        )
-        session_facts = {
-            "learner_turn_count": len(learner_messages),
-            "average_learner_turn_words": round(sum(learner_lengths) / len(learner_lengths), 1) if learner_lengths else None,
-            "longest_learner_turn_words": max(learner_lengths) if learner_lengths else None,
-            "first_half_average_words": round(sum(learner_lengths[:max(1, len(learner_lengths)//2)]) / len(learner_lengths[:max(1, len(learner_lengths)//2)]), 1) if learner_lengths else None,
-            "second_half_average_words": round(sum(learner_lengths[len(learner_lengths)//2:]) / len(learner_lengths[len(learner_lengths)//2:]), 1) if len(learner_lengths) >= 2 else None,
-            "learner_questions_asked": sum(question_counts_per_turn),
-            "learner_question_turns": sum(1 for c in question_counts_per_turn if c > 0),
-            "beats_reached": beats_reached,
-            "beats_reached_count": len(beats_reached),
-            "beats_planned_count": len(scene.beats),
-            "all_beats_reached": bool(scene.beats) and len(beats_reached) == len(scene.beats),
-            "registers_used": registers_used,
-        }
-        if session_facts["first_half_average_words"] is not None and session_facts["second_half_average_words"] is not None:
-            session_facts["turn_length_trend"] = (
-                "longer" if session_facts["second_half_average_words"] > session_facts["first_half_average_words"] * 1.15
-                else "shorter" if session_facts["second_half_average_words"] < session_facts["first_half_average_words"] * 0.85
-                else "roughly steady"
-            )
-        payload = {
+        payload: dict[str, Any] = {
             "scene_title": scene.title,
             "register": sess["register"] or scene.register_plan.default,
-            "turn_count": len(learner_messages),
-            "session_facts": session_facts,
+            "session_facts": self.db.session_facts(session_id).model_dump(),
             "items": [f.model_dump() for _, f in items],
             "wins": [{"expression": w, "spontaneous": True} for w in self.db.session_wins(session_id)],
             "learner_cefr": user["cefr"],
             "include_arabic": include_arabic,
         }
         html = ""
+        notes: list[str] = []
         for _ in range(2):
+            ask = {**payload, "fix_notes": notes} if notes else payload
             try:
                 out = await self.llm.generate_json(
-                    role="debrief", system=debrief_writer_system(), user=json.dumps(payload, ensure_ascii=False, indent=2),
-                    schema=HtmlOut, temperature=self.config.temperatures["debrief"], timeout=self.config.card_timeout_s,
+                    role="debrief", system=debrief_writer_system(), user=json.dumps(ask, ensure_ascii=False, indent=2),
+                    schema=DebriefOut, temperature=self.config.temperatures["debrief"], timeout=self.config.card_timeout_s,
                 )
             except LLMError:
                 continue
-            if not validate_telegram_html(out.html, max_visible=DEBRIEF_MAX_VISIBLE, allow_arabic=include_arabic):
+            notes = validate_telegram_html(out.html, max_visible=DEBRIEF_MAX_VISIBLE, allow_arabic=include_arabic)
+            notes += debrief_unsupported_numbers(out.html, payload, out.grounding)
+            if not notes:
                 html = out.html
                 break
         self.db.mark_recapped([i for i, _ in items], now)

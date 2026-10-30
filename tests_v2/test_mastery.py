@@ -129,17 +129,3 @@ def test_workout_outcomes_map_to_prompted_events_only():
     assert reveal["type"] == "exposure"
     for o in ("target_correct", "target_attempt", "equivalent", "miss"):
         assert workout_event_fields(o, naturalness=2, hint_level=0)["type"] != "spontaneous"
-
-
-def test_informal_tone_variants_alone_do_not_satisfy_cross_formality_stability():
-    same_band = [spont(0, 1, "casual"), spont(3, 2, "warm"), spont(8, 3, "witty")]
-    assert not stable_criteria_met(same_band)
-    assert compute_stage(same_band, T0 + 9 * DAY) == Stage.PRODUCED_SPONTANEOUS
-
-    cross_rel = [
-        spont(0, 1, "casual", relationship="close"),
-        spont(3, 2, "warm", relationship="authority"),
-        spont(8, 3, "witty", relationship="peer"),
-    ]
-    assert stable_criteria_met(cross_rel)
-    assert compute_stage(cross_rel, T0 + 9 * DAY) == Stage.STABLE

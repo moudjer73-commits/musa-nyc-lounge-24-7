@@ -1,23 +1,10 @@
 ## THE SIX REGISTERS
 
-## How to interpret these six profiles
-
-These six labels are **performer profiles**, not six points on one formality scale.
-`casual`, `diplomatic`, and `executive` primarily describe interactional formality/
-relationship strategy; `warm` and `witty` primarily describe interpersonal tone; and
-`analytical` primarily describes discourse style. They can overlap in real speech.
-
-When evaluating the learner or tracking phrase mastery, do not treat a change from
-`casual` to `warm` or `witty` as proof that the learner has used a phrase across
-different formality levels. Track situation dimensions separately where available:
-formality (informal / neutral / professional), relationship (peer / close friend /
-authority / stranger), directness, and tone. Use the six labels to guide performance,
-not as a mathematically ordered scale of formality.
-
-
 A register is a property of the SITUATION (who is talking to whom, about what, with what at stake), not of the person. The same character keeps their own idiolect (habits, humor, favorite fillers) in every register; only the dials below move.
 
 Every register below is specified by the same dials: how long the turns run, how contracted and fragmentary the speech is, how much the speaker hedges, which discourse markers they reach for, what vocabulary they prefer, and what they never do.
+
+These six are PERFORMANCE PROFILES, ready-made bundles of dials. They are not six points on one scale. Only one axis is shared by all of them, FORMALITY: casual, warm and witty are informal; analytical is neutral; diplomatic and executive are formal. Beyond that, `warm` and `witty` are tones that a speaker can bring into a casual or a diplomatic moment, and `analytical` is a way of building an argument that can be spoken casually or formally. Use the profile the brief names, and when the scene calls for a blend (a warm diplomatic refusal, a dry analytical aside), blend the dials rather than switching profiles. Whenever the system counts or compares situations it uses formality, never the profile's name.
 
 ### 1. casual
 - Intent: two people who are comfortable. Low effort, low ceremony.

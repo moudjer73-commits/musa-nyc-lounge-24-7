@@ -15,6 +15,8 @@ from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .registers import formality_of
+
 # `register` is a field name in the prompt contracts (JSON is the source of truth). Pydantic warns
 # that it shadows ABCMeta.register, which this code base never uses, so the warning is noise.
 warnings.filterwarnings("ignore", message='Field name "register".*shadows an attribute')
@@ -295,6 +297,17 @@ class HtmlOut(_Model):
     html: str
 
 
+class Grounding(_Model):
+    """One number the debrief quotes, and the `session_facts` field it comes from."""
+
+    field: str
+    value: int
+
+
+class DebriefOut(HtmlOut):
+    grounding: list[Grounding] = Field(default_factory=list)
+
+
 class InterlocutorReply(_Model):
     bubbles: list[str]
 
@@ -311,44 +324,51 @@ class InterlocutorReply(_Model):
 # --------------------------------------------------------------------------------------
 
 
-class AlternativeScope(_Model):
-    """Per-alternative register compatibility and exclusion metadata."""
+class Variant(_Model):
+    """Another way to say the same thing, with the registers in which THAT form is natural."""
 
     form: str
-    register: AlternativeRegister = "neutral"
-    nuance: str = ""
-    best_for: str = ""
-    excluded_registers: list[str] = Field(default_factory=list)
+    register_tags: list[str] = Field(default_factory=list)
+
+
+class SessionFacts(_Model):
+    """Observable facts about a finished scene, computed by code from the turn log.
+
+    The Debrief Writer may only open with an observation that one of these fields supports.
+    All numbers are whole numbers so that a cited figure can be matched exactly.
+    """
+
+    learner_turns: int = 0
+    avg_words: Optional[int] = None
+    longest_turn_words: Optional[int] = None
+    first_half_avg_words: Optional[int] = None     # only from 4 learner turns on
+    second_half_avg_words: Optional[int] = None
+    length_trend: Optional[Literal["longer", "shorter", "steady"]] = None
+    questions_asked: int = 0                       # learner turns that contain a question mark
+    voice_turns: int = 0
+    text_turns: int = 0
+    beats_reached: int = 0
+    beats_total: int = 0
+    cards_shown: int = 0
 
 
 class Expression(_Model):
-    """An item in "My Phrase Vault". One per user per expression."""
+    """An item in "My Phrase Vault". One per user per expression.
+
+    `register_tags` is the range of THIS exact `form` (not the union of its alternatives'), and each
+    entry of `variants` carries its own range. `acceptable_forms` is the flat superset used only to
+    recognise use and to keep the character from saying the target; it says nothing about where a
+    form is natural.
+    """
 
     id: str
     form: str
     meaning: str = ""
     register_tags: list[str] = Field(default_factory=list)
+    variants: list[Variant] = Field(default_factory=list)
     l1_trap: Optional[str] = None
     acceptable_forms: list[str] = Field(default_factory=list)
-    form_scopes: list[AlternativeScope] = Field(default_factory=list)
     opportunity_hint: Optional[str] = None
-
-    def compatible_forms_for(self, target_register: Optional[str] = None) -> list[str]:
-        if not target_register or not self.form_scopes:
-            return list(self.acceptable_forms) or [self.form]
-        informal_set = {"casual", "warm", "witty"}
-        prof_set = {"diplomatic", "executive"}
-        compatible: list[str] = []
-        for scope in self.form_scopes:
-            if target_register in scope.excluded_registers:
-                continue
-            if scope.register == "neutral" or scope.register == target_register:
-                compatible.append(scope.form)
-            elif target_register in informal_set and scope.register in informal_set:
-                compatible.append(scope.form)
-            elif target_register in prof_set and scope.register in prof_set:
-                compatible.append(scope.form)
-        return list(dict.fromkeys(compatible)) or list(self.acceptable_forms) or [self.form]
 
 
 # --------------------------------------------------------------------------------------
@@ -377,6 +397,10 @@ class RegisterShiftSetup(_Model):
     def _three(cls, v: list[Listener]) -> list[Listener]:
         if len(v) != 3:
             raise ValueError("exactly three listeners are required")
+        if len({x.register for x in v}) != 3:
+            raise ValueError("the three listeners must use three different registers")
+        if len({formality_of(x.register) for x in v}) < 2:
+            raise ValueError("the listeners must differ in formality (casual + warm + witty is one formality, not a shift)")
         return v
 
 
