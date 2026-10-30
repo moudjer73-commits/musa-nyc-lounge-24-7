@@ -563,8 +563,9 @@ class DualLLMEngine:
         sys_p = (
             "You write a concise, high-signal end-of-scene debrief (`prompts/core/debrief_writer_system.md`) for an L1-Arabic learner.\n"
             "Rules:\n"
-            "1. Lead with genuine spontaneous wins from the learner's turns (no generic cheerleading).\n"
-            "2. Cap `top_shifts` at 3 concrete spoken upgrades.\n"
+            "1. In `spontaneous_wins`, ONLY include phrases that were genuinely natural and error-free. NEVER quote a learner span that contains an L1 calque or error (such as 'open the AC', 'did an effort', 'discuss about'). If all learner turns contained errors, return `\"spontaneous_wins\": []`.\n"
+            "2. Cap `top_shifts` at 3 concrete spoken upgrades (include calques like 'open the AC' -> 'turn on the AC').\n"
+            "3. In `arabic_note`, follow the strict `ar_note` protocol: Modern Standard Arabic, <=200 chars, quote Arabic source phrases with « », and keep English words in Latin script WITHOUT quotes.\n"
             "Return ONLY valid JSON matching this exact structure:\n"
             "{\n"
             '  "scene_outcome": "1-2 sentences on how the conversation landed",\n'

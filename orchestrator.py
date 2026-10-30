@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from ai_engine import DualLLMEngine
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
 from policy_engine import (
@@ -63,6 +63,7 @@ class TurnOrchestrator:
         learner_text: str,
         message_idempotency_key: Optional[str] = None,
         is_voice_message: bool = False,
+        on_fast_reply: Optional[Callable[[ResponderOutput], None]] = None,
     ) -> TurnResult:
         corr_id = f"turn_{uuid.uuid4().hex[:10]}"
         idem_base = message_idempotency_key or corr_id
@@ -151,8 +152,13 @@ class TurnOrchestrator:
             stealth_target_info=stealth_target_info,
         )
 
-        analysis = fut_analyst.result()
         resp_out = fut_responder.result()
+        if on_fast_reply is not None:
+            try:
+                on_fast_reply(resp_out)
+            except Exception:
+                pass
+        analysis = fut_analyst.result()
 
         policy_dec = decide(
             analysis=analysis,

@@ -8,7 +8,8 @@ import uuid
 import edge_tts
 import requests
 import telebot
-from telebot import types
+from telebot import apihelper, types
+apihelper.SESSION_TIME_TO_LIVE = 600
 from ai_engine import DualLLMEngine
 from config import ADMIN_ID, DEFAULT_VOICE, TELEGRAM_BOT_TOKEN, TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
@@ -746,11 +747,6 @@ if bot is not None:
             return
 
         try:
-            bot.send_chat_action(chat_id, "typing")
-        except Exception:
-            pass
-
-        try:
             if sess.get("training_mode") == "register_shift":
                 rs_out = ai.generate_register_shift_coaching(text)
                 db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
@@ -767,27 +763,37 @@ if bot is not None:
                 bot.send_message(chat_id, rs_html, parse_mode="HTML")
                 return
 
+            fast_sent_holder = {"msg": None}
+
+            def _deliver_fast_reply(resp_out):
+                reply_html = f"💬 <b>Alex:</b> {_e(resp_out.reply_text)}"
+                fast_sent_holder["msg"] = bot.send_message(chat_id, reply_html, parse_mode="HTML")
+                if resp_out.second_bubble_text:
+                    bot.send_message(chat_id, f"💬 <b>Alex:</b> {_e(resp_out.second_bubble_text)}", parse_mode="HTML")
+
             turn_res = orchestrator.process_turn(
                 learner_id=lid,
                 learner_text=text,
                 message_idempotency_key=f"tg_msg_{chat_id}_{message.message_id}",
                 is_voice_message=False,
+                on_fast_reply=_deliver_fast_reply,
             )
 
-            reply_html = f"💬 <b>Alex:</b> {_e(turn_res.responder_output.reply_text)}"
-            markup = None
-
+            sent_msg = fast_sent_holder["msg"]
             if turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.card_id and turn_res.selected_diagnostic:
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 markup.add(
                     types.InlineKeyboardButton("💡 Quick Upgrade", callback_data=f"card:{turn_res.card_id}"),
                     types.InlineKeyboardButton("🎧 Listen", callback_data=f"tts:{turn_res.card_id}"),
                 )
-
-            sent_msg = bot.send_message(chat_id, reply_html, parse_mode="HTML", reply_markup=markup)
-
-            if turn_res.responder_output.second_bubble_text:
-                bot.send_message(chat_id, f"💬 <b>Alex:</b> {_e(turn_res.responder_output.second_bubble_text)}", parse_mode="HTML")
+                if sent_msg is not None:
+                    try:
+                        bot.edit_message_reply_markup(chat_id=chat_id, message_id=sent_msg.message_id, reply_markup=markup)
+                    except Exception:
+                        pass
+                else:
+                    reply_html = f"💬 <b>Alex:</b> {_e(turn_res.responder_output.reply_text)}"
+                    sent_msg = bot.send_message(chat_id, reply_html, parse_mode="HTML", reply_markup=markup)
 
             if sent_msg and turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.selected_diagnostic:
                 orchestrator.confirm_card_delivered(
