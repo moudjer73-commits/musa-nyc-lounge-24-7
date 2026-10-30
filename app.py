@@ -16,6 +16,9 @@ from config import ADMIN_ID, DEFAULT_VOICE, TELEGRAM_BOT_TOKEN, TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
 from orchestrator import TurnOrchestrator
 from policy_engine import (
+    extract_alex_spoken_text,
+    get_auto_voice_pref,
+    set_auto_voice_pref,
     complete_decode_session,
     format_decode_phase1_message,
     format_decode_phase2_reveal,
@@ -247,6 +250,19 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     ]
     markup.row(*tier_btns)
 
+    auto_v = get_auto_voice_pref(lid)
+    v_btns = [
+        types.InlineKeyboardButton(
+            f"{'✅ ' if not auto_v else ''}🎧 Voice: On Tap",
+            callback_data="setvoice:tap",
+        ),
+        types.InlineKeyboardButton(
+            f"{'✅ ' if auto_v else ''}🔊 Voice: Auto",
+            callback_data="setvoice:auto",
+        ),
+    ]
+    markup.row(*v_btns)
+
     return text_html, markup
 
 
@@ -412,6 +428,8 @@ if bot is not None:
             correlation_id=corr_id,
             idempotency_key=f"{corr_id}:open",
         )
+        dil_markup = types.InlineKeyboardMarkup()
+        dil_markup.add(types.InlineKeyboardButton("🎧 Listen", callback_data="tts:msg"))
         bot.send_message(
             chat_id,
             f"🤝 <b>Live Pragmatic Dilemma</b> (<i>{_e(dilemma.setting)} — {_e(dilemma.relationship)}</i>)\n"
@@ -419,6 +437,7 @@ if bot is not None:
             f"• <b>Your Goal:</b> {_e(dilemma.learner_pragmatic_goal)}\n\n"
             f"💬 <b>Alex:</b> “{_e(dilemma.opening_line)}”",
             parse_mode="HTML",
+            reply_markup=dil_markup,
         )
 
     def _launch_dynamic_workout(chat_id: int, lid: int, sid: str, reg: str):
@@ -671,9 +690,10 @@ if bot is not None:
 
         if data.startswith("tts:"):
             card_id = data.split(":", 1)[1]
-            info = db.get_pending_card(card_id)
-            target_txt = info["reply_text"] if info else (call.message.text or "")
-            bot.answer_callback_query(call.id, "Generating audio...")
+            info = db.get_pending_card(card_id) if card_id != "msg" else None
+            raw_target = info["reply_text"] if info else (call.message.text or "")
+            target_txt = extract_alex_spoken_text(raw_target)
+            bot.answer_callback_query(call.id, "🎧 Generating Alex's voice...")
             try:
                 mp3_p = synthesize_tts_mp3(target_txt)
                 with open(mp3_p, "rb") as f_audio:
@@ -682,7 +702,7 @@ if bot is not None:
                 logger.warning(f"TTS error: {e}")
             return
 
-        if data.startswith(("setreg:", "setdir:", "setfb:", "setar:", "setmodel:")):
+        if data.startswith(("setreg:", "setdir:", "setfb:", "setar:", "setmodel:", "setvoice:")):
             kind, val = data.split(":", 1)
             if kind == "setreg":
                 db.update_session_settings(sid, lid, register_profile=val)
@@ -698,6 +718,10 @@ if bot is not None:
             elif kind == "setar":
                 db.update_learner_preference(lid, arabic_support=val)
                 toast = f"Arabic Notes → {val.upper()}"
+            elif kind == "setvoice":
+                enabled = (val == "auto")
+                set_auto_voice_pref(lid, enabled)
+                toast = "Alex Voice → AUTO 🔊" if enabled else "Alex Voice → ON TAP 🎧"
             else:
                 chain = ai.set_model_tier(val)
                 toast = f"Engine → {chain[0] if chain else val.upper()}"
@@ -808,9 +832,30 @@ if bot is not None:
 
                 def _deliver_fast_reply(resp_out):
                     reply_html = f"💬 <b>Alex:</b> {_e(resp_out.reply_text)}"
-                    fast_sent_holder["msg"] = bot.send_message(chat_id, reply_html, parse_mode="HTML")
+                    listen_markup = types.InlineKeyboardMarkup()
+                    listen_markup.add(types.InlineKeyboardButton("🎧 Listen", callback_data="tts:msg"))
+                    fast_sent_holder["msg"] = bot.send_message(
+                        chat_id, reply_html, parse_mode="HTML", reply_markup=listen_markup
+                    )
                     if resp_out.second_bubble_text:
-                        bot.send_message(chat_id, f"💬 <b>Alex:</b> {_e(resp_out.second_bubble_text)}", parse_mode="HTML")
+                        b2_markup = types.InlineKeyboardMarkup()
+                        b2_markup.add(types.InlineKeyboardButton("🎧 Listen", callback_data="tts:msg"))
+                        bot.send_message(
+                            chat_id,
+                            f"💬 <b>Alex:</b> {_e(resp_out.second_bubble_text)}",
+                            parse_mode="HTML",
+                            reply_markup=b2_markup,
+                        )
+                    if get_auto_voice_pref(lid):
+                        try:
+                            full_spoken = resp_out.reply_text
+                            if resp_out.second_bubble_text:
+                                full_spoken = f"{full_spoken} {resp_out.second_bubble_text}"
+                            mp3_p = synthesize_tts_mp3(full_spoken)
+                            with open(mp3_p, "rb") as f_audio:
+                                bot.send_voice(chat_id, f_audio)
+                        except Exception as e_tts:
+                            logger.warning(f"Auto-voice TTS notice: {e_tts}")
 
                 turn_res = orchestrator.process_turn(
                     learner_id=lid,

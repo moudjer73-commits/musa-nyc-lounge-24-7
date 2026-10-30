@@ -819,5 +819,48 @@ class FullProductionVerificationSuite(unittest.TestCase):
         self.assertNotIn("<tg-spoiler>{_e(ch.full_unreduced_form)}", app_src)
 
 
+
+    def test_19_alex_reply_tts_every_turn(self):
+        """Verifies clean extraction of Alex's spoken text and universal 🎧 Listen button wiring."""
+        from policy_engine import extract_alex_spoken_text, get_auto_voice_pref, set_auto_voice_pref
+
+        # 1. Normal chat reply
+        self.assertEqual(
+            extract_alex_spoken_text("💬 Alex: That sounds like a solid plan."),
+            "That sounds like a solid plan.",
+        )
+        # 2. Expanded Quick Upgrade card (must NOT read the diagnostic card or Arabic notes)
+        card_msg = (
+            "💬 Alex: Fair point, let's push it to Monday.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💡 Quick Upgrade (usage)\n"
+            "• You said: “postpone”"
+        )
+        self.assertEqual(
+            extract_alex_spoken_text(card_msg),
+            "Fair point, let's push it to Monday.",
+        )
+        # 3. Pragmatic Dilemma opening message
+        dilemma_msg = (
+            "🤝 Live Pragmatic Dilemma (Office)\n"
+            "• Active Register: EXECUTIVE\n\n"
+            "💬 Alex: “We need to cut scope if we want to ship Friday.”"
+        )
+        self.assertEqual(
+            extract_alex_spoken_text(dilemma_msg),
+            "We need to cut scope if we want to ship Friday.",
+        )
+
+        # 4. Auto-voice toggle state
+        self.assertFalse(get_auto_voice_pref("u_tts"))
+        self.assertTrue(set_auto_voice_pref("u_tts", True))
+        self.assertTrue(get_auto_voice_pref("u_tts"))
+        set_auto_voice_pref("u_tts", False)
+
+        app_src = Path("app.py").read_text(encoding="utf-8")
+        self.assertIn('callback_data="tts:msg"', app_src)
+        self.assertIn("extract_alex_spoken_text", app_src)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -693,3 +693,27 @@ def get_updated_user_guide_html() -> str:
         "• استخدم زر القائمة <b>( / )</b> أسفل الشاشة للوصول السريع لجميع الأوامر في أي وقت."
     )
 
+
+_AUTO_VOICE_PREFS: dict[str, bool] = {}
+
+
+def set_auto_voice_pref(learner_id: Any, enabled: bool) -> bool:
+    _AUTO_VOICE_PREFS[str(learner_id)] = bool(enabled)
+    return _AUTO_VOICE_PREFS[str(learner_id)]
+
+
+def get_auto_voice_pref(learner_id: Any) -> bool:
+    return bool(_AUTO_VOICE_PREFS.get(str(learner_id), False))
+
+
+def extract_alex_spoken_text(raw_text: Optional[str]) -> str:
+    """Extracts only Alex's spoken English line, stripping prefixes, dilemma headers, and Layer-2 cards."""
+    if not raw_text:
+        return ""
+    top_part = str(raw_text).split("━━━━━━━━━━━━━━━━━━━━", 1)[0].strip()
+    if "💬 Alex:" in top_part:
+        top_part = top_part.split("💬 Alex:", 1)[1].strip()
+    elif "Alex:" in top_part:
+        top_part = top_part.split("Alex:", 1)[1].strip()
+    return top_part.strip().strip('“”"\'').strip()
+
