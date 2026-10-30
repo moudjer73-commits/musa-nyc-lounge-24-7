@@ -862,5 +862,30 @@ class FullProductionVerificationSuite(unittest.TestCase):
         self.assertIn("extract_alex_spoken_text", app_src)
 
 
+
+    def test_20_resilient_400_fallback_and_model_sanitization(self):
+        """Verifies lite models are deprioritized and HTTP 400 triggers automatic schema-free JSON retry."""
+        from unittest.mock import MagicMock, patch
+        from ai_engine import _post_gemini_with_400_schema_fallback, _sanitize_discovered_chain
+
+        raw_models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+        ordered = _sanitize_discovered_chain(raw_models)
+        self.assertEqual(ordered[0], "gemini-2.5-flash")
+        self.assertEqual(ordered[-1], "gemini-3.5-flash-lite")
+
+        r_400 = MagicMock(status_code=400)
+        r_200 = MagicMock(status_code=200)
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "Once an ant went to the gym"}]}],
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": {"type": "object"}},
+        }
+        with patch("ai_engine.requests.post", side_effect=[r_400, r_200]) as mocked_post:
+            res = _post_gemini_with_400_schema_fallback("https://example.com", payload)
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(mocked_post.call_count, 2)
+            second_call_payload = mocked_post.call_args_list[1].kwargs["json"]
+            self.assertNotIn("responseSchema", second_call_payload["generationConfig"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

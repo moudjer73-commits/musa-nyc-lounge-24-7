@@ -898,7 +898,7 @@ if bot is not None:
                     )
         except Exception as err:
             logger.error(f"Turn error: {err}", exc_info=True)
-            bot.send_message(chat_id, f"⚠️ <i>Service notice: {_e(str(err)[:160])}</i>", parse_mode="HTML")
+            bot.send_message(chat_id, "⏳ <i>Alex is catching his breath (high traffic). Please resend your message in a few seconds!</i>", parse_mode="HTML")
 
 
 if __name__ == "__main__":

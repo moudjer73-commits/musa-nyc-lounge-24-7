@@ -290,6 +290,51 @@ def _deterministic_responder_repair(
     )
 
 
+
+
+def _sanitize_discovered_chain(models: list[str]) -> list[str]:
+    """Prioritizes stable Gemini models and pushes fragile lite/preview variants to last-resort."""
+    preferred_order = [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ]
+    clean = []
+    for p in preferred_order:
+        if p in models and p not in clean:
+            clean.append(p)
+    for m in models:
+        if m not in clean and "lite" not in m.lower() and "tts" not in m.lower() and "image" not in m.lower():
+            clean.append(m)
+    for m in models:
+        if m not in clean and "tts" not in m.lower() and "image" not in m.lower():
+            clean.append(m)
+    return clean or preferred_order[:3]
+
+
+def _post_gemini_with_400_schema_fallback(url: str, payload: dict, timeout: int = 25) -> requests.Response:
+    """If a model rejects strict responseSchema with HTTP 400, automatically retries with schema-free JSON mode."""
+    initial_http_resp = requests.post(url, json=payload, timeout=timeout)
+    if initial_http_resp.status_code == 400 and "generationConfig" in payload and "responseSchema" in payload["generationConfig"]:
+        fallback_payload = dict(payload)
+        gen_cfg = dict(payload["generationConfig"])
+        schema_obj = gen_cfg.pop("responseSchema", None)
+        fallback_payload["generationConfig"] = gen_cfg
+        if schema_obj and "contents" in fallback_payload and fallback_payload["contents"]:
+            import json as _json
+            schema_hint = f"\n\n[CRITICAL: Return ONLY valid JSON matching this schema structure: {_json.dumps(schema_obj)}]"
+            last_content = dict(fallback_payload["contents"][-1])
+            parts = list(last_content.get("parts", []))
+            if parts and "text" in parts[-1]:
+                parts[-1] = {"text": parts[-1]["text"] + schema_hint}
+                last_content["parts"] = parts
+                fallback_payload["contents"] = list(fallback_payload["contents"][:-1]) + [last_content]
+        return requests.post(url, json=fallback_payload, timeout=timeout)
+    return initial_http_resp
+
+
 class DualLLMEngine:
     def __init__(self, keys: Optional[list[str]] = None, primary_model: str = GEMINI_MODEL):
         self.keys = list(keys) if keys is not None else (list(GEMINI_KEYS_LIST) if GEMINI_KEYS_LIST else ([GEMINI_API_KEY] if GEMINI_API_KEY else []))
