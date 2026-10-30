@@ -31,7 +31,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run 12 Production Acceptance Tests
-        run: python tests.py
+        run: |
+          pytest tests_v2 -q
+          python tests.py
 
       - name: Run Musa's NYC Lounge (Spoken English Lab)
         timeout-minutes: 290
