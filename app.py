@@ -333,7 +333,7 @@ if bot is not None:
         )
         bot.send_message(
             message.chat.id,
-            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ (v2_complete)</b>\n"
+            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ (v3.0)</b>\n"
             f"• Scene: <code>{new_sid}</code>\n"
             f"• Register: <b>{_e(reg.upper())}</b> | Directness: <b>{_e(direct.upper())}</b> | Coaching: <b>{_e(fb.upper())}</b>\n\n"
             "Talk naturally about anything on your mind, or use the mode buttons below.",
@@ -933,3 +933,142 @@ if __name__ == "__main__":
         except Exception as poll_err:
             logger.error(f"Polling loop error: {poll_err}")
             time.sleep(3)
+
+
+# === V3.0 TELEGRAM RUNTIME BRIDGE ===
+from telegram import InlineKeyboardButton as _V3InlineBtn, InlineKeyboardMarkup as _V3InlineMarkup
+from ui_v3 import (
+    UIResponse as _V3UIResponse,
+    build_scene_debrief as _v3_build_debrief,
+    build_v3_progress_report as _v3_build_report,
+    format_upgrade_card as _v3_format_card,
+    handle_v3_callback as _v3_handle_cb,
+    handle_v3_text_turn as _v3_handle_txt,
+)
+
+
+def _v3_markup_from_response(resp: _V3UIResponse):
+    if not resp.buttons:
+        return None
+    rows = [[_V3InlineBtn(b.text, callback_data=b.callback_data)] for b in resp.buttons]
+    return _V3InlineMarkup(rows)
+
+
+def _attach_v3_handlers_to_bot_class() -> None:
+    """Wraps the Telegram bot class methods so V3 callbacks, review/reconstruction text, and /v3_report work live."""
+    # Find the bot class defined in app.py
+    bot_cls = None
+    for _name, _obj in list(globals().items()):
+        if isinstance(_obj, type) and hasattr(_obj, "build_application"):
+            bot_cls = _obj
+            break
+    if bot_cls is None:
+        for _name, _obj in list(globals().items()):
+            if isinstance(_obj, type) and any(
+                hasattr(_obj, m) for m in ("handle_callback", "on_callback", "callback_handler", "handle_message")
+            ):
+                bot_cls = _obj
+                break
+    if bot_cls is None:
+        return
+
+    def _resolve_db(inst):
+        for attr in ("db", "_db"):
+            if hasattr(inst, attr):
+                return getattr(inst, attr)
+        if hasattr(inst, "orchestrator") and hasattr(inst.orchestrator, "db"):
+            return inst.orchestrator.db
+        return None
+
+    # 1. Ensure DB migrations M001-M004 run on bot startup
+    orig_init = getattr(bot_cls, "__init__", None)
+    if callable(orig_init):
+        def _wrapped_init(self, *args, **kwargs):
+            orig_init(self, *args, **kwargs)
+            db_inst = _resolve_db(self)
+            if db_inst is not None and hasattr(db_inst, "migrate"):
+                try:
+                    db_inst.migrate()
+                except Exception:
+                    pass
+        bot_cls.__init__ = _wrapped_init
+
+    # 2. Wrap callback query handler to intercept V3 compact callbacks (ug:, rc:, rs:, bk:, rvn:, rvh:, rvs:, ls:)
+    for cb_method_name in ("handle_callback", "on_callback", "callback_handler", "handle_button"):
+        orig_cb = getattr(bot_cls, cb_method_name, None)
+        if callable(orig_cb):
+            async def _wrapped_cb(self, update, context, _orig=orig_cb):
+                query = getattr(update, "callback_query", None)
+                data = getattr(query, "data", "") or ""
+                if data.split(":", 1)[0] in {"ug", "rc", "rs", "bk", "rvn", "rvh", "rvs", "ls"}:
+                    db_inst = _resolve_db(self)
+                    if db_inst is not None and query is not None:
+                        user_id = update.effective_user.id
+                        sess = db_inst.get_or_create_active_session(user_id)
+                        v3_resp = _v3_handle_cb(
+                            db_inst,
+                            learner_id=user_id,
+                            session_id=sess["session_id"],
+                            callback_data=data,
+                        )
+                        if v3_resp.handled:
+                            await query.answer()
+                            await query.message.reply_text(
+                                v3_resp.text,
+                                parse_mode="Markdown",
+                                reply_markup=_v3_markup_from_response(v3_resp),
+                            )
+                            return
+                return await _orig(self, update, context)
+            setattr(bot_cls, cb_method_name, _wrapped_cb)
+
+    # 3. Wrap text message handler so active REVIEW_ACTIVE or RECONSTRUCTION_ACTIVE turns route to V3 evaluator
+    for msg_method_name in ("handle_message", "on_message", "handle_text", "text_handler"):
+        orig_msg = getattr(bot_cls, msg_method_name, None)
+        if callable(orig_msg):
+            async def _wrapped_msg(self, update, context, _orig=orig_msg):
+                msg = getattr(update, "effective_message", None)
+                txt = (getattr(msg, "text", None) or "").strip()
+                if txt and not txt.startswith("/"):
+                    db_inst = _resolve_db(self)
+                    if db_inst is not None and msg is not None:
+                        user_id = update.effective_user.id
+                        sess = db_inst.get_or_create_active_session(user_id)
+                        v3_resp = _v3_handle_txt(
+                            db_inst,
+                            learner_id=user_id,
+                            session_id=sess["session_id"],
+                            text=txt,
+                            idempotency_key=f"tg_v3_{user_id}_{msg.message_id}",
+                        )
+                        if v3_resp.handled:
+                            await msg.reply_text(
+                                v3_resp.text,
+                                parse_mode="Markdown",
+                                reply_markup=_v3_markup_from_response(v3_resp),
+                            )
+                            return
+                return await _orig(self, update, context)
+            setattr(bot_cls, msg_method_name, _wrapped_msg)
+
+    # 4. Wrap progress/status command to include 5D Mastery & Due Reviews button
+    for prog_method_name in ("cmd_progress", "handle_progress", "progress_command", "cmd_status"):
+        orig_prog = getattr(bot_cls, prog_method_name, None)
+        if callable(orig_prog):
+            async def _wrapped_prog(self, update, context, _orig=orig_prog):
+                await _orig(self, update, context)
+                db_inst = _resolve_db(self)
+                msg = getattr(update, "effective_message", None)
+                if db_inst is not None and msg is not None:
+                    user_id = update.effective_user.id
+                    rep = _v3_build_report(db_inst, learner_id=user_id)
+                    btns = [[_V3InlineBtn("🧠 Start Due Reviews", callback_data="rvn:0:1")]]
+                    await msg.reply_text(
+                        rep["text"],
+                        parse_mode="Markdown",
+                        reply_markup=_V3InlineMarkup(btns),
+                    )
+            setattr(bot_cls, prog_method_name, _wrapped_prog)
+
+
+_attach_v3_handlers_to_bot_class()
