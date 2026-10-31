@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+*.mp3
+
+.pytest_cache/
+*.db-journal

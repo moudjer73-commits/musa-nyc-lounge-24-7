@@ -1,0 +1,121 @@
+name: Spoken English Lab 24-7 Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */5 * * *'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: spoken-english-lab-single-instance
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 310
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Verification Suite Against Temp DB (A8)
+        id: test_step
+        env:
+          SPOKEN_LAB_DB: /tmp/ci_test_spoken_lab.db
+        run: |
+          pytest -q
+          python tests.py
+
+      - name: Restore Encrypted State Snapshot (A6, A7, A8)
+        id: restore_step
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          ALLOW_EMPTY_DB: ${{ vars.ALLOW_EMPTY_DB || '0' }}
+        run: |
+          python -m tools.state_snapshot restore --db-path spoken_english_lab.db
+
+      - name: Run Database Migrations (A4, A8)
+        id: migrate_step
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        run: |
+          python -m database migrate --db-path spoken_english_lab.db
+
+      - name: Alert Admin on Startup / Test / Migration Failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        run: |
+          python -m tools.state_snapshot alert-failure --reason "CI test, restore, or migration failed on runner."
+
+      - name: Run Musa Bot (5 Hours, Track Uptime for A9)
+        id: bot_step
+        if: success()
+        timeout-minutes: 290
+        continue-on-error: true
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+        run: |
+          START_TS=$(date +%s)
+          timeout 17100s python app.py || true
+          END_TS=$(date +%s)
+          ELAPSED=$((END_TS - START_TS))
+          echo "uptime_s=$ELAPSED" >> "$GITHUB_OUTPUT"
+          if [ "$ELAPSED" -lt 300 ]; then
+            python -m tools.state_snapshot alert-failure --reason "Bot exited after ${ELAPSED}s (< 300s). Immediate relay suppressed."
+          fi
+
+      - name: Final Encrypted State Snapshot
+        if: always() && steps.migrate_step.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        run: |
+          python -m tools.state_snapshot backup --db-path spoken_english_lab.db
+
+      - name: Relay Next Runner Only If Uptime >= 300s (A9)
+        if: always() && steps.migrate_step.outcome == 'success' && fromJSON(steps.bot_step.outputs.uptime_s || '0') >= 300 && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run main.yml --ref main
