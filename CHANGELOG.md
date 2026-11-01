@@ -1,5 +1,36 @@
 # Changelog
 
+## V3.0, Sprint S1: durability and migrations (Claude's files)
+
+Contract: `Spoken English Lab V3.0 — S0 Contracts` with amendments A1-A15 and open items O1-O6 signed.
+Baseline: v2 zip `musa_live_repo_latest.zip`, 255 tests green (235 pytest in `tests_v2` + 20 in `tests.py`).
+After S1: the same 255 still pass **unchanged** (no existing test was edited), plus 290 new tests in `tests_v3`
+(545 in total). `python -m pytest tests_v3 -q` needs no network and no API key.
+
+### New
+* `clock.py`: `Clock` protocol, `SystemClock`, `FakeClock` (time travel, thread-safe). Every timestamp is UTC ISO-8601 with a trailing `Z`; nothing in the new code reads the wall clock.
+* `schemas.py` (extended, v2 models untouched): all S0 section 2 enums, the 14 + 3 event-type registry, V2 payload models (`extra='forbid'`), and the pure `upcast(row) -> EventV2` (v1 rows are never rewritten; readers upcast).
+* `migrations/`: runner + M001 (`event_types` table and the `event_log` rebuild with a foreign key, fingerprint-verified, append-only triggers re-probed), M002 (all V3 tables and columns, `learner_settings` backfill), M003 (projection rebuild through `upcast`, run twice and compared byte for byte).
+  Runner rules: one `BEGIN IMMEDIATE` per migration, `foreign_key_check` before COMMIT, a checksum change on an applied version is a hard error, a database ahead of the code is refused.
+* `interaction.py`: durable `active_interaction` (lazy TTL from the injected clock, CAS on `interaction_revision`), text routing, and the `<op>:<id>:<rev>` callback wire format (<= 32 bytes; legacy callbacks parse to `None`).
+* `database.py`: `python -m database migrate|status [--check]` (exit 0 ok, 1 error, 10 pending), V2 writers (`append_event_ex`, schema 2.0), `accept_scene_turn`, `append_events_if_revision(_ex)` (A14 CAS), pending clarification, auto-voice, audio cache, and a deterministic projection rebuild that also fills `feedback_item_projection` and `phrase_evidence`.
+
+### Behaviour changes in existing code (all covered by tests)
+* `EventSourcedDatabase` runs the migration runner on start-up (`auto_migrate=False` opts out).
+* `append_event` keeps its signature and return value and still stamps `schema_version='1.0'` (callers still build v1 payloads until S2/S4); `append_event_ex` writes `2.0`.
+* `register_phrase` is now an upsert of the v2 columns. v2 used `INSERT OR REPLACE`, which would wipe the V3 catalog columns on every call.
+* `phrase_state_projection.updated_at_utc` is the time of the phrase's last event. v2 stamped the wall-clock time of the rebuild, which made two rebuilds differ. It is the only v1-visible column that changed meaning; the golden test excludes it and says so.
+* `read()` is read-only (`PRAGMA query_only`).
+
+### Tests added (`tests_v3`, 290)
+clock (14), schemas (25), upcast (30), migrations (42, including a golden v2 database with all 14 event types, an injected failure at every point of every migration, and a real `os._exit` kill in a subprocess), database (42), interaction (128), CLI (9).
+
+### Not done in S1, on purpose
+M004 (mastery columns), `validation.py`, the policy resolver, mastery/scheduler/retrieval, orchestrator changes. The mastery aggregate columns of `phrase_state_projection` keep their defaults until S3.
+
+### Not verified
+Python 3.11 (the CI target): every S1 file compiles under 3.11 and the stdlib-only parts (clock, M001, M002) ran on 3.11.18, but the full suite ran on 3.13 only, because pydantic and pytest could not be installed for 3.11 in the build sandbox. The first full 3.11 run is the CI job.
+
 ## v2: fixes from the external review (one group at a time, suite run after each)
 
 v1 is the first zip that was delivered (183 tests). Every group below lists what changed, which
@@ -113,14 +144,3 @@ the v1 copy and the file diffed against v1: the only differences are `OVER_SOFTE
 235 tests pass from a clean extraction of the zip. Groups 1 to 3 were re-checked with independent scenarios (not only by the tests that came with them):
 casual + warm + witty over three sessions stays PRODUCED_SPONTANEOUS, casual + diplomatic reaches STABLE, an informal-only expression needs one bucket, `session_facts` averages and halves are right.
 NOT verified anywhere: behaviour with a real model, `GeminiClient` against the live API, the eval seed set's numbers.
-
-## V3.0 — Sprint S1 & S2-Transport Checkpoint (2026-10-31)
-- Test count update: 255 -> 264 automated tests (`244` in `tests_v2/` + `20` in `tests.py`):
-  - Added 5 durability & migration tests in `tests_v2/test_s1_durability.py` (M001-M003 golden DB, SHA-256 verification, `upcast`, `active_interaction` TTL/routing, CAS, and snapshot guards).
-  - Added 4 transport governor tests in `tests_v2/test_s2_transport.py` (429 parser variants, project-level cooldowns, circuit breaker, lane separation, and HTTP 400 capability caching).
-
-## V3.0 — Sprint S4 Complete (Full V3.0 Release) (2026-10-31)
-- Test count update: 276 -> 280 automated tests (`260` in `tests_v2/` + `20` in `tests.py`):
-  - Added `ui_v3.py` implementing the compact `<op>:<id>:<rev>` callback router (`ug`, `rc`, `rs`, `bk`, `rvn`, `rvh`, `rvs`, `ls`), free-text interaction router, `audio_cache` lookup/invalidation, pattern-deduplicated scene debrief (`MERGED`), and 5D mastery progress report.
-  - Bound V3 UI, debrief, and progress report methods onto `TurnOrchestrator` in `orchestrator.py`.
-  - Added 4 end-to-end S4 acceptance tests in `tests_v2/test_s4_ui_callbacks_and_e2e.py`.

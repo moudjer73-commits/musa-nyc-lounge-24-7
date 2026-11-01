@@ -38,8 +38,13 @@ jobs:
         env:
           SPOKEN_LAB_DB: /tmp/ci_test_spoken_lab.db
         run: |
-          pytest -q
+          export SPOKEN_LAB_DB="/tmp/spoken_lab_ci_test.db"
+          rm -f "$SPOKEN_LAB_DB"
+          python -m pytest tests_v2 -q
+          python -m pytest tests_v3 -q
           python tests.py
+          rm -f "$SPOKEN_LAB_DB"
+
 
       - name: Restore Encrypted State Snapshot (A6, A7, A8)
         id: restore_step
@@ -66,7 +71,22 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
         run: |
-          python -m database migrate --db-path spoken_english_lab.db
+          DB="spoken_english_lab.db"
+          set +e
+          python -m database status --check --db-path "$DB"
+          STATUS_EXIT=$?
+          set -e
+          if [ "$STATUS_EXIT" -eq 10 ]; then
+            echo "Pending migrations detected (exit 10). Creating pre-migrate anchor snapshot if DB exists..."
+            if [ -f "$DB" ]; then
+              python -m tools.state_snapshot backup --db-path "$DB" || true
+            fi
+          elif [ "$STATUS_EXIT" -ne 0 ]; then
+            echo "Database status --check failed with exit code $STATUS_EXIT" >&2
+            exit "$STATUS_EXIT"
+          fi
+          python -m database migrate --db-path "$DB"
+
 
       - name: Alert Admin on Startup / Test / Migration Failure
         if: failure()

@@ -1,353 +1,78 @@
-"""Interaction layer (S0 Contracts, sections 4.2, 5.2, 5.3, 5.4, 6, 7)."""
+"""Durable interaction state and the callback wire format (S0 sections 5.4 and 7). Owner: Claude.
+
+S1 scope: everything that must survive a process restart. ``active_interaction`` holds at most one
+row per learner (``UNIQUE(learner_id)``); the absence of a row is LIVE_SCENE. The row is
+operational state (mutable, with a TTL), not evidence: outcomes are written as events elsewhere.
+
+* TTL expiry is lazy: an expired row is deleted the first time anything reads it. Time always comes
+  from the caller (an injected ``Clock``), never from the wall clock, so a test can travel past a TTL.
+  A row is valid while ``now < expires_at``.
+* ``interaction_revision`` (the row's ``revision``) is bumped on every transition; the generic
+  ``session_revision`` of a scene lives on ``sessions`` and is not touched here (A13).
+* ``open_interaction`` replaces any existing row and issues a new ``interaction_id``
+  (AUTOINCREMENT: ids are never reused, so a stale button can never address a newer row).
+* The policy resolver (``resolve_interaction_policy``, S0 5.3) and the Telegram handlers are
+  separate work (S2 and S4); this module only stores state and routes text.
+
+Callback wire format: ``<op>:<id>:<rev>``, ASCII base-10 integers, at most 32 bytes.
+"""
+
 from __future__ import annotations
 
 import json
-import logging
-import sqlite3
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone
+import re
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
-from clock import from_utc_iso, to_utc_iso
-from schemas_v3 import (
-    BudgetSnapshot,
-    Classification,
-    ComprehensionStatus,
-    Delivery,
-    DiagnosticV2,
-    Domain,
-    FindingDecision,
-    InteractionObject,
-    InteractionState,
-    POSignal,
-    PolicyDecisionV2,
-    PriorityClass,
-)
+from clock import ensure_utc, parse_iso, to_iso
+from schemas import InteractionObject, InteractionState
 
-__all__ = [
-    "ACTIVE_INTERACTION_DDL",
-    "DEFAULT_TTL_S",
-    "QUEUE_FLOOR",
-    "VALID_CALLBACK_OPS",
-    "ActiveInteraction",
-    "ParsedCallback",
-    "PolicyInputs",
-    "TextRoute",
-    "build_callback",
-    "classify_priority",
-    "close_interaction",
-    "close_learner_interaction",
-    "get_active_interaction",
-    "open_interaction",
-    "parse_callback",
-    "priority_score",
-    "resolve_interaction_policy",
-    "route_text",
-    "transition",
-]
+if TYPE_CHECKING:  # pragma: no cover
+    from database import EventSourcedDatabase
 
-logger = logging.getLogger(__name__)
+# ------------------------------------------------------------------ constants
 
-DEFAULT_TTL_S = 900
-QUEUE_FLOOR = 25.0
-P1_MEDIUM_SCORE_THRESHOLD = 55.0
-MAX_CARDS_PER_SCENE = 6
-STRAIN_THRESHOLD = 0.6
-STRAIN_GAP_BONUS = 2
-WARMUP_LEARNER_TURNS = 2
-PRAGMATIC_P1_GAP = 2
-P0_COOLDOWN_TURNS = 3
-MIN_LEARNING_VALUE = 2
-CALLBACK_MAX_BYTES = 32
+STALE_CALLBACK_TEXT = "That option expired."
+SAVED_TO_REVIEW_TEXT = "Saved to Review"
 
-_BASE_GAP: dict[str, int] = {"light": 6, "active": 3}
-_VALID_PREFERENCES = frozenset({"silent", "light", "active"})
-_HIGH_SEVERITIES = ("high", "critical")
+# TTLs from S0 5.4 (seconds).
+DEFAULT_TTL_S: dict[InteractionState, int] = {
+    InteractionState.UPGRADE_VIEW: 15 * 60,
+    InteractionState.RECONSTRUCTION_ACTIVE: 15 * 60,
+    InteractionState.RECONSTRUCTION_FEEDBACK: 15 * 60,
+    InteractionState.REVIEW_ACTIVE: 30 * 60,  # per item
+    InteractionState.DECODE_AWAIT: 30 * 60,
+    InteractionState.WORKOUT_ACTIVE: 30 * 60,
+}
 
-ACTIVE_INTERACTION_DDL = """
-CREATE TABLE IF NOT EXISTS active_interaction (
-    interaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    learner_id INTEGER NOT NULL UNIQUE REFERENCES learners(learner_id),
-    session_id TEXT NOT NULL,
-    object_type TEXT NOT NULL,
-    object_ref TEXT NOT NULL,
-    state TEXT NOT NULL,
-    revision INTEGER NOT NULL DEFAULT 1,
-    scene_revision_at_open INTEGER NOT NULL,
-    payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json)),
-    created_at_utc TEXT NOT NULL,
-    expires_at_utc TEXT NOT NULL
-);
-"""
+# Which object a state belongs to.
+STATE_OBJECT: dict[InteractionState, InteractionObject] = {
+    InteractionState.UPGRADE_VIEW: InteractionObject.UPGRADE,
+    InteractionState.RECONSTRUCTION_ACTIVE: InteractionObject.RECONSTRUCTION,
+    InteractionState.RECONSTRUCTION_FEEDBACK: InteractionObject.RECONSTRUCTION,
+    InteractionState.REVIEW_ACTIVE: InteractionObject.REVIEW_ITEM,
+    InteractionState.DECODE_AWAIT: InteractionObject.DECODE,
+    InteractionState.WORKOUT_ACTIVE: InteractionObject.WORKOUT,
+}
 
-_SELECT_COLUMNS = (
-    "interaction_id, learner_id, session_id, object_type, object_ref, state, "
-    "revision, scene_revision_at_open, payload_json, created_at_utc, expires_at_utc"
-)
+# Moves a live row may make through ``transition`` (same row, same interaction_id, revision + 1).
+# Everything else is either "close the row" (any state) or "open a new row" (``open_interaction``):
+# S0 5.4 says the ``rc`` button on UPGRADE_VIEW starts RECONSTRUCTION_ACTIVE as a *new row with a new
+# interaction_id*, so UPGRADE_VIEW has no in-place move.
+ALLOWED_TRANSITIONS: dict[InteractionState, frozenset[InteractionState]] = {
+    InteractionState.UPGRADE_VIEW: frozenset(),
+    InteractionState.RECONSTRUCTION_ACTIVE: frozenset({InteractionState.RECONSTRUCTION_FEEDBACK}),
+    InteractionState.RECONSTRUCTION_FEEDBACK: frozenset(),
+    InteractionState.REVIEW_ACTIVE: frozenset({InteractionState.REVIEW_ACTIVE}),
+    InteractionState.DECODE_AWAIT: frozenset({InteractionState.DECODE_AWAIT}),
+    InteractionState.WORKOUT_ACTIVE: frozenset({InteractionState.WORKOUT_ACTIVE}),
+}
 
 
-def _severity_weight(severity: str) -> float:
-    if severity == "low":
-        return 0.33
-    if severity == "medium":
-        return 0.67
-    if severity in _HIGH_SEVERITIES:
-        return 1.0
-    return 0.33
-
-
-def _applicable_confidence(d: DiagnosticV2) -> float:
-    ling = d.linguistic_confidence
-    prag = d.pragmatic_confidence
-    if ling is not None and prag is not None:
-        return min(ling, prag)
-    if d.domain in (Domain.LINGUISTIC, Domain.DISCOURSE):
-        return ling if ling is not None else d.confidence_score
-    if d.domain == Domain.PRAGMATIC:
-        return prag if prag is not None else d.confidence_score
-    return d.confidence_score
-
-
-def priority_score(d: DiagnosticV2, prior_occurrences: int) -> float:
-    sev = _severity_weight(d.severity)
-    imp = float(d.communicative_impact) / 3.0
-    learn = float(d.learning_value) / 3.0
-    freq = min(max(prior_occurrences, 0), 4) / 4.0
-    conf = _applicable_confidence(d)
-    score = 100.0 * (0.30 * sev + 0.20 * imp + 0.20 * learn + 0.15 * freq + 0.15 * conf)
-    return max(0.0, min(100.0, round(score, 2)))
-
-
-def classify_priority(
-    d: DiagnosticV2,
-    score: float,
-    *,
-    p0_candidate: bool = False,
-    comprehension_status: ComprehensionStatus = ComprehensionStatus.OK,
-) -> PriorityClass:
-    if comprehension_status != ComprehensionStatus.OK or (
-        p0_candidate and d.severity in _HIGH_SEVERITIES
-    ):
-        return PriorityClass.P0
-    if d.classification == Classification.ERROR and (
-        d.severity in _HIGH_SEVERITIES
-        or (d.severity == "medium" and score >= P1_MEDIUM_SCORE_THRESHOLD)
-    ):
-        return PriorityClass.P1
-    return PriorityClass.P4
-
-
-@dataclass(frozen=True)
-class PolicyInputs:
-    turn_event_id: str
-    comprehension_status: ComprehensionStatus = ComprehensionStatus.OK
-    p0: POSignal = field(default_factory=POSignal)
-    diagnostics: Sequence[DiagnosticV2] = field(default_factory=tuple)
-    prior_pattern_counts: Mapping[str, int] = field(default_factory=dict)
-    turns_since_visible_card: int = 99
-    cards_in_scene: int = 0
-    turns_since_p0: int = 99
-    strain: float = 0.0
-    feedback_preference: str = "active"
-    learner_turn_index: int = 3
-    has_active_interaction: bool = False
-    in_emotional_or_story_flow: bool = False
-    curveball_turn: bool = False
-    pending_clarification: str | None = None
-
-
-def resolve_interaction_policy(inputs: PolicyInputs) -> PolicyDecisionV2:
-    pref = (
-        inputs.feedback_preference
-        if inputs.feedback_preference in _VALID_PREFERENCES
-        else "active"
-    )
-    diags = list(inputs.diagnostics)
-    count = len(diags)
-
-    scores = [
-        priority_score(d, inputs.prior_pattern_counts.get(d.pattern_id, 0)) for d in diags
-    ]
-    classes = [
-        classify_priority(
-            d,
-            scores[i],
-            p0_candidate=inputs.p0.candidate,
-            comprehension_status=inputs.comprehension_status,
-        )
-        for i, d in enumerate(diags)
-    ]
-
-    base_gap = _BASE_GAP.get(pref, _BASE_GAP["active"])
-    required_gap = base_gap + (STRAIN_GAP_BONUS if inputs.strain >= STRAIN_THRESHOLD else 0)
-
-    def exempt(i: int) -> bool:
-        return (
-            classes[i] == PriorityClass.P1
-            and diags[i].severity in _HIGH_SEVERITIES
-            and diags[i].domain == Domain.PRAGMATIC
-        )
-
-    def warmup_ok(i: int) -> bool:
-        return inputs.learner_turn_index > WARMUP_LEARNER_TURNS or exempt(i)
-
-    def gap_ok(i: int) -> bool:
-        gap = PRAGMATIC_P1_GAP if exempt(i) else required_gap
-        return inputs.turns_since_visible_card >= gap
-
-    def blockers(i: int) -> list[str]:
-        out: list[str] = []
-        if pref == "silent":
-            out.append("silent")
-        if inputs.cards_in_scene >= MAX_CARDS_PER_SCENE:
-            out.append("scene_cap")
-        if inputs.in_emotional_or_story_flow:
-            out.append("emotional_flow")
-        if inputs.has_active_interaction:
-            out.append("active_interaction")
-        if not warmup_ok(i):
-            out.append("warmup")
-        if not gap_ok(i):
-            out.append("gap")
-        return out
-
-    def best(indices: Sequence[int]) -> int | None:
-        if not indices:
-            return None
-        return min(indices, key=lambda i: (-scores[i], i))
-
-    delivery: list[Delivery | None] = [None] * count
-    reasons: list[list[str]] = [[] for _ in range(count)]
-
-    def defer(i: int, *why: str) -> None:
-        if scores[i] < QUEUE_FLOOR:
-            delivery[i] = Delivery.SUPPRESSED
-            reasons[i].extend(why)
-            reasons[i].append("below_queue_floor")
-        else:
-            delivery[i] = Delivery.DEFERRED
-            reasons[i].extend(why)
-
-    p0_idx = [i for i in range(count) if classes[i] == PriorityClass.P0]
-    p1_idx = [i for i in range(count) if classes[i] == PriorityClass.P1]
-    rest_idx = [
-        i for i in range(count) if classes[i] not in (PriorityClass.P0, PriorityClass.P1)
-    ]
-    top0 = best(p0_idx)
-    top1 = best(p1_idx)
-    top_rest = best(rest_idx)
-    selected: int | None = None
-
-    if p0_idx:
-        if inputs.comprehension_status != ComprehensionStatus.OK:
-            for i in p0_idx:
-                defer(i, "handled_in_reply")
-        elif inputs.turns_since_p0 >= P0_COOLDOWN_TURNS:
-            assert top0 is not None
-            delivery[top0] = Delivery.IMMEDIATE_FOLLOWUP
-            reasons[top0].append("p0_followup")
-            selected = top0
-            for i in p0_idx:
-                if i != top0:
-                    defer(i, "p0_secondary")
-        else:
-            for i in p0_idx:
-                defer(i, "p0_cooldown")
-        for i in p1_idx + rest_idx:
-            defer(i, "p0_in_turn")
-    else:
-        if top1 is not None:
-            found = blockers(top1)
-            if not found:
-                delivery[top1] = Delivery.END_OF_TURN
-                reasons[top1].append("budget_ok")
-                selected = top1
-            else:
-                defer(top1, *[f"blocked_{name}" for name in found])
-            for i in p1_idx:
-                if i != top1:
-                    defer(i, "superseded_p1")
-
-    def no_higher_priority(i: int) -> bool:
-        cls = classes[i]
-        if cls == PriorityClass.P0:
-            return i == top0
-        if p0_idx:
-            return False
-        if cls == PriorityClass.P1:
-            return i == top1
-        return selected is None and i == top_rest
-
-    gate_map: list[dict[str, bool]] = [
-        {
-            "scene_stability": (
-                not inputs.has_active_interaction and not inputs.curveball_turn
-            ),
-            "timing": pref != "silent" and warmup_ok(i) and gap_ok(i),
-            "cognitive": (
-                inputs.strain < STRAIN_THRESHOLD and not inputs.in_emotional_or_story_flow
-            ),
-            "scope": inputs.cards_in_scene < MAX_CARDS_PER_SCENE,
-            "no_higher_priority": no_higher_priority(i),
-            "learning_value": diags[i].learning_value >= MIN_LEARNING_VALUE,
-        }
-        for i in range(count)
-    ]
-
-    if not p0_idx:
-        for i in rest_idx:
-            if selected is not None:
-                defer(i, "superseded_by_visible_card")
-            elif pref != "active":
-                defer(i, "preference_not_active")
-            else:
-                failed = [name for name, ok in gate_map[i].items() if not ok]
-                if failed:
-                    defer(i, *[f"gate_{name}" for name in failed])
-                else:
-                    delivery[i] = Delivery.END_OF_TURN
-                    reasons[i].append("all_gates_passed")
-                    selected = i
-
-    decisions = [
-        FindingDecision(
-            diagnostic_id=diags[i].diagnostic_id,
-            priority_class=classes[i],
-            priority_score=scores[i],
-            delivery=delivery[i] if delivery[i] is not None else Delivery.DEFERRED,
-            reasons=reasons[i],
-            gates=gate_map[i],
-        )
-        for i in range(count)
-    ]
-
-    budget_allowed = (
-        pref != "silent"
-        and inputs.cards_in_scene < MAX_CARDS_PER_SCENE
-        and not inputs.in_emotional_or_story_flow
-        and not inputs.has_active_interaction
-        and inputs.learner_turn_index > WARMUP_LEARNER_TURNS
-        and inputs.turns_since_visible_card >= required_gap
-    )
-    budget = BudgetSnapshot(
-        preference=pref,
-        turns_since_visible_card=inputs.turns_since_visible_card,
-        cards_in_scene=inputs.cards_in_scene,
-        strain=inputs.strain,
-        allowed=budget_allowed,
-    )
-
-    return PolicyDecisionV2(
-        turn_event_id=inputs.turn_event_id,
-        decisions=decisions,
-        selected_diagnostic_id=diags[selected].diagnostic_id if selected is not None else None,
-        budget=budget,
-        curveball_turn=inputs.curveball_turn,
-        pending_clarification=inputs.pending_clarification,
-    )
+class IllegalTransition(ValueError):
+    """The requested state change is not in S0 5.4."""
 
 
 @dataclass(frozen=True)
@@ -364,69 +89,18 @@ class ActiveInteraction:
     created_at: datetime
     expires_at: datetime
 
-
-def _utc(dt: datetime) -> datetime:
-    if not isinstance(dt, datetime):
-        raise TypeError(f"expected datetime, got {type(dt).__name__}")
-    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    def is_expired(self, now: datetime) -> bool:
+        return ensure_utc(now) >= self.expires_at
 
 
-def _resolve_connection(db: Any) -> tuple[sqlite3.Connection, bool]:
-    if isinstance(db, sqlite3.Connection):
-        return db, False
-    connect = getattr(db, "_connect", None)
-    if callable(connect):
-        conn = connect()
-        if isinstance(conn, sqlite3.Connection):
-            return conn, True
-        raise TypeError("db._connect() did not return a sqlite3.Connection")
-    for attr in ("conn", "_conn"):
-        conn_attr = getattr(db, attr, None)
-        if isinstance(conn_attr, sqlite3.Connection):
-            return conn_attr, False
-    db_path = getattr(db, "db_path", None)
-    if db_path is not None:
-        return sqlite3.connect(str(db_path)), True
-    raise TypeError("unsupported db handle")
+def default_ttl_s(state: InteractionState) -> int:
+    return DEFAULT_TTL_S[InteractionState(state)]
 
 
-@contextmanager
-def _session(db: Any) -> Iterator[sqlite3.Connection]:
-    conn, owned = _resolve_connection(db)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        if owned:
-            conn.close()
+# ------------------------------------------------------------------ persistence
 
 
-@contextmanager
-def _txn(conn: sqlite3.Connection) -> Iterator[None]:
-    own = not conn.in_transaction
-    if own:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
-        yield
-    except BaseException:
-        if own and conn.in_transaction:
-            conn.rollback()
-        raise
-    if own and conn.in_transaction:
-        conn.commit()
-
-
-def _dump_payload(payload: Mapping[str, Any] | None) -> str:
-    data = dict(payload) if payload is not None else {}
-    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _parse_row(row: sqlite3.Row) -> ActiveInteraction:
-    payload = json.loads(row["payload_json"])
-    if not isinstance(payload, dict):
-        raise ValueError("payload_json must be a JSON object")
+def _from_row(row: Any) -> ActiveInteraction:
     return ActiveInteraction(
         interaction_id=int(row["interaction_id"]),
         learner_id=int(row["learner_id"]),
@@ -436,179 +110,163 @@ def _parse_row(row: sqlite3.Row) -> ActiveInteraction:
         state=InteractionState(row["state"]),
         revision=int(row["revision"]),
         scene_revision_at_open=int(row["scene_revision_at_open"]),
-        payload=payload,
-        created_at=from_utc_iso(row["created_at_utc"]),
-        expires_at=from_utc_iso(row["expires_at_utc"]),
+        payload=json.loads(row["payload_json"]),
+        created_at=parse_iso(row["created_at_utc"]),
+        expires_at=parse_iso(row["expires_at_utc"]),
     )
 
 
-def _delete_by_id(conn: sqlite3.Connection, interaction_id: int) -> bool:
-    cur = conn.execute(
-        "DELETE FROM active_interaction WHERE interaction_id = ?", (interaction_id,)
-    )
-    return cur.rowcount > 0
+def _dump_payload(payload: Mapping[str, Any]) -> str:
+    if not isinstance(payload, Mapping):
+        raise TypeError("interaction payload must be a mapping")
+    return json.dumps(dict(payload), ensure_ascii=False, sort_keys=True)
+
+
+def _check_ttl(ttl_s: float) -> None:
+    if isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float)) or ttl_s <= 0:
+        raise ValueError("ttl_s must be a positive number of seconds")
 
 
 def open_interaction(
-    db: Any,
+    db: "EventSourcedDatabase",
     *,
     learner_id: int,
     session_id: str,
     object_type: InteractionObject,
     object_ref: str,
     state: InteractionState,
-    payload: dict[str, Any],
+    payload: Mapping[str, Any],
     scene_revision: int,
     now: datetime,
-    ttl_s: int = DEFAULT_TTL_S,
+    ttl_s: float,
 ) -> ActiveInteraction:
-    if ttl_s <= 0:
-        raise ValueError("ttl_s must be positive")
-    obj = InteractionObject(object_type)
-    st = InteractionState(state)
-    now_utc = _utc(now)
-    created_iso = to_utc_iso(now_utc)
-    expires_iso = to_utc_iso(now_utc + timedelta(seconds=ttl_s))
-    payload_json = _dump_payload(payload)
-
-    with _session(db) as conn:
-        with _txn(conn):
-            conn.execute("DELETE FROM active_interaction WHERE learner_id = ?", (learner_id,))
-            cur = conn.execute(
-                "INSERT INTO active_interaction (learner_id, session_id, object_type, "
-                "object_ref, state, revision, scene_revision_at_open, payload_json, "
-                "created_at_utc, expires_at_utc) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
-                (
-                    learner_id,
-                    session_id,
-                    obj.value,
-                    object_ref,
-                    st.value,
-                    scene_revision,
-                    payload_json,
-                    created_iso,
-                    expires_iso,
-                ),
-            )
-            interaction_id = int(cur.lastrowid)
-
-    return ActiveInteraction(
-        interaction_id=interaction_id,
-        learner_id=learner_id,
-        session_id=session_id,
-        object_type=obj,
-        object_ref=object_ref,
-        state=st,
-        revision=1,
-        scene_revision_at_open=scene_revision,
-        payload=json.loads(payload_json),
-        created_at=from_utc_iso(created_iso),
-        expires_at=from_utc_iso(expires_iso),
-    )
+    """Replace any existing row of the learner with a new one (new ``interaction_id``, revision 1)."""
+    state = InteractionState(state)
+    object_type = InteractionObject(object_type)
+    if STATE_OBJECT[state] != object_type:
+        raise ValueError(f"state {state.value} belongs to object {STATE_OBJECT[state].value}, not {object_type.value}")
+    _check_ttl(ttl_s)
+    now = ensure_utc(now)
+    body = _dump_payload(payload)
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM active_interaction WHERE learner_id = ?", (learner_id,))
+        cursor = conn.execute(
+            """
+            INSERT INTO active_interaction (
+                learner_id, session_id, object_type, object_ref, state, revision,
+                scene_revision_at_open, payload_json, created_at_utc, expires_at_utc
+            ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            """,
+            (
+                learner_id,
+                session_id,
+                object_type.value,
+                str(object_ref),
+                state.value,
+                int(scene_revision),
+                body,
+                to_iso(now),
+                to_iso(now + timedelta(seconds=ttl_s)),
+            ),
+        )
+        row = conn.execute("SELECT * FROM active_interaction WHERE interaction_id = ?", (cursor.lastrowid,)).fetchone()
+    return _from_row(row)
 
 
-def get_active_interaction(db: Any, learner_id: int, now: datetime) -> ActiveInteraction | None:
-    now_utc = _utc(now)
-    with _session(db) as conn:
-        row = conn.execute(
-            f"SELECT {_SELECT_COLUMNS} FROM active_interaction WHERE learner_id = ?",
-            (learner_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        try:
-            active = _parse_row(row)
-        except (ValueError, TypeError, KeyError) as exc:
-            logger.warning("dropping corrupt active_interaction row %s: %s", row["interaction_id"], exc)
-            with _txn(conn):
-                _delete_by_id(conn, int(row["interaction_id"]))
-            return None
-        if active.expires_at <= now_utc:
-            with _txn(conn):
-                _delete_by_id(conn, active.interaction_id)
-            return None
-        return active
+def get_active_interaction(db: "EventSourcedDatabase", learner_id: int, now: datetime) -> Optional[ActiveInteraction]:
+    """The learner's live row, or ``None`` (LIVE_SCENE). An expired row is deleted here (lazy TTL)."""
+    now_iso = to_iso(ensure_utc(now))
+    with db.read() as conn:
+        row = conn.execute("SELECT * FROM active_interaction WHERE learner_id = ?", (learner_id,)).fetchone()
+    if row is None:
+        return None
+    if row["expires_at_utc"] > now_iso:
+        return _from_row(row)
+    with db.transaction() as conn:
+        conn.execute(
+            "DELETE FROM active_interaction WHERE interaction_id = ? AND expires_at_utc <= ?",
+            (row["interaction_id"], now_iso),
+        )
+    return None
 
 
 def transition(
-    db: Any,
+    db: "EventSourcedDatabase",
     *,
     interaction_id: int,
     expected_revision: int,
     new_state: InteractionState,
-    payload_patch: dict[str, Any],
+    payload_patch: Mapping[str, Any],
     now: datetime,
-    ttl_s: int = DEFAULT_TTL_S,
-) -> ActiveInteraction | None:
-    if ttl_s <= 0:
-        raise ValueError("ttl_s must be positive")
-    st = InteractionState(new_state)
-    now_utc = _utc(now)
-    expires_iso = to_utc_iso(now_utc + timedelta(seconds=ttl_s))
+    ttl_s: float,
+) -> Optional[ActiveInteraction]:
+    """Compare-and-set on the row's revision. On success the state changes, ``payload_patch`` is
+    merged shallowly into the payload, the revision is bumped and the TTL restarts from ``now``.
 
-    with _session(db) as conn:
-        with _txn(conn):
-            row = conn.execute(
-                f"SELECT {_SELECT_COLUMNS} FROM active_interaction WHERE interaction_id = ?",
-                (interaction_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            try:
-                current = _parse_row(row)
-            except (ValueError, TypeError, KeyError):
-                _delete_by_id(conn, interaction_id)
-                return None
-            if current.expires_at <= now_utc:
-                _delete_by_id(conn, interaction_id)
-                return None
-            if current.revision != expected_revision:
-                return None
-
-            merged_json = _dump_payload({**current.payload, **(payload_patch or {})})
-            new_revision = expected_revision + 1
-            cur = conn.execute(
-                "UPDATE active_interaction SET state = ?, revision = ?, payload_json = ?, "
-                "expires_at_utc = ? WHERE interaction_id = ? AND revision = ?",
-                (st.value, new_revision, merged_json, expires_iso, interaction_id, expected_revision),
-            )
-            if cur.rowcount != 1:
-                return None
-
-    return replace(
-        current,
-        state=st,
-        revision=new_revision,
-        payload=json.loads(merged_json),
-        expires_at=from_utc_iso(expires_iso),
-    )
+    Returns ``None`` (nothing changed) when the row no longer exists, has expired, or its
+    revision is not ``expected_revision``. Raises ``IllegalTransition`` for a move S0 5.4 does not allow.
+    """
+    new_state = InteractionState(new_state)
+    _check_ttl(ttl_s)
+    now = ensure_utc(now)
+    now_iso = to_iso(now)
+    with db.transaction() as conn:
+        row = conn.execute("SELECT * FROM active_interaction WHERE interaction_id = ?", (interaction_id,)).fetchone()
+        if row is None:
+            return None
+        if row["expires_at_utc"] <= now_iso:
+            conn.execute("DELETE FROM active_interaction WHERE interaction_id = ?", (interaction_id,))
+            return None
+        if int(row["revision"]) != int(expected_revision):
+            return None
+        current = InteractionState(row["state"])
+        if new_state not in ALLOWED_TRANSITIONS[current]:
+            raise IllegalTransition(f"{current.value} -> {new_state.value} is not an allowed transition")
+        payload = json.loads(row["payload_json"])
+        payload.update(dict(payload_patch))
+        conn.execute(
+            """
+            UPDATE active_interaction
+            SET state = ?, payload_json = ?, revision = revision + 1, expires_at_utc = ?
+            WHERE interaction_id = ? AND revision = ?
+            """,
+            (
+                new_state.value,
+                _dump_payload(payload),
+                to_iso(now + timedelta(seconds=ttl_s)),
+                interaction_id,
+                int(expected_revision),
+            ),
+        )
+        updated = conn.execute("SELECT * FROM active_interaction WHERE interaction_id = ?", (interaction_id,)).fetchone()
+    return _from_row(updated)
 
 
 def close_interaction(
-    db: Any, *, interaction_id: int, expected_revision: int | None = None
+    db: "EventSourcedDatabase", *, interaction_id: int, expected_revision: Optional[int] = None
 ) -> bool:
-    with _session(db) as conn:
-        with _txn(conn):
-            if expected_revision is None:
-                cur = conn.execute(
-                    "DELETE FROM active_interaction WHERE interaction_id = ?",
-                    (interaction_id,),
-                )
-            else:
-                cur = conn.execute(
-                    "DELETE FROM active_interaction WHERE interaction_id = ? AND revision = ?",
-                    (interaction_id, expected_revision),
-                )
-            return cur.rowcount > 0
-
-
-def close_learner_interaction(db: Any, learner_id: int) -> bool:
-    with _session(db) as conn:
-        with _txn(conn):
-            cur = conn.execute(
-                "DELETE FROM active_interaction WHERE learner_id = ?", (learner_id,)
+    """Delete the row. With ``expected_revision`` it only closes that revision. No outcome event is
+    written here. Returns whether a row was removed."""
+    with db.transaction() as conn:
+        if expected_revision is None:
+            cursor = conn.execute("DELETE FROM active_interaction WHERE interaction_id = ?", (interaction_id,))
+        else:
+            cursor = conn.execute(
+                "DELETE FROM active_interaction WHERE interaction_id = ? AND revision = ?",
+                (interaction_id, int(expected_revision)),
             )
-            return cur.rowcount > 0
+        return cursor.rowcount > 0
+
+
+def close_learner_interaction(db: "EventSourcedDatabase", learner_id: int) -> bool:
+    """Close whatever the learner has open: a keyboard mode button, ``/start`` or the Session
+    button does this first, with no outcome event (S0 5.4 global rules)."""
+    with db.transaction() as conn:
+        cursor = conn.execute("DELETE FROM active_interaction WHERE learner_id = ?", (learner_id,))
+        return cursor.rowcount > 0
+
+
+# ------------------------------------------------------------------ routing of free text
 
 
 class TextRoute(StrEnum):
@@ -619,31 +277,38 @@ class TextRoute(StrEnum):
     WORKOUT_ATTEMPT = "workout_attempt"
 
 
+_TEXT_ROUTES: dict[InteractionState, TextRoute] = {
+    InteractionState.RECONSTRUCTION_ACTIVE: TextRoute.RECONSTRUCTION_ATTEMPT,
+    InteractionState.REVIEW_ACTIVE: TextRoute.REVIEW_ATTEMPT,
+    InteractionState.DECODE_AWAIT: TextRoute.DECODE_ANSWER,
+    InteractionState.WORKOUT_ACTIVE: TextRoute.WORKOUT_ATTEMPT,
+}
+
+
 def route_text(
-    db: Any, learner_id: int, now: datetime
-) -> tuple[TextRoute, ActiveInteraction | None]:
-    active = get_active_interaction(db, learner_id, now)
-    if active is None:
+    db: "EventSourcedDatabase", learner_id: int, now: datetime
+) -> tuple[TextRoute, Optional[ActiveInteraction]]:
+    """Where a free-text message goes. In UPGRADE_VIEW and RECONSTRUCTION_FEEDBACK the row is closed
+    (side effect) and the text is an ordinary scene turn; in the other states the open row comes back
+    with the route that consumes it."""
+    row = get_active_interaction(db, learner_id, now)
+    if row is None:
         return TextRoute.SCENE_TURN, None
-
-    state = active.state
-    if state in (InteractionState.UPGRADE_VIEW, InteractionState.RECONSTRUCTION_FEEDBACK):
-        close_interaction(db, interaction_id=active.interaction_id)
+    route = _TEXT_ROUTES.get(row.state)
+    if route is None:
+        close_interaction(db, interaction_id=row.interaction_id, expected_revision=row.revision)
         return TextRoute.SCENE_TURN, None
-    if state == InteractionState.RECONSTRUCTION_ACTIVE:
-        return TextRoute.RECONSTRUCTION_ATTEMPT, active
-    if state == InteractionState.REVIEW_ACTIVE:
-        return TextRoute.REVIEW_ATTEMPT, active
-    if state == InteractionState.DECODE_AWAIT:
-        return TextRoute.DECODE_ANSWER, active
-    if state == InteractionState.WORKOUT_ACTIVE:
-        return TextRoute.WORKOUT_ATTEMPT, active
-
-    close_interaction(db, interaction_id=active.interaction_id)
-    return TextRoute.SCENE_TURN, None
+    return route, row
 
 
-VALID_CALLBACK_OPS = frozenset({"ug", "rc", "rs", "bk", "rvn", "rvh", "rvs", "ls"})
+# ------------------------------------------------------------------ callback wire format (S0 7)
+
+CALLBACK_OPS = frozenset({"ug", "rc", "rs", "bk", "rvn", "rvh", "rvs", "ls"})
+MAX_CALLBACK_BYTES = 32  # Telegram allows 64
+MAX_OBJECT_ID = 10**12 - 1  # 12 digits: the same width as the snapshot sequence numbers
+MAX_REVISION = 10**9 - 1
+
+_CALLBACK_RE = re.compile(r"([a-z]{2,3}):(0|[1-9][0-9]{0,11}):(0|[1-9][0-9]{0,8})")
 
 
 @dataclass(frozen=True)
@@ -653,39 +318,48 @@ class ParsedCallback:
     rev: int
 
 
-def parse_callback(data: str) -> ParsedCallback | None:
-    try:
-        if not isinstance(data, str) or not data:
-            return None
-        try:
-            raw = data.encode("ascii")
-        except UnicodeEncodeError:
-            return None
-        if len(raw) > CALLBACK_MAX_BYTES:
-            return None
-        parts = data.split(":")
-        if len(parts) != 3:
-            return None
-        op, obj_text, rev_text = parts
-        if op not in VALID_CALLBACK_OPS:
-            return None
-        if not (obj_text.isdigit() and rev_text.isdigit()):
-            return None
-        obj_id, rev = int(obj_text), int(rev_text)
-        if obj_id < 0 or rev < 0:
-            return None
-        return ParsedCallback(op=op, obj_id=obj_id, rev=rev)
-    except Exception:
-        return None
-
-
 def build_callback(op: str, obj_id: int, rev: int) -> str:
-    if op not in VALID_CALLBACK_OPS:
-        raise ValueError(f"invalid callback op: {op!r}")
-    for name, value in (("obj_id", obj_id), ("rev", rev)):
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise ValueError(f"{name} must be a non-negative int, got {value!r}")
-    text = f"{op}:{obj_id}:{rev}"
-    if len(text.encode("ascii")) > CALLBACK_MAX_BYTES:
-        raise ValueError(f"callback data exceeds {CALLBACK_MAX_BYTES} bytes: {text!r}")
-    return text
+    """``<op>:<id>:<rev>``. Raises ``ValueError`` for an unknown op, a negative or oversized number,
+    or a result longer than 32 bytes."""
+    if op not in CALLBACK_OPS:
+        raise ValueError(f"unknown callback op {op!r}")
+    for name, value, limit in (("obj_id", obj_id, MAX_OBJECT_ID), ("rev", rev, MAX_REVISION)):
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= limit:
+            raise ValueError(f"{name} must be an integer between 0 and {limit}, got {value!r}")
+    data = f"{op}:{obj_id}:{rev}"
+    if len(data.encode("ascii")) > MAX_CALLBACK_BYTES:
+        raise ValueError(f"callback data longer than {MAX_CALLBACK_BYTES} bytes: {data!r}")
+    return data
+
+
+def parse_callback(data: Any) -> Optional[ParsedCallback]:
+    """Parse V3.0 callback data. Anything else (legacy ``set*``, ``tts:``, ``card:``, ``guide:``,
+    ``decode_reveal``, malformed or unknown ops, non-ASCII digits, signs, spaces, leading zeros)
+    returns ``None``; the caller answers ``STALE_CALLBACK_TEXT`` and never raises."""
+    if not isinstance(data, str) or len(data) > MAX_CALLBACK_BYTES:
+        return None
+    match = _CALLBACK_RE.fullmatch(data)
+    if match is None or match.group(1) not in CALLBACK_OPS:
+        return None
+    return ParsedCallback(op=match.group(1), obj_id=int(match.group(2)), rev=int(match.group(3)))
+
+
+def callback_matches(interaction: Optional[ActiveInteraction], parsed: ParsedCallback) -> bool:
+    """True when a button addresses the live row at its current revision (rc, rs, bk, rvn, rvh, rvs)."""
+    return interaction is not None and interaction.interaction_id == parsed.obj_id and interaction.revision == parsed.rev
+
+
+def ug_is_current(
+    db: "EventSourcedDatabase", *, learner_id: int, session_id: str, parsed: ParsedCallback, now: datetime
+) -> bool:
+    """S0 7: a ``ug`` tap opens the card only while its revision is the session's current
+    ``session_revision`` and nothing else is open. ``False`` means the caller answers
+    ``SAVED_TO_REVIEW_TEXT`` (the finding is already queued), not ``STALE_CALLBACK_TEXT``."""
+    if parsed.op != "ug":
+        return False
+    if get_active_interaction(db, learner_id, now) is not None:
+        return False
+    try:
+        return db.get_session_revision(session_id) == parsed.rev
+    except LookupError:
+        return False

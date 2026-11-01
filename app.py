@@ -1,3 +1,4 @@
+from clock import SystemClock
 import threading
 import asyncio
 import html
@@ -32,7 +33,7 @@ from schemas import DirectnessLevel, InterventionLevel, RegisterProfile, Trainin
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("SpokenEnglishLab")
 
-db = EventSourcedDatabase()
+db = EventSourcedDatabase(clock=SystemClock())
 ai = DualLLMEngine()
 orchestrator = TurnOrchestrator(db=db, ai=ai)
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=True, num_threads=4) if TELEGRAM_BOT_TOKEN else None
