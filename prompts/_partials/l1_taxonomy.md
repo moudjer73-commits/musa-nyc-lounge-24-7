@@ -32,7 +32,7 @@ A preposition or particle copied from the Arabic verb or adjective frame, includ
 - "afraid from" (خائف من) → afraid of
 - "good in math" (جيّد في) → good at
 - "arrive to / enter to the room / go to home" (وصل إلى / دخل إلى / ذهب إلى البيت) → arrive at/in; enter the room; go home
-- "discuss about it" (تناقشوا حول الموضوع) → discuss it
+- NOT an L1 transfer: "discuss about it" → discuss it. It is an English-internal analogy with "talk about". Standard Arabic ناقش is directly transitive (ناقش الموضوعَ), so never cite «ناقش في» or any ناقش + preposition frame as its source.
 - "wait him / listen him / search a job" (انتظره، استمع إليه، بحث عن عمل) → wait for him; listen to him; look for a job
 - "think in it / interested by / responsible of" (فكّر في، مهتم بـ، مسؤول عن) → think about it; interested in; responsible for
 - "since two years" (منذ سنتين) → for two years

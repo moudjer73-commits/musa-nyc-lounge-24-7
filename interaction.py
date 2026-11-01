@@ -28,6 +28,14 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from clock import ensure_utc, parse_iso, to_iso
 from schemas import InteractionObject, InteractionState
+from feedback_policy import (  # noqa: F401  (S2: the V3 policy resolver is reachable from interaction.py)
+    PolicyConfig,
+    PolicyInputs,
+    RuntimeState,
+    classify_priority,
+    compute_budget,
+    resolve_interaction_policy,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from database import EventSourcedDatabase

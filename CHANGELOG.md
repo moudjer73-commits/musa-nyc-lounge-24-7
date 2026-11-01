@@ -1,5 +1,28 @@
 # Changelog
 
+## V3.0, Sprint S2: validation and the policy resolver (Claude's files)
+
+Baseline after S1: 545 tests (235 `tests_v2` + 20 `tests.py` + 290 `tests_v3`).
+After S2: 739 tests. The 255 v2 tests pass unchanged. `tests_v3` grows from 290 to 484 (+194: 133 in `test_validation.py`, 61 in `test_policy_resolver.py`).
+One S1 test was edited, and only for the reason below: `test_canonical_enums_match_s0_section_2` now expects `noop` in `DropReason`.
+Run on Python 3.13 only; the CI job is the first Python 3.11 run.
+
+### New
+* `validation.py` (S0 5.1): `validate_analysis(raw, ...) -> ValidationResult`. All eleven steps in contract order, every drop recorded as `DropRecord(ref, reason)`: schema per diagnostic, domain and modality, NFKC/curly-quote normalisation with a tokenizer that keeps offsets in the original string, token-run span resolution (`span_start`/`span_end`, learner's exact casing), no-op, classification consistency, pattern code and Arabic note checks (ported from `coach/checks.py`), abstention (`ValidationConfig.abstain_threshold`, default 0.80), priority score, overlap resolution, target assessments with the echo guard, and `dg_` + 8 hex ids (deterministic per turn and position, collision-safe against `taken_ids`).
+* `feedback_policy.py` (S0 5.2 and 5.3): `resolve_interaction_policy(PolicyInputs, scored) -> PolicyDecisionV2`. P0/P1/P4 classes, the queue floor, Path A/Path B for P0, one card per turn, the budget (silent/light/active gaps, strain bonus, warm-up, flow, 6 cards per scene) and the six gates recorded per finding. Re-exported from `interaction.py`.
+* `ScoredDiagnostic` carries each survivor's score, family and prior count from validation to the resolver (`DiagnosticV2` has no score field).
+
+### Linguistic accuracy rule (L1/L2)
+* Standard Arabic ناقش is directly transitive (ناقشَ الموضوعَ), like English "discuss the topic". Code now (a) removes any note or L1 field that asserts ناقش + في/عن/على/حول/ب (every inflection and clitic prefix), (b) never attributes English "discuss about" to Arabic: the L1 claim is stripped and the correction is kept, because it is an English-internal analogy with "talk about". Valid Arabic is not flagged (ناقشه في الأمر, and the reciprocal form VI تناقشوا في/حول الموضوع).
+* The false claim was also removed from the prompts: `ai_engine.py` (live Analyst prompt), `prompts/_partials/l1_taxonomy.md` and the regenerated `RENDERED_PROMPTS.md` (that one line differs from v2).
+
+### Behaviour changes in existing code
+* `schemas.py`: `DropReason.NOOP = "noop"`. S0 lists 11 reasons (step 5 produces one); S1 shipped 10. `CONTRACT_VERSION` is `3.0.0-s2`.
+* `interaction.py`: re-exports the resolver names. No behaviour change.
+
+### Not done in S2, on purpose
+Orchestrator wiring (S4), mastery and retrieval (S3), shrinking `policy_engine.py`, the V3 Analyst prompt and raw JSON shape (S3), calibrating `ABSTAIN_THRESHOLD` and the score weights (eval harness).
+
 ## V3.0, Sprint S1: durability and migrations (Claude's files)
 
 Contract: `Spoken English Lab V3.0 — S0 Contracts` with amendments A1-A15 and open items O1-O6 signed.

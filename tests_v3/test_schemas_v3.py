@@ -62,7 +62,7 @@ def test_canonical_enums_match_s0_section_2():
     assert values(schemas.SkipReason) == ["trivial", "shed", "deadline", "error"]
     assert values(schemas.DropReason) == [
         "schema", "span_missing", "span_boundary", "overlap", "domain_modality",
-        "classification_mismatch", "abstain", "echo", "pattern_code", "note_tone",
+        "classification_mismatch", "abstain", "echo", "pattern_code", "note_tone", "noop",
     ]
     assert TrainingMode.REVIEW_RETRIEVAL.value == "review_retrieval"
     assert {m.value for m in TrainingMode} >= {

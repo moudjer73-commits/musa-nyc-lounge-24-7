@@ -385,7 +385,7 @@ class DecodeEvaluationResult(BaseModel):
 # anything below go through a contract bump.
 # ======================================================================================
 
-CONTRACT_VERSION = "3.0.0-s1"
+CONTRACT_VERSION = "3.0.0-s2"
 
 SCHEMA_VERSION_V1 = "1.0"
 SCHEMA_VERSION_V2 = "2.0"
@@ -574,6 +574,7 @@ class DropReason(StrEnum):
     ECHO = "echo"
     PATTERN_CODE = "pattern_code"
     NOTE_TONE = "note_tone"
+    NOOP = "noop"  # S0 5.1 step 5; missing from the S1 enum (11 reasons in S0, 10 in S1), added in S2
 
 
 # CallClass is defined by Gemini's transport (llm_transport.py) and is not duplicated here.

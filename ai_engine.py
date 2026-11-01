@@ -60,7 +60,8 @@ Rules:
    - Direct is NOT rude, and softer is NOT always better: in `direct` or `executive` contexts, crisp directness is a strength; only flag pragmatics when a bare imperative or blunt refusal violates the active relationship/register or when the learner caves in (`pragmatic_cave_in: true`).
 4. Arabic L1 codes (`l1_pattern` & `l1_source_ar`):
    - `COLLOC_LIGHT_VERB`: "did an effort", "took a decision", "do a mistake" («بذل جهدًا»، «اتّخذ قرارًا») -> `made an effort`, `made a decision`.
-   - `COLLOC_PREP_VERB`: "discuss about", "explain me", "reply my message", "reach to" («ناقش في»، «شرح لي»، «ردّ على») -> `discuss`, `explain to me`, `reply to`.
+   - `COLLOC_PREP_VERB`: "explain me", "reply my message", "reach to" («شرح لي»، «ردّ على»، «وصل إلى») -> `explain to me`, `reply to my message`, `reach`.
+   - "discuss about" -> `discuss` is an English-internal analogy with "talk about", NOT an Arabic transfer: Standard Arabic ناقش is directly transitive (ناقش الموضوعَ), like English "discuss the topic". Keep `l1_transfer_likely` false, and never write «ناقش في» (or any ناقش + preposition frame) in `explanation_ar`, `l1_source_ar` or `l1_transfer_evidence`.
    - `COLLOC_OPEN_CLOSE`: "open/close the AC, light, TV" («افتح/أغلق المكيف أو النور») -> `turn on / turn off`.
    - `GRAM_RESUMPTIVE_PRONOUN`: "the room that we are sitting in it" («الغرفة التي نجلس فيها») -> drop resumptive pronoun (`the room we're sitting in`).
    - `COLLOC_INTENSIFIER`: "too much hot" -> `way too hot` / `super hot`.
