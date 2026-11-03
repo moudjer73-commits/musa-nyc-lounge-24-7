@@ -86,6 +86,7 @@ def v1_columns(path: str) -> dict[str, list[str]]:
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
             if table == "phrase_state_projection":
                 cols.remove("updated_at_utc")  # v2 stamped the wall clock of the rebuild; V3 stamps the last event time
+                cols.remove("next_review_at_utc")  # a v2 column that v2 never wrote; the V3 scheduler fills it (S3). M003's own V1_VISIBLE list never included it
             out[table] = cols
     return out
 

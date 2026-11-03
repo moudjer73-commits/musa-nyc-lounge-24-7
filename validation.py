@@ -30,7 +30,7 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field, replace
-from typing import Any, Collection, Iterable, Mapping, Optional, Sequence
+from typing import Any, Collection, Container, Iterable, Mapping, Optional, Sequence
 
 from pydantic import ValidationError
 
@@ -377,11 +377,13 @@ def diagnostic_id_for(turn_event_id: str, ordinal: int, attempt: int = 0) -> str
     return "dg_" + digest[:8]
 
 
-def assign_diagnostic_id(turn_event_id: str, ordinal: int, taken: Collection[str]) -> str:
+def assign_diagnostic_id(turn_event_id: str, ordinal: int, taken: Container[str], also_taken: Container[str] = ()) -> str:
+    """First free ``dg_`` id. ``taken`` and ``also_taken`` need only support ``in``, so a lazy database-backed
+    container (``database.TakenDiagnosticIds``) works as well as a set."""
     attempt = 0
     while True:
         candidate = diagnostic_id_for(turn_event_id, ordinal, attempt)
-        if candidate not in taken:
+        if candidate not in taken and candidate not in also_taken:
             return candidate
         attempt += 1
 
@@ -676,7 +678,7 @@ def validate_analysis(
     active_target_ids: Collection[str] = (),
     prior_counts: Optional[Mapping[str, int]] = None,
     learner_id: Optional[int] = None,
-    taken_ids: Collection[str] = (),
+    taken_ids: Container[str] = (),
     call_meta: Optional[CallMetaDict] = None,
     config: ValidationConfig = DEFAULT_CONFIG,
 ) -> ValidationResult:
@@ -738,16 +740,16 @@ def validate_analysis(
     targets = _step10_targets(raw.get("target_assessments"), learner_text, recent_bot_texts, active_target_ids, rec)
 
     # Step 11: ids, then a final schema pass so nothing invalid leaves this module.
-    taken = set(taken_ids)
+    used: set[str] = set()  # ids given out in this call; ``taken_ids`` (any container with ``in``) holds the stored ones
     final: list[ScoredDiagnostic] = []
     for item in kept:
-        dg = assign_diagnostic_id(turn_event_id, item.raw_index, taken)
+        dg = assign_diagnostic_id(turn_event_id, item.raw_index, used, taken_ids)
         try:
             diag = DiagnosticV2.model_validate({**item.diagnostic.model_dump(), "diagnostic_id": dg})
         except ValidationError as exc:  # pragma: no cover - defensive; steps 1 to 10 keep the invariants
             rec.add(f"d{item.raw_index}", DropReason.SCHEMA, str(exc.errors()[0].get("msg")))
             continue
-        taken.add(dg)
+        used.add(dg)
         final.append(replace(item, diagnostic=diag))
 
     analysis = AnalysisV2(

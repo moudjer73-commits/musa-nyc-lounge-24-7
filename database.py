@@ -5,15 +5,21 @@ import sqlite3
 import sys
 import uuid
 from contextlib import closing, contextmanager
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional, Sequence
 
 from pydantic import BaseModel
 
+import catalog as _catalog
+import mastery
 import migrations as _migrations
-from clock import Clock, SystemClock, iso_now, parse_iso
+import scheduler
+from clock import Clock, SystemClock, iso_now, parse_iso, to_iso
 from config import DB_PATH
+from feedback_queue import DebriefCounts, QueueEntry, QueueItem, select_queue
+from retrieval import PhraseEntry
 from schemas import (
     PAYLOAD_MODELS,
     RUBRIC_VERSION_V1,
@@ -664,6 +670,231 @@ class EventSourcedDatabase:
         )
         return phrase_id
 
+    # ------------------------------------------------------------------ S3: retrieval, review queue, catalog
+    def get_taken_diagnostic_ids(self, learner_id: Optional[int] = None) -> frozenset[str]:
+        """Every ``dg_`` id already stored in ``feedback_item_projection`` (one learner's, or all). The key is
+        global, so the orchestrator should prefer ``taken_diagnostic_ids()``, which checks the whole table."""
+        with closing(self._conn()) as conn:
+            if learner_id is None:
+                rows = conn.execute("SELECT diagnostic_id FROM feedback_item_projection").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT diagnostic_id FROM feedback_item_projection WHERE learner_id = ?", (learner_id,)
+                ).fetchall()
+        return frozenset(str(r[0]) for r in rows)
+
+    def taken_diagnostic_ids(self) -> "TakenDiagnosticIds":
+        """A lazy container for ``validate_analysis(taken_ids=...)``: one indexed lookup per ``in`` test."""
+        return TakenDiagnosticIds(self)
+
+    def _has_diagnostic_id(self, diagnostic_id: str) -> bool:
+        with closing(self._conn()) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM feedback_item_projection WHERE diagnostic_id = ? LIMIT 1", (diagnostic_id,)
+            ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _phrase_entry_from_row(r: sqlite3.Row) -> PhraseEntry:
+        def listed(raw: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+            try:
+                values = tuple(str(v) for v in json.loads(raw or "[]") if str(v).strip())
+            except (TypeError, ValueError):
+                values = ()
+            return values or default
+
+        return PhraseEntry(
+            phrase_id=str(r["phrase_id"]),
+            canonical_form=str(r["canonical_form"]),
+            communicative_intention=str(r["communicative_intention"]),
+            arabic_gloss=r["arabic_gloss"],
+            acceptable_forms=listed(r["acceptable_forms_json"], ()),
+            meaning_prompt=r["meaning_prompt"],
+            situation_prompt=r["situation_prompt"],
+            function_prompt=r["function_prompt"],
+            context_families=listed(r["context_families_json"], ("general",)),
+        )
+
+    def get_phrase_entry(self, phrase_id: str) -> Optional[PhraseEntry]:
+        with closing(self._conn()) as conn:
+            row = conn.execute("SELECT * FROM phrase_catalog WHERE phrase_id = ?", (phrase_id,)).fetchone()
+        return self._phrase_entry_from_row(row) if row is not None else None
+
+    def get_phrase_states(self, learner_id: int, now: Optional[datetime] = None) -> list[dict[str, Any]]:
+        """The learner's ``phrase_state_projection`` rows with the read-time stage (Stable goes stale after
+        90 days without a success). Ordered by phrase id."""
+        at = now or self._clock.now()
+        with closing(self._conn()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM phrase_state_projection WHERE learner_id = ? ORDER BY phrase_id", (learner_id,)
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            row = dict(r)
+            last_success = parse_iso(row["last_success_at_utc"]) if row.get("last_success_at_utc") else None
+            row["effective_stage"] = mastery.effective_stage(str(row["current_stage"]), last_success, at).value
+            out.append(row)
+        return out
+
+    def _last_review_marks(self, conn: sqlite3.Connection, learner_id: int) -> dict[str, tuple[str, str]]:
+        """phrase_id -> (family, prompt_kind) of the latest non-echo, non-retracted retrieval attempt."""
+        retracted = {
+            str(json.loads(r["payload_json"]).get("target_event_id", ""))
+            for r in conn.execute(
+                "SELECT payload_json FROM event_log WHERE learner_id = ? AND event_type = 'phrase_evidence_retracted'",
+                (learner_id,),
+            )
+        }
+        marks: dict[str, tuple[str, str]] = {}
+        for r in conn.execute(
+            "SELECT event_id, payload_json FROM event_log WHERE learner_id = ? AND event_type = 'retrieval_attempted' "
+            "ORDER BY occurred_at_utc ASC, event_seq ASC",
+            (learner_id,),
+        ):
+            payload = json.loads(r["payload_json"])
+            if r["event_id"] in retracted or payload.get("echo"):
+                continue
+            marks[str(payload.get("phrase_id", ""))] = (
+                str(payload.get("context_family", "general")),
+                str(payload.get("prompt_kind", "")),
+            )
+        return marks
+
+    def _review_states(self, conn: sqlite3.Connection, learner_id: int) -> list[scheduler.ReviewState]:
+        marks = self._last_review_marks(conn, learner_id)
+        states: list[scheduler.ReviewState] = []
+        for r in conn.execute(
+            """
+            SELECT p.phrase_id, p.schedule_step, p.next_review_at_utc, c.context_families_json
+            FROM phrase_state_projection p JOIN phrase_catalog c ON c.phrase_id = p.phrase_id
+            WHERE p.learner_id = ? AND p.next_review_at_utc IS NOT NULL
+            ORDER BY p.phrase_id
+            """,
+            (learner_id,),
+        ):
+            try:
+                families = tuple(str(f) for f in json.loads(r["context_families_json"] or "[]") if str(f)) or ("general",)
+            except (TypeError, ValueError):
+                families = ("general",)
+            family, kind = marks.get(str(r["phrase_id"]), (None, None))
+            states.append(
+                scheduler.ReviewState(
+                    phrase_id=str(r["phrase_id"]),
+                    step=int(r["schedule_step"]),
+                    next_review_at=parse_iso(r["next_review_at_utc"]),
+                    catalog_families=families,
+                    last_family=family,
+                    last_prompt_kind=kind or None,
+                )
+            )
+        return states
+
+    def get_due_phrases(
+        self, learner_id: int, now: Optional[datetime] = None, limit: int = scheduler.DUE_LIMIT_PER_SESSION
+    ) -> list[scheduler.ReviewPlan]:
+        """S0 5.6: due phrases, most overdue first, at most ``limit``, each with the family and prompt kind to use."""
+        at = now or self._clock.now()
+        with closing(self._conn()) as conn:
+            states = self._review_states(conn, learner_id)
+        return scheduler.plan_review(states, at, limit)
+
+    def get_spontaneous_candidates(
+        self, learner_id: int, register_profile: str, now: Optional[datetime] = None
+    ) -> list[str]:
+        """Phrase ids a scene may stealth-target: scheduled phrases that are due or at step 1 or higher whose
+        catalog register profiles include ``register_profile``. An unused opportunity writes nothing."""
+        at = now or self._clock.now()
+        with closing(self._conn()) as conn:
+            rows = conn.execute(
+                """
+                SELECT p.phrase_id, p.schedule_step, p.next_review_at_utc, c.register_profiles_json
+                FROM phrase_state_projection p JOIN phrase_catalog c ON c.phrase_id = p.phrase_id
+                WHERE p.learner_id = ? AND p.next_review_at_utc IS NOT NULL
+                ORDER BY p.next_review_at_utc ASC, p.phrase_id ASC
+                """,
+                (learner_id,),
+            ).fetchall()
+        picked: list[str] = []
+        for r in rows:
+            try:
+                registers = json.loads(r["register_profiles_json"] or "[]")
+            except (TypeError, ValueError):
+                registers = []
+            state = scheduler.ScheduleState(int(r["schedule_step"]), parse_iso(r["next_review_at_utc"]))
+            if register_profile in registers and scheduler.eligible_for_spontaneous(state, at):
+                picked.append(str(r["phrase_id"]))
+        return picked
+
+    def get_review_queue(
+        self, learner_id: int, now: Optional[datetime] = None, limit: int = 5
+    ) -> list[QueueEntry]:
+        """S0 5.8: the deferred feedback queue (pending, deferred, within 21 days or recurring), grouped by pattern."""
+        at = now or self._clock.now()
+        with closing(self._conn()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM feedback_item_projection WHERE learner_id = ? AND status != 'retracted'", (learner_id,)
+            ).fetchall()
+        items = [
+            QueueItem(
+                diagnostic_id=str(r["diagnostic_id"]),
+                learner_id=int(r["learner_id"]),
+                pattern_id=str(r["pattern_id"]),
+                priority_score=float(r["priority_score"]),
+                status=str(r["status"]),
+                delivery=str(r["delivery"]),
+                created_at=parse_iso(r["created_at_utc"]),
+                original_span=str(r["original_span"]),
+                alternative=str(r["alternative"]),
+                explanation_en=r["explanation_en"],
+                explanation_ar=r["explanation_ar"],
+            )
+            for r in rows
+        ]
+        return select_queue(items, at, limit)
+
+    def get_debrief_counts(self, session_id: str) -> DebriefCounts:
+        """S0 5.9: turns, cards shown and distinct target phrases used in one session (retractions excluded)."""
+        with closing(self._conn()) as conn:
+            events = conn.execute(
+                "SELECT event_id, event_type, payload_json FROM event_log WHERE session_id = ? ORDER BY event_seq",
+                (session_id,),
+            ).fetchall()
+            card_row = conn.execute(
+                "SELECT cards_in_scene FROM session_state_projection WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        retracted = {
+            str(json.loads(e["payload_json"]).get("target_event_id", ""))
+            for e in events
+            if e["event_type"] == "phrase_evidence_retracted"
+        }
+        turns = sum(1 for e in events if e["event_type"] == "learner_message_received")
+        used: set[str] = set()
+        for e in events:
+            if e["event_id"] in retracted:
+                continue
+            payload = json.loads(e["payload_json"])
+            if e["event_type"] == "retrieval_attempted":
+                if not payload.get("echo") and payload.get("outcome") in ("success", "hinted_success"):
+                    used.add(str(payload.get("phrase_id", "")))
+            elif e["event_type"] == "phrase_production_assessed":
+                if (
+                    payload.get("evidence") in ("independent_production", "spontaneous_production")
+                    and not payload.get("failed_attempt")
+                    and not payload.get("was_revealed_in_task")
+                    and not payload.get("was_directly_cued")
+                ):
+                    used.add(str(payload.get("target_id", "")))
+        used.discard("")
+        return DebriefCounts(turns=turns, cards_shown=int(card_row[0]) if card_row else 0, targets_used=len(used))
+
+    def seed_catalog(self, seed: "_catalog.CatalogSeed") -> "_catalog.SeedReport":
+        """Idempotent catalog seeding (S0 4.4) in one transaction, then a rebuild so family lists and the
+        phrase projections see the new rows."""
+        with self.transaction() as conn:
+            report = _catalog.seed_catalog(conn, seed)
+            rebuild_projections_in_tx(conn, learner_id=None)
+        return report
+
     # ------------------------------------------------------------------ event log (v1 and V2 writers)
 
     @staticmethod
@@ -1043,6 +1274,16 @@ class EventSourcedDatabase:
         rebuild_projections_in_tx(conn, learner_id=learner_id)
 
 
+class TakenDiagnosticIds:
+    """``in`` against ``feedback_item_projection`` without loading the table (pass as ``taken_ids``)."""
+
+    def __init__(self, db: "EventSourcedDatabase") -> None:
+        self._db = db
+
+    def __contains__(self, diagnostic_id: object) -> bool:
+        return isinstance(diagnostic_id, str) and self._db._has_diagnostic_id(diagnostic_id)
+
+
 # ==========================================================================================
 # Projection rebuild (v1-visible columns reproduced exactly; V3.0 projections added).
 #
@@ -1051,9 +1292,12 @@ class EventSourcedDatabase:
 # Changes from v2, all needed for that property:
 #   * phrase_state_projection.updated_at_utc is the time of the phrase's last event (v2 stamped
 #     the wall-clock time of the rebuild).
-# Not rebuilt here: the mastery aggregates of phrase_state_projection (success_count, dim_*,
-# schedule_step, ...) and the retrieval/reconstruction events; they belong to mastery.py and
-# scheduler.py (S3) and keep their column defaults until then.
+# S3: the mastery aggregates of phrase_state_projection (success_count, dim_*, schedule_step,
+# next_review_at_utc, ...) and the phrase_evidence rows of retrieval_attempted events are replayed
+# through mastery.PhraseTracker (which uses scheduler.advance). A phrase with no native V3 attempt keeps
+# the v2 stage ladder exactly (S0 4.3, the M003 golden); one with native attempts gets the V3 stage.
+# reconstruction_attempted carries no phrase evidence here (S0 5.7: reconstruction is graded for the
+# report, not for the ladder).
 # ==========================================================================================
 
 _PROJECTION_TABLES = (
@@ -1192,6 +1436,19 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
     phrase_events_map: dict[tuple[int, str], list[dict[str, Any]]] = {}
     evidence_rows: list[tuple[Any, ...]] = []
     feedback_items: dict[str, dict[str, Any]] = {}
+    # S3: per (learner, phrase) history for mastery.PhraseTracker, and the last evidence event of a phrase
+    v3_records: dict[tuple[int, str], list[tuple[Any, ...]]] = {}
+    last_phrase_event: dict[tuple[int, str], tuple[str, str]] = {}
+    learner_last_ts: dict[int, str] = {}
+    for ev in events:
+        learner_last_ts[ev.learner_id] = ev.occurred_at_utc
+    catalog_families: dict[str, tuple[str, ...]] = {}
+    for r in conn.execute("SELECT phrase_id, context_families_json FROM phrase_catalog"):
+        try:
+            families = tuple(str(f) for f in json.loads(r["context_families_json"] or "[]"))
+        except (TypeError, ValueError):
+            families = ()
+        catalog_families[str(r["phrase_id"])] = families or ("general",)
 
     for ev in events:
         ev_id = ev.event_id
@@ -1225,6 +1482,8 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
                     "valid": True,
                 }
             )
+            v3_records.setdefault((lid, pid), []).append(("exposure", occ_ts))
+            last_phrase_event[(lid, pid)] = (ev_id, occ_ts)
 
         elif etype == "analyst_diagnosis_recorded":
             backfilled = skipped_turns.get(str(payload.get("turn_event_id", "")), ev.event_seq + 1) < ev.event_seq
@@ -1438,6 +1697,7 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
             }
             if not retracted:
                 phrase_events_map.setdefault((lid, pid), []).append(item)
+                last_phrase_event[(lid, pid)] = (ev_id, occ_ts)
             # S0 5.5: evidence rows exist exactly where the v1 ladder counted the attempt as valid
             valid_rubric = (
                 item["fits_communicative_context"] and item["fits_register"] and item["phrase_specific_rubric_passed"]
@@ -1458,6 +1718,60 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
                     evidence_rows.append(
                         (ev_id, dimension, lid, pid, score, weight, "general", origin, hint_level, 0, None, 0, occ_ts, 1 if retracted else 0)
                     )
+                if not retracted:
+                    v3_records.setdefault((lid, pid), []).append(("legacy", ev_id, occ_ts, ev_type, origin, hint_level))
+
+        elif etype == "retrieval_attempted":
+            pid = str(payload.get("phrase_id", ""))
+            retracted = ev_id in retracted_phrase_events
+            if pid in catalog_rows:
+                v3_records.setdefault((lid, pid), []).append(("attempt", ev_id, occ_ts, dict(payload), retracted))
+                if not retracted and not payload.get("echo"):
+                    last_phrase_event[(lid, pid)] = (ev_id, occ_ts)
+
+    # ---- S3: replay every (learner, phrase) history through mastery.PhraseTracker (evidence rows, schedule, V3 columns)
+    trackers: dict[tuple[int, str], mastery.PhraseTracker] = {}
+    for (lid, pid), records in v3_records.items():
+        tracker = mastery.PhraseTracker(catalog_families=catalog_families.get(pid, ("general",)))
+        for rec in records:
+            if rec[0] == "exposure":
+                tracker.on_exposure(parse_iso(rec[1]))
+            elif rec[0] == "legacy":
+                _, _src, ts, legacy_evidence, legacy_origin, legacy_hint = rec
+                tracker.on_legacy(
+                    at=parse_iso(ts),
+                    evidence=legacy_evidence,
+                    origin=legacy_origin,
+                    hint_level=legacy_hint,
+                    rows=_LEGACY_EVIDENCE_ROWS[legacy_evidence],
+                )
+            else:
+                _, src_id, ts, attempt_payload, attempt_retracted = rec
+                try:
+                    attempt = mastery.AttemptRecord(
+                        event_id=src_id,
+                        occurred_at=parse_iso(ts),
+                        origin=str(attempt_payload.get("origin", "review")),
+                        outcome=str(attempt_payload.get("outcome", "failure")),
+                        hint_level=int(attempt_payload.get("hint_level", 0)),
+                        echo=bool(attempt_payload.get("echo", False)),
+                        context_family=str(attempt_payload.get("context_family", "general")),
+                        due=bool(attempt_payload.get("due", False)),
+                        linguistic_level=attempt_payload.get("linguistic_level"),
+                        functional_level=attempt_payload.get("functional_level"),
+                    )
+                    new_rows = tracker.on_attempt(attempt, retracted=attempt_retracted)
+                except (KeyError, TypeError, ValueError):
+                    continue  # a malformed historical attempt must not break the rebuild of everything else
+                for row in new_rows:
+                    evidence_rows.append(
+                        (
+                            row.source_event_id, row.dimension, lid, pid, row.score, row.weight, row.context_family,
+                            row.origin, row.hint_level, 1 if row.is_delayed else 0, row.gap_days,
+                            1 if row.echo else 0, ts, 1 if row.retracted else 0,
+                        )
+                    )
+        trackers[(lid, pid)] = tracker
 
     # ---- write: sessions, error patterns, feedback items, evidence
     for sid, s_proj in session_state.items():
@@ -1535,9 +1849,11 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
             row,
         )
 
-    # ---- phrase_state_projection: the v2 stage ladder, unchanged
-    for (lid, pid), ev_list in phrase_events_map.items():
-        if pid not in catalog_rows:
+    # ---- phrase_state_projection: the v2 ladder fills the v1-visible columns (and the stage of a phrase
+    # with no V3 attempt, S0 4.3); the V3 columns come from the trackers.
+    for lid, pid in dict.fromkeys([*phrase_events_map, *v3_records]):
+        ev_list = phrase_events_map.get((lid, pid), [])
+        if pid not in catalog_rows or (lid, pid) not in last_phrase_event:
             continue
         applicability = catalog_rows[pid]
         exposure_count = 0
@@ -1547,8 +1863,8 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
         spontaneous_count = 0
         qualifying_trials: list[dict[str, Any]] = []
         has_novel_context = False
-        last_ev_id = ev_list[-1]["event_id"]
-        latest_ts = _parse_iso_utc(ev_list[-1]["occurred_at_utc"])
+        last_ev_id, last_ts = last_phrase_event[(lid, pid)]
+        latest_ts = _parse_iso_utc(last_ts)
 
         recent_failure_active = False
         successes_since_last_recent_failure = 0
@@ -1642,6 +1958,10 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
         else:
             stage = "Unseen"
 
+        tracker = trackers.get((lid, pid)) or mastery.PhraseTracker(catalog_families=catalog_families.get(pid, ("general",)))
+        snap = tracker.snapshot()
+        if tracker.native_attempts > 0:
+            stage = tracker.stage(parse_iso(learner_last_ts[lid])).value
         conn.execute(
             """
             INSERT INTO phrase_state_projection (
@@ -1650,8 +1970,12 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
                 independent_count, spontaneous_count,
                 distinct_valid_sessions, distinct_valid_registers,
                 span_days, has_novel_context, recent_unretracted_failure,
-                last_evidence_event_id, updated_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_evidence_event_id, updated_at_utc,
+                success_count, independent_success_count, spontaneous_success_count,
+                delayed_success_count, max_delayed_gap_days, context_families_json, home_context_family,
+                dim_r, dim_p, dim_i, dim_t, dim_a, mastery_index, schedule_step, next_review_at_utc,
+                last_outcome, last_success_at_utc, unresolved_critical_errors
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 lid,
@@ -1668,7 +1992,25 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
                 1 if has_novel_context else 0,
                 1 if recent_failure_active else 0,
                 last_ev_id,
-                ev_list[-1]["occurred_at_utc"],
+                last_ts,
+                snap.success_count,
+                snap.independent_success_count,
+                snap.spontaneous_success_count,
+                snap.delayed_success_count,
+                snap.max_delayed_gap_days,
+                json.dumps(snap.families),
+                snap.home_context_family,
+                snap.dims.get("recognition"),
+                snap.dims.get("production"),
+                snap.dims.get("independence"),
+                snap.dims.get("transfer"),
+                snap.dims.get("pragmatic"),
+                snap.mastery_index,
+                snap.schedule_step,
+                to_iso(snap.next_review_at) if snap.next_review_at else None,
+                snap.last_outcome,
+                to_iso(snap.last_success_at) if snap.last_success_at else None,
+                snap.unresolved_critical_errors,
             ),
         )
 
@@ -1688,9 +2030,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     status_cmd = commands.add_parser("status", help="print the migration state as JSON (read-only)")
     status_cmd.add_argument("--db-path", default=DB_PATH)
     status_cmd.add_argument("--check", action="store_true", help="exit 10 when migrations are pending")
+    seed_cmd = commands.add_parser(
+        "seed-catalog", help="validate a catalog file (S0 4.4) and upsert it idempotently; --check only validates"
+    )
+    seed_cmd.add_argument("--db-path", default=DB_PATH)
+    seed_cmd.add_argument("--file", required=True, help="path of data/catalog_v1.0.0.json")
+    seed_cmd.add_argument("--check", action="store_true", help="validate the file and the release counts, write nothing")
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "seed-catalog":
+            seed = _catalog.load_seed(args.file)
+            problems = _catalog.check_release_counts(seed)
+            if args.check:
+                print(json.dumps({"catalog_version": seed.catalog_version, "problems": problems}, sort_keys=True))
+                return 1 if problems else 0
+            if problems:
+                print("seed-catalog failed: release counts differ: " + "; ".join(problems), file=sys.stderr)
+                return 1
+            _migrations.migrate(args.db_path, baseline_ddl=BASELINE_DDL)
+            report = EventSourcedDatabase(args.db_path).seed_catalog(seed)
+            print(json.dumps(dataclasses.asdict(report), sort_keys=True))
+            return 0
         if args.command == "migrate":
             applied = _migrations.migrate(args.db_path, baseline_ddl=BASELINE_DDL)
             report = _migrations.status(args.db_path)

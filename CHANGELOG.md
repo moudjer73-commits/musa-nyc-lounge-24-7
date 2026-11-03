@@ -1,5 +1,27 @@
 # Changelog
 
+## V3.0, Sprint S3: retrieval, mastery, scheduler, queue, catalog (Claude's files)
+
+Baseline after S2 (CI, commit e6b80bf): 743 tests (484 `tests_v3`, 239 `tests_v2`, 20 `tests.py`).
+After S3, run locally on Python 3.13: 992 tests (737 `tests_v3`, 235 `tests_v2`, 20 `tests.py`). The same 4-test difference in `tests_v2` was present before S3, so CI should show 996.
+`tests_v3` grows by 253: `test_mastery.py` 56, `test_scheduler.py` 47, `test_retrieval.py` 69, `test_feedback_queue.py` 17, `test_catalog.py` 28, `test_rebuild_v3.py` 36.
+One existing test helper was edited, for the reason below: `v1_columns()` in `tests_v3/test_migrations.py` no longer compares `phrase_state_projection.next_review_at_utc`. v2 had the column but never wrote it; M003's own list of v1-visible columns never included it; the scheduler now fills it.
+
+### New
+* `scheduler.py` (S0 5.6): intervals 1/3/7/14/30/60 days, entry on the first success from any origin, step moves only on scheduled (due) attempts, lateness never penalised, due selection (most overdue first, ties by lower step, at most 5), family rotation, prompt-kind rotation (never `spontaneous` in Review), spontaneous eligibility.
+* `mastery.py` (S0 5.5): quality q, evidence rows per attempt (production, independence, transfer, pragmatic), dimension scores, display-only mastery index, `PhraseTracker`, the Stable gate (`stable_gate` says which condition fails), the miss rule, and `effective_stage` (Stable stale after 90 days, read time).
+* `retrieval.py` (S0 5.7): Python-first grading. Echo (token Jaccard >= 0.8) is checked first, then token-aligned matching of the canonical and acceptable forms (slots 1 to 6 words, contractions), then the injected judge, which returns levels only; Python maps them to the outcome. A shed or missed deadline records nothing and the item stays due. Reconstruction uses the same pipeline. Prompts and hints are built here and never contain the target form.
+* `feedback_queue.py` (S0 5.8, 5.9): deferred queue selection (21-day window, recurrence rule, group by pattern, at most 5), merge rule, templated debrief (zero LLM calls).
+* `catalog.py` (S0 4.4): `CatalogSeed` model (a prompt may not contain its own expression), idempotent seeder (a row is written only when its stored version is lower; legacy is lowest; nothing is deleted), release-count check (7/42/56), `missing_live_phrases`, Zero-Bias grep helpers.
+* `database.py`: `python -m database seed-catalog --file F [--check]`; helpers `get_taken_diagnostic_ids(learner_id=None)`, `taken_diagnostic_ids()` (lazy container for `validate_analysis`), `get_phrase_entry`, `get_phrase_states`, `get_due_phrases`, `get_spontaneous_candidates`, `get_review_queue`, `get_debrief_counts`, `seed_catalog`.
+
+### Behaviour changes in existing code
+* `database.rebuild_projections_in_tx` now replays every (learner, phrase) history through `mastery.PhraseTracker`: `phrase_evidence` rows for `retrieval_attempted`, and the V3 columns of `phrase_state_projection` (counts, dimension scores, mastery index, schedule step, `next_review_at_utc`, last outcome, last success). A phrase with no native V3 attempt keeps the v2 stage ladder exactly (M003 golden unchanged); a phrase with native attempts gets the V3 stage. Still deterministic: no clock reads, two rebuilds byte-identical.
+* `validation.py`: `taken_ids` may be any container that supports `in` (ids given out in the same call are tracked locally).
+
+### Not done in S3, on purpose
+M004 as a numbered migration (the catalog content file is missing, and an applied migration is immutable), orchestrator wiring (S4), the V3 Analyst prompt and raw JSON shape, shrinking `policy_engine.py`, the retrieval judge prompt.
+
 ## V3.0, Sprint S2: validation and the policy resolver (Claude's files)
 
 Baseline after S1: 545 tests (235 `tests_v2` + 20 `tests.py` + 290 `tests_v3`).
