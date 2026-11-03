@@ -23,8 +23,10 @@ ever contains the target form (Zero-Bias).
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from schemas import (
@@ -410,3 +412,99 @@ def build_hint(entry: PhraseEntry, level: int) -> Optional[str]:
         return f"It starts with “{words[0]}”." if words else None
     masked = [w if w == "…" else (w[0] + "_" * (len(w) - 1) if len(w) > 1 else w) for w in words]
     return " ".join(masked)
+
+
+# ------------------------------------------------------------------------------ the LLM judge (S4)
+
+JUDGE_PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "retrieval_judge_system.md"
+
+# Gemini's wrapper over ``llm_transport`` fits this shape: (system_prompt, user_prompt) -> raw reply (a JSON
+# string, or an already parsed mapping). It may raise QuotaShed / DeadlineExceeded; those mean "shed".
+CallLLM = Callable[[str, str], Any]
+
+
+class JudgeParseError(ValueError):
+    """The judge reply is not the agreed JSON shape (not an object, a missing key, a level outside 0..3)."""
+
+
+def load_judge_prompt() -> str:
+    return JUDGE_PROMPT_FILE.read_text(encoding="utf-8").strip()
+
+
+def judge_user_payload(request: JudgeRequest) -> str:
+    """The user message for the judge. The learner's text travels as data inside a JSON object."""
+    return json.dumps(
+        {
+            "attempt_text": request.attempt_text,
+            "target_form": request.target_form,
+            "acceptable_forms": list(request.acceptable_forms),
+            "prompt_kind": request.prompt_kind or "spontaneous",
+            "context_family": request.context_family,
+            "communicative_intention": request.communicative_intention,
+            "hint_level": request.hint_level,
+            "shown_texts": list(request.shown_texts),
+        },
+        ensure_ascii=False,
+    )
+
+
+_FENCE_RE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n?(.*?)\n?\s*```\s*$", re.DOTALL)
+
+
+def _loads_object(raw: Any) -> Mapping[str, Any]:
+    if isinstance(raw, Mapping):
+        return raw
+    if not isinstance(raw, str):
+        raise JudgeParseError(f"judge reply must be a JSON object or string, got {type(raw).__name__}")
+    text = raw.strip()
+    fenced = _FENCE_RE.match(text)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        data = json.loads(text)
+    except ValueError:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise JudgeParseError("judge reply contains no JSON object") from None
+        try:
+            data = json.loads(text[start : end + 1])
+        except ValueError as err:
+            raise JudgeParseError(f"judge reply is not valid JSON: {err}") from None
+    if not isinstance(data, Mapping):
+        raise JudgeParseError("judge reply is not a JSON object")
+    return data
+
+
+def parse_judge_response(raw: Any) -> JudgeVerdict:
+    """Strict parse of the judge reply into a verdict. Raises ``JudgeParseError``; never guesses a level.
+
+    Code owns the flag: ``functional_equivalent_credited`` survives only when the levels agree with what
+    it claims (a different natural form that does the job: functional 2 or 3, linguistic 0 or 1).
+    """
+    data = _loads_object(raw)
+    levels: dict[str, int] = {}
+    for key in ("linguistic_level", "functional_level"):
+        value = data.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 3:
+            raise JudgeParseError(f"{key} must be an integer 0..3, got {value!r}")
+        levels[key] = value
+    flag = data.get("functional_equivalent_credited", False)
+    if not isinstance(flag, bool):
+        raise JudgeParseError(f"functional_equivalent_credited must be a boolean, got {flag!r}")
+    credited = flag and levels["functional_level"] >= 2 and levels["linguistic_level"] <= 1
+    return JudgeVerdict(levels["linguistic_level"], levels["functional_level"], credited)
+
+
+def make_judge(call_llm: CallLLM, *, system_prompt: Optional[str] = None) -> Judge:
+    """A ``Judge`` over a model call. A reply that cannot be parsed is a shed (nothing recorded, the item
+    stays due), exactly like a quota shed; the quota and deadline exceptions propagate to ``grade_attempt``."""
+    prompt = system_prompt if system_prompt is not None else load_judge_prompt()
+
+    def judge(request: JudgeRequest) -> JudgeVerdict:
+        raw = call_llm(prompt, judge_user_payload(request))
+        try:
+            return parse_judge_response(raw)
+        except JudgeParseError as err:
+            raise JudgeShed(f"unusable judge reply: {err}") from err
+
+    return judge

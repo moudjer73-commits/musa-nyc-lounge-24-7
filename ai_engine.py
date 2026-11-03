@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import threading
+from pathlib import Path
 from typing import Any, Callable, Optional
 import requests
 from config import (
@@ -113,6 +114,14 @@ Return ONLY valid JSON matching this exact structure:
   ],
   "target_assessments": []
 }"""
+
+# V3.0 Analyst: the raw shape that ``validation.validate_analysis`` accepts (S0 5.1). The v2 prompt above stays
+# wired to the v2 pipeline until the orchestrator is rewired; the V3 file is loaded on demand.
+ANALYST_V3_PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "analyst_v3_system.md"
+
+
+def load_analyst_v3_prompt() -> str:
+    return ANALYST_V3_PROMPT_FILE.read_text(encoding="utf-8").strip()
 
 
 def _fast_normalize_raw_analysis(raw_dict: dict[str, Any], learner_text: str) -> dict[str, Any]:

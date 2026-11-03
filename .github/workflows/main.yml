@@ -86,6 +86,7 @@ jobs:
             exit "$STATUS_EXIT"
           fi
           python -m database migrate --db-path "$DB"
+          python -m database seed-catalog --file data/catalog_v1.0.0.json
 
 
       - name: Alert Admin on Startup / Test / Migration Failure

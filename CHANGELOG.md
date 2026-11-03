@@ -1,5 +1,25 @@
 # Changelog
 
+## V3.0, Sprint S4: catalog v1.0.0, Zero-Bias, V3 Analyst prompt, retrieval judge (Claude's files)
+
+Baseline after S3 (CI): 996 tests (737 `tests_v3`, 239 `tests_v2`, 20 `tests.py`); the same suite run locally on Python 3.13 gave 992 (235 `tests_v2`).
+After S4, run locally on Python 3.13: 1071 tests (816 `tests_v3`, 235 `tests_v2`, 20 `tests.py`), so CI should show 1075.
+`tests_v3` grows by 79: `test_catalog_release.py` 18, `test_analyst_v3_prompt.py` 17, `test_judge.py` 40, `test_policy_engine_shrink.py` 4.
+No existing test was edited. All 992 earlier tests pass unchanged.
+
+### New
+* `data/catalog_v1.0.0.json`: the release catalog (S0 4.4). 7 competencies, 42 subskills (6 each), 56 expressions (8 per competency), all 8 live phrase ids with their v2 canonical forms, register profiles and applicability, Arabic glosses, and the three retrieval prompts (`meaning_prompt`, `situation_prompt`, `function_prompt`) for each. Every expression has at least 2 non-general context families, so the Stable gate can be reached for all of them. Seed it with `python -m database seed-catalog --file data/catalog_v1.0.0.json` after `migrate` (idempotent; no M004).
+* `prompts/analyst_v3_system.md`: the V3 Analyst prompt and the raw JSON it must return (nested `communicative`, `p0`, `diagnostics[]` with `repair_scope`, `communicative_impact`, `learning_value`, `linguistic_confidence` / `pragmatic_confidence`, `target_assessments`). Ids, offsets, band, priority and acoustic fields are code-owned and never requested. Three worked examples; the tests run them through `validation.validate_analysis` and require nothing dropped. `ai_engine.load_analyst_v3_prompt()` loads it. The v2 inline prompt stays wired to the v2 pipeline until the orchestrator rewire.
+* `prompts/retrieval_judge_system.md` and, in `retrieval.py`: `load_judge_prompt`, `judge_user_payload`, `parse_judge_response` (strict, raises `JudgeParseError`), `make_judge(call_llm)` (an unusable reply becomes `JudgeShed`, so nothing is recorded and the item stays due). The judge returns two levels and a flag, never an outcome; code owns the flag (it survives only with functional >= 2 and linguistic <= 1).
+
+### Behaviour changes in existing code
+* `catalog.zero_bias_violations` reports every offending file (it used to stop at the first hit per expression, which hid a second overlap in `card_writer_system.md`).
+* Zero-Bias cleanup, 5 prompt files, examples rewritten so none of the 56 canonical or acceptable forms appears in `prompts/` or `eval/`: `_partials/l1_taxonomy.md`, `_partials/registers.md`, `analyst_system.md`, `responder_system.md`, `card_writer_system.md`. `RENDERED_PROMPTS.md` regenerated. Python files with inline v2 prompts (`ai_engine.py`, `orchestrator.py`) were checked too: no hits.
+* `policy_engine.py`: only `get_updated_user_guide_html` removed (no caller in any file). `decide`, `validate_analyst_output_against_turn`, `compute_learner_strain`, the workout helpers `decide` calls, and the session registries stay because `orchestrator.py`, `ai_engine.py`, `app.py` and `tests.py` still import them. The module docstring now says what V3 replaced and where new rules go.
+
+### Not done in S4, on purpose
+Orchestrator rewiring, the scripted-LLM end-to-end test and the canary (S0 "integration"); deleting `decide` and the other superseded v2 policy code (goes with that rewire); calibration of `ABSTAIN_THRESHOLD` and the score weights (needs the eval harness and a gold set).
+
 ## V3.0, Sprint S3: retrieval, mastery, scheduler, queue, catalog (Claude's files)
 
 Baseline after S2 (CI, commit e6b80bf): 743 tests (484 `tests_v3`, 239 `tests_v2`, 20 `tests.py`).

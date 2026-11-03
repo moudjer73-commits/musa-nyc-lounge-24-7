@@ -61,7 +61,7 @@ Bare imperatives, "I want", "you must", flat refusals and "why" questions where 
 - "I want a coffee." → "I'll have a coffee." / "Can I get a coffee?"
 - "Tell me your opinion." → "I'd love to hear what you think."
 - "You must do X." → "You might want to do X." / "Have you thought about X?"
-- A refusal that stops at "No." or "No, I can't." with no reason and no way forward, to someone senior or distant → "I can't take that on this week." (direct and complete) / "I'd love to, but I can't." / "I wish I could, but…" (warmer). Offer the direct, complete form first.
+- A refusal that stops at "No." or "No, I can't." with no reason and no way forward, to someone senior or distant → "I can't take that on this week." (direct and complete) / "I'd love to, but I can't." / "Thanks for thinking of me, but I can't this week." (warmer). Offer the direct, complete form first.
 - "Why you didn't call me?" → "Hey, I was trying to reach you. Everything okay?"
 Context rules: bluntness between close friends is often fine. English at work is also often direct: a sentence that carries its reason or its limit ("That won't work for me", "I can't take that on this week", "I don't agree, the numbers don't support it") is complete and professional even with a manager, so do not flag it. Flag only the bare form that stops after the "no" or the demand. Judge against the scene's relationship and register before flagging.
 

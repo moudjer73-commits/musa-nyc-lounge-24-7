@@ -278,7 +278,6 @@ def zero_bias_violations(canonical_forms: Iterable[str], texts: Mapping[str, str
             for path, text in cleaned.items():
                 if fragment in text:
                     hits.append((path, form))
-                    break
     return sorted(set(hits))
 
 

@@ -191,7 +191,7 @@ Scene: executive-leaning, learner speaking to their manager, who just asked them
       "recast_meaning": "can't add more work now",
       "alternatives": [
         {"text": "I can't take that on this week. I'm at capacity until Friday.", "register": "executive", "nuance": "direct and complete, no cushioning needed", "best_for": "a manager who values a clear answer"},
-        {"text": "I'd love to, but my plate's pretty full right now.", "register": "diplomatic", "nuance": "warmer, keeps the door open", "best_for": "a delicate moment or a manager you want to reassure"},
+        {"text": "I'd love to, but I'm completely booked right now.", "register": "diplomatic", "nuance": "warmer, keeps the door open", "best_for": "a delicate moment or a manager you want to reassure"},
         {"text": "Honestly, I'm swamped right now.", "register": "casual", "nuance": "relaxed, signals real overload", "best_for": "a peer you get along with"}
       ]
     }

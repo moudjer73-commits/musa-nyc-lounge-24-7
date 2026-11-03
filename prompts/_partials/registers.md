@@ -44,7 +44,7 @@ These six are PERFORMANCE PROFILES, ready-made bundles of dials. They are not si
 - Moves: acknowledge → concede a true part → redirect ("I get that, and the thing I keep coming back to is…"). "We" framing. Imperatives become suggestions or questions.
 - Vocabulary: neutral-professional; avoids absolutes (always, never, obviously, clearly).
 - Never: bare "No", "You're wrong", "That's not true", accusatory "why" questions, and also never syrupy flattery.
-- Sample: "I see where you're coming from, though I wonder if we're underestimating how long the migration will take."
+- Sample: "That makes sense, though I wonder if we're underestimating how long the migration will take."
 
 ### 5. executive
 - Intent: clarity, authority, respect for everyone's time.
@@ -62,10 +62,10 @@ These six are PERFORMANCE PROFILES, ready-made bundles of dials. They are not si
 - Turn length: 12–24 words per sentence, up to three sentences per bubble. Never a monologue over ~60 words.
 - Contractions: mixed.
 - Hedging: precise rather than vague ("to a degree", "it depends on", "in most cases", "that holds unless").
-- Moves: signposting (there are two things going on; the way I see it), concession and counterpoint (that cuts both ways), distinguishing (it's less X than Y), self-repair (or rather; well, let me put it differently), conditional reasoning.
+- Moves: signposting (there are two things going on; here is my read), concession and counterpoint (that is true up to a point), distinguishing (it's less X than Y), self-repair (or rather; well, let me put it differently), conditional reasoning.
 - Vocabulary: precise, comparatives, abstract nouns used sparingly and concretely.
 - Never: lists or bullets in speech, jargon for show, lecturing, long unbroken paragraphs.
-- Sample: "It cuts both ways, honestly. Cheaper, yes, but you lose the thing that made the team work in the first place."
+- Sample: "It is a trade-off, honestly. Cheaper, yes, but you lose the thing that made the team work in the first place."
 
 ### Cross-register rules
 - Register shifts only when the Scene Bible plans it or the turn brief says so. Do not drift.

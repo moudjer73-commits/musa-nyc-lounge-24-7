@@ -1,3 +1,20 @@
+"""policy_engine.py (V3.0 status, owner Claude).
+
+Shrunk in S4: only the stale v2 ``get_updated_user_guide_html`` (no caller anywhere) was removed. The workout
+helpers ``should_schedule_micro_workout`` and ``_is_pattern_relevant_to_goals`` stay because ``decide`` calls them.
+
+What V3.0 replaced, and what is kept only because the v2 call sites still import it:
+
+* ``decide`` and ``validate_analyst_output_against_turn`` are superseded by ``feedback_policy.resolve_interaction_policy``
+  and ``validation.validate_analysis``. They stay until the orchestrator is rewired (they are imported by ``orchestrator.py``,
+  ``ai_engine.py`` and ``tests.py``), and are deleted in that change together with the tests that pin them.
+* ``compute_learner_strain`` is still the strain source for ``feedback_policy`` (the contract says to port it
+  from here), so it stays.
+* The decode and workout session registries, the auto-voice preference and ``extract_alex_spoken_text`` are v2
+  runtime helpers that ``app.py`` and the orchestrator still call; they are not policy and move with the app layer.
+
+Do not add new policy logic here: new rules go to ``feedback_policy.py`` or ``validation.py``.
+"""
 from typing import Any, Optional
 import html
 import re
@@ -663,35 +680,6 @@ BOT_COMMANDS_SPEC: list[tuple[str, str]] = [
     ("guide", "📖 Updated v2 User Guide (EN / AR)"),
     ("start", "🟢 Open lab & restore keyboard"),
 ]
-
-
-def get_updated_user_guide_html() -> str:
-    return (
-        "📖 <b>Spoken English Lab — v2 User Guide</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🎙️ <b>1. Instant Dual-Engine Conversation</b>\n"
-        "Talk naturally with <b>Alex</b>. Replies arrive in under a second while the silent analyst attaches a "
-        "<b>💡 Quick Upgrade</b> button only when a real spoken upgrade exists.\n"
-        "• <b>🌤️ Light:</b> Paced cards with cooldown.\n"
-        "• <b>🔬 Active:</b> Instant upgrade card on every turn with an issue.\n\n"
-        "🏋️ <b>2. Phrase Workout (Task-Aware)</b>\n"
-        "Tests spontaneous retrieval in a fresh scenario without leaking the target phrase. Any natural American phrasing "
-        "that fulfills the goal counts! If you drift off-task, Alex will naturally re-open the opportunity in-character.\n\n"
-        "🎧 <b>3. Listen &amp; Decode (2-Phase Interactive)</b>\n"
-        "• <b>Phase 1:</b> Listen to the reduced American clip (<i>Whaddaya, Mighta, Didja</i>) and reply with what the speaker <i>really</i> means.\n"
-        "• <b>Phase 2:</b> Get instant comprehension feedback plus the full unpacked form, IPA, and Arabic/English subtext (or tap <b>🔍 Reveal Breakdown</b> anytime).\n\n"
-        "🎛️ <b>4. Spoken-First Register Shift</b>\n"
-        "Send any thought in <b>🎛️ Register Shift</b> to hear how Americans say it out loud across <b>Casual</b>, "
-        "<b>Diplomatic</b>, and crisp <b>Executive</b> meeting speech—never stiff written memo prose.\n\n"
-        "📈 <b>5. Cross-Register Mastery Lifecycle</b>\n"
-        "Phrases progress from <code>EXPOSED → ATTEMPTED → CONSOLIDATING → STABLE</code>. Reaching <b>STABLE</b> requires "
-        "using the phrase naturally across at least <b>2 formality bands</b> (Informal / Neutral / Executive) with 24h spacing.\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 <b>ملخص سريع بالعربية:</b>\n"
-        "• اضغط على <b>💡 Quick Upgrade</b> أسفل رد Alex لعرض بطاقة التصحيح والأثر السماعي الأمريكي.\n"
-        "• في <b>🎧 Listen &amp; Decode</b> أرسل تفسيرك للمعنى المبطن أولاً ليقيمه البوت ويكشف التفكيك الصوتي.\n"
-        "• استخدم زر القائمة <b>( / )</b> أسفل الشاشة للوصول السريع لجميع الأوامر في أي وقت."
-    )
 
 
 _AUTO_VOICE_PREFS: dict[str, bool] = {}
