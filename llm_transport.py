@@ -416,6 +416,13 @@ class LLMTransport:
                 last_error = RuntimeError(f"HTTP {resp.status_code} on ({proj_label}, {model})")
                 continue
 
+            if resp.status_code == 404:
+                with self._lock:
+                    self._mark_cooldown(proj_label, model, 3600.0)
+                attempts_made = max(0, attempts_made - 1)
+                last_error = RuntimeError(f"HTTP 404 on {model}: {resp.text[:200]}")
+                continue
+
             if resp.status_code != 200:
                 last_error = RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
                 continue

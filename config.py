@@ -46,11 +46,10 @@ GEMINI_API_KEY: str = GEMINI_KEYS_LIST[0] if GEMINI_KEYS_LIST else ""
 
 # 2026 Official Best-in-Class Gemini Model Tiers:
 GEMINI_FLASH_TIER_CHAIN: list[str] = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+    "gemini-3.5-flash",
     "gemini-3-flash-preview",
-    "gemini-3.5-flash-lite",
-    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
 ]
 
 GEMINI_PRO_TIER_CHAIN: list[str] = [
@@ -72,12 +71,12 @@ ABSTAIN_THRESHOLD: float = float(os.getenv("ABSTAIN_THRESHOLD", "0.80"))
 if "GEMINI_API_KEYS" not in globals():
     GEMINI_API_KEYS: list[str] = list(GEMINI_KEYS_LIST)
 
-if "GEMINI_MODEL_CHAIN" not in globals():
-    GEMINI_MODEL_CHAIN: list[str] = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-2.5-pro",
-    ]
+GEMINI_MODEL_CHAIN: list[str] = [
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+]
 
 
 def get_labeled_gemini_keys() -> list[tuple[str, str]]:
