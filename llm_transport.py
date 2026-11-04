@@ -75,12 +75,14 @@ class _CallPolicy:
     per_attempt_cap_s: float
     thinking_budget: int | None
     sheddable: bool
+    temperature: float = 0.35
+    max_output_tokens: int | None = None
 
 
 _POLICIES: dict[str, _CallPolicy] = {
     "responder": _CallPolicy(10.0, 2, 5.5, 0, False),
     "analyst": _CallPolicy(30.0, 2, 18.0, 1024, True),
-    "judge": _CallPolicy(12.0, 2, 6.5, 512, True),
+    "judge": _CallPolicy(12.0, 2, 6.5, 512, True, 0.0, 40),
     "generator": _CallPolicy(15.0, 2, 8.0, 0, True),
 }
 
@@ -346,6 +348,8 @@ class LLMTransport:
                 user=user,
                 thinking_budget=used_thinking,
                 response_schema=response_schema if caps.get("response_schema", True) else None,
+                temperature=policy.temperature,
+                max_output_tokens=policy.max_output_tokens,
             )
             url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent?key={api_key}"
 
@@ -387,6 +391,8 @@ class LLMTransport:
                     user=user,
                     thinking_budget=None,
                     response_schema=None,
+                    temperature=policy.temperature,
+                    max_output_tokens=policy.max_output_tokens,
                 )
                 try:
                     resp = self._http_post(url, json=fallback_payload, timeout=min(policy.per_attempt_cap_s, remaining))
@@ -455,15 +461,19 @@ class LLMTransport:
         user: str | list[dict[str, Any]],
         thinking_budget: int | None,
         response_schema: dict[str, Any] | None,
+        temperature: float = 0.35,
+        max_output_tokens: int | None = None,
     ) -> dict[str, Any]:
         if isinstance(user, str):
             contents = [{"role": "user", "parts": [{"text": user}]}]
         else:
             contents = user
         gen_cfg: dict[str, Any] = {
-            "temperature": 0.35,
+            "temperature": temperature,
             "responseMimeType": "application/json",
         }
+        if max_output_tokens is not None:
+            gen_cfg["maxOutputTokens"] = int(max_output_tokens)
         if response_schema is not None:
             gen_cfg["responseSchema"] = response_schema
         if thinking_budget is not None:
