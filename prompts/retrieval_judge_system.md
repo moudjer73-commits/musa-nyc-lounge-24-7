@@ -14,7 +14,7 @@ A JSON user message with:
 - `prompt_kind`: `meaning`, `situation`, `function` or `spontaneous`: how the learner was cued.
 - `context_family`: the kind of situation (for example `workplace`).
 - `communicative_intention`: what the expression is for, as a snake_case label.
-- `hint_level`: 0 none, 1 an Arabic gloss was shown, 2 the first letters were shown.
+- `hint_level`: 0 none, 1 the first letters of each word were shown, 2 the Arabic gloss was shown.
 - `shown_texts`: everything the learner was shown (prompt, hint, cards). If the attempt only repeats these, return 0 and 0.
 
 ## 2. THE TWO LEVELS

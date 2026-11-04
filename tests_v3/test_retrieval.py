@@ -355,17 +355,17 @@ def test_an_unknown_prompt_kind_is_an_error():
         build_prompt(entry(), "riddle")
 
 
-def test_hint_level_0_is_nothing_level_1_is_the_gloss_level_2_is_the_first_letters():
+def test_hint_level_0_is_nothing_level_1_is_the_structure_level_2_is_the_gloss():
     e = entry()
     assert build_hint(e, 0) is None
-    assert build_hint(e, 1) == "بالمناسبة"
-    assert build_hint(e, 2) == "c___ t_ t____ o_ i_"
+    assert build_hint(e, 1) == "c___ t_ t____ o_ i_"
+    assert build_hint(e, 2) == "بالمناسبة"
 
 
-def test_hint_level_1_without_a_gloss_gives_the_first_word_and_slots_stay_visible_at_level_2():
+def test_hint_level_2_without_a_gloss_gives_the_first_word_and_slots_stay_visible_at_level_1():
     e = entry(arabic_gloss=None, canonical_form="run [something] by [someone]")
-    assert build_hint(e, 1) == "It starts with “run”."
-    assert build_hint(e, 2) == "r__ … b_ …"
+    assert build_hint(e, 1) == "r__ … b_ …"
+    assert build_hint(e, 2) == "It starts with “run”."
 
 
 def test_no_hint_reveals_the_whole_phrase():

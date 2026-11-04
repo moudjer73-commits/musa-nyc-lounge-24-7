@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 import requests
@@ -13,14 +14,13 @@ from config import (
     GEMINI_PRO_TIER_CHAIN,
 )
 from policy_engine import (
-    DialogueController,
     normalize_arabic_english_formatting,
     register_workout_task,
-    validate_analyst_output_against_turn,
     validate_responder_output,
 )
 from schemas import (
-    Analysis,
+    CallMetaDict,
+    ComprehensionStatus,
     DecodeEvaluationResult,
     DialogueDecision,
     DirectnessLevel,
@@ -48,75 +48,13 @@ Rules:
    - Do NOT start your reply with any word in `avoid_openers`.
    - If `advisory_recast_candidate` is given, weave it naturally only if it fits organically.
 4. If `active_workout_task` is provided: check whether `learner_message` accomplishes `active_workout_task.prompt_question` (accept any natural phrasing). If the learner missed or ignored the task goal, respond naturally to what they said AND re-open the situation in-character so they still have an organic reason to fulfill `prompt_question`—never scold, quiz, or leak `forbidden_form`.
+5. Set `comprehension_status` honestly: "ok" when you understood the learner, "ambiguous" when you could not tell what they meant and your reply asks about it, "reversed" when you understood the opposite of what they likely meant. When it is not "ok", ask ONE short, natural question about the unclear part and nothing else.
+6. If `pending_clarification` is given, the learner's previous message was unclear. Work that one question into your reply naturally, in your own voice, without mentioning a check or a correction.
 Return ONLY valid JSON:
-{"reply_text": "1-2 natural spoken sentences", "second_bubble_text": null, "recast_used": false, "elicitation_used": false}"""
+{"reply_text": "1-2 natural spoken sentences", "second_bubble_text": null, "recast_used": false, "elicitation_used": false, "comprehension_status": "ok"}"""
 
-ANALYST_SYSTEM_PROMPT = """You are a fast, silent linguistic & pragmatic diagnostician for an L1-Arabic speaker of Spoken American English.
-Rules:
-1. If `learner_message` is natural and effective, return `"diagnostics": []`.
-   If `active_workout_task` is provided, evaluate linguistic quality and task completion independently: set `"communicative_goal_achieved": true` ONLY if `learner_message` fulfills `active_workout_task.prompt_question` (via any natural expression) or logically declines it in-scene; set `"communicative_goal_achieved": false` if the learner ignores or misses the task.
-2. Otherwise return up to 3 diagnostics ordered by impact. `original_span` MUST be an exact substring of `learner_message`.
-3. False-Alarm Calibration & Directness (Groups 4 & 6):
-   - NEVER flag idiomatic, acceptable spoken American English just to sound "fancier" or "softer".
-   - Direct is NOT rude, and softer is NOT always better: in `direct` or `executive` contexts, crisp directness is a strength; only flag pragmatics when a bare imperative or blunt refusal violates the active relationship/register or when the learner caves in (`pragmatic_cave_in: true`).
-4. Arabic L1 codes (`l1_pattern` & `l1_source_ar`):
-   - `COLLOC_LIGHT_VERB`: "did an effort", "took a decision", "do a mistake" («بذل جهدًا»، «اتّخذ قرارًا») -> `made an effort`, `made a decision`.
-   - `COLLOC_PREP_VERB`: "explain me", "reply my message", "reach to" («شرح لي»، «ردّ على»، «وصل إلى») -> `explain to me`, `reply to my message`, `reach`.
-   - "discuss about" -> `discuss` is an English-internal analogy with "talk about", NOT an Arabic transfer: Standard Arabic ناقش is directly transitive (ناقش الموضوعَ), like English "discuss the topic". Keep `l1_transfer_likely` false, and never write «ناقش في» (or any ناقش + preposition frame) in `explanation_ar`, `l1_source_ar` or `l1_transfer_evidence`.
-   - `COLLOC_OPEN_CLOSE`: "open/close the AC, light, TV" («افتح/أغلق المكيف أو النور») -> `turn on / turn off`.
-   - `GRAM_RESUMPTIVE_PRONOUN`: "the room that we are sitting in it" («الغرفة التي نجلس فيها») -> drop resumptive pronoun (`the room we're sitting in`).
-   - `COLLOC_INTENSIFIER`: "too much hot" -> `way too hot` / `super hot`.
-   - `GRAM_DEF_ARTICLE_ABSTRACT`, `DISC_WRITTEN_CONNECTORS`, `PRAG_DIRECT_IMPERATIVE_REQUEST`, `PRAG_LITERAL_REFUSAL`.
-4. `listener_effect`: 1 crisp sentence on how `original_span` sounds to a native American ear.
-5. `explanation_ar`: Modern Standard Arabic, <=180 chars, neutral respectful tone, quote Arabic phrases with « », keep English words in Latin script without quotes.
-
-Return ONLY valid JSON matching this exact structure:
-{
-  "communicative_intention": "share_comment",
-  "learner_invites_question": false,
-  "communicative_goal_achieved": true,
-  "pragmatic_cave_in": false,
-  "requires_clarification": false,
-  "in_emotional_or_story_flow": false,
-  "diagnostics": [
-    {
-      "diagnostic_id": "d1",
-      "original_span": "exact substring from learner_message",
-      "normalized_pattern_id": "COLLOC_LIGHT_VERB:make_effort",
-      "relevant_context_family": "global",
-      "intended_meaning": "put effort into",
-      "kind": "collocation",
-      "severity": "medium",
-      "alternative": "made an effort",
-      "secondary_alternatives": [
-        {
-          "phrase": "went out of my way",
-          "register_profile": "casual",
-          "directness": "balanced",
-          "pragmatic_effect": "Warm and idiomatic when emphasizing extra effort"
-        }
-      ],
-      "alternative_status": "required",
-      "recast_candidate": "made a real effort",
-      "listener_effect": "Clear in meaning, but 'did an effort' sounds translated word-for-word.",
-      "explanation_en": "In American English, 'effort' pairs with 'make' or 'put in', not 'do'.",
-      "explanation_ar": "في العربية نقول «بذل جهدًا»، أما الإنجليزية فتجمع effort مع الفعل make فنقول make an effort.",
-      "l1_pattern": "COLLOC_LIGHT_VERB",
-      "l1_source_ar": "بذل جهدًا",
-      "l1_transfer_likely": true,
-      "l1_transfer_evidence": "Light-verb calque from Arabic بذل جهدًا",
-      "teachable_now": true,
-      "preserves_intended_meaning": true,
-      "context_fit_verified": true,
-      "confidence_band": "high",
-      "confidence_score": 0.92
-    }
-  ],
-  "target_assessments": []
-}"""
-
-# V3.0 Analyst: the raw shape that ``validation.validate_analysis`` accepts (S0 5.1). The v2 prompt above stays
-# wired to the v2 pipeline until the orchestrator is rewired; the V3 file is loaded on demand.
+# V3.0 Analyst: the raw shape that ``validation.validate_analysis`` accepts (S0 5.1). The v2 inline Analyst
+# prompt and its normalizer were removed in S5 together with ``validate_analyst_output_against_turn``.
 ANALYST_V3_PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "analyst_v3_system.md"
 
 
@@ -124,134 +62,68 @@ def load_analyst_v3_prompt() -> str:
     return ANALYST_V3_PROMPT_FILE.read_text(encoding="utf-8").strip()
 
 
-def _fast_normalize_raw_analysis(raw_dict: dict[str, Any], learner_text: str) -> dict[str, Any]:
-    """
-    Zero-retry deterministic normalizer: repairs minor LLM field slips in <0.1ms
-    while preserving valid diagnostics and target_assessments.
-    """
-    if not isinstance(raw_dict, dict):
-        return {"communicative_intention": "share_comment", "diagnostics": [], "target_assessments": []}
+@dataclass(frozen=True)
+class _CallResult:
+    """Stand-in for ``llm_transport.CallResult`` on the legacy single-model path."""
 
-    raw_diags = raw_dict.get("diagnostics") or []
-    clean_diags = []
-    for idx, d in enumerate(raw_diags[:3]):
-        if not isinstance(d, dict):
-            continue
-        span = str(d.get("original_span") or "").strip()
-        if not span or span.lower() not in learner_text.lower():
-            continue
-        m = re.search(re.escape(span), learner_text, flags=re.IGNORECASE)
-        if m:
-            d["original_span"] = m.group(0)
+    value: Any
+    meta: Any = None
 
-        d["diagnostic_id"] = str(d.get("diagnostic_id") or f"d{idx+1}")
-        pat = str(d.get("normalized_pattern_id") or "").strip()
-        if len(pat) < 3:
-            pat = f"PAT_{re.sub(r'[^a-zA-Z0-9]+', '_', span.lower()).strip('_')[:24]}"
-        d["normalized_pattern_id"] = pat
-        d.setdefault("relevant_context_family", "global")
 
-        kind = str(d.get("kind") or "collocation").lower()
-        if kind not in {
-            "grammar", "collocation", "idiomaticity", "register", "pragmatics",
-            "discourse", "optional_upgrade", "acceptable_variation", "insufficient_context",
-        }:
-            kind = "collocation"
-        d["kind"] = kind
+@dataclass(frozen=True)
+class ResponderResult:
+    output: ResponderOutput
+    comprehension_status: ComprehensionStatus = ComprehensionStatus.OK
+    call_meta: Optional[CallMetaDict] = None
 
-        sev = str(d.get("severity") or "medium").lower()
-        d["severity"] = sev if sev in {"low", "medium", "high"} else "medium"
 
-        alt = str(d.get("alternative") or "").strip()
-        if not alt:
-            continue
-        d["alternative"] = alt
+_GREETINGS = frozenset({"hey", "hi", "hello", "yo", "sup", "morning", "evening", "alex", "guys", "there", "ok", "okay", "thanks", "yes", "no"})
 
-        status = str(d.get("alternative_status") or "recommended").lower()
-        if kind in {"optional_upgrade", "acceptable_variation", "insufficient_context"} and status == "required":
-            status = "optional"
-        if status not in {"required", "recommended", "optional"}:
-            status = "recommended"
-        d["alternative_status"] = status
 
-        if not d.get("intended_meaning"):
-            d["intended_meaning"] = f"Express '{alt}' naturally"
+def is_trivial_message(text: str) -> bool:
+    """A greeting or an acknowledgement of three words or fewer: nothing to diagnose (``SkipReason.TRIVIAL``)."""
+    words = (text or "").strip().split()
+    return bool(words) and len(words) <= 3 and all(w.lower().strip(".,!?") in _GREETINGS for w in words)
 
-        d["preserves_intended_meaning"] = True
-        d["context_fit_verified"] = True
-        d["teachable_now"] = bool(d.get("teachable_now", True))
 
-        try:
-            score = float(d.get("confidence_score", 0.90))
-        except Exception:
-            score = 0.90
-        score = max(0.0, min(1.0, score))
-        if score >= 0.80:
-            band = "high"
-        elif score >= 0.65:
-            band = "medium"
-        else:
-            score = 0.88
-            band = "high"
-        d["confidence_score"] = score
-        d["confidence_band"] = band
+def _default_call_json() -> Optional[Callable[..., Any]]:
+    try:
+        import llm_transport  # type: ignore[import-not-found]
+    except Exception:
+        return None
+    return getattr(llm_transport, "call_json", None)
 
-        if d.get("l1_source_ar") or d.get("l1_pattern"):
-            d["l1_transfer_likely"] = True
-        if d.get("l1_transfer_likely") and not d.get("l1_transfer_evidence"):
-            d["l1_transfer_evidence"] = str(d.get("l1_source_ar") or d.get("l1_pattern") or "Arabic L1 transfer")
 
-        exp_en = str(d.get("explanation_en") or "").strip()
-        if len(exp_en) < 5:
-            exp_en = f"In spoken American English, '{alt}' is more natural here."
-        d["explanation_en"] = exp_en[:235]
+def _coerce_call_class(value: str) -> Any:
+    """``llm_transport.CallClass`` when the transport defines one (a str-valued enum), else the plain string."""
+    try:
+        import llm_transport  # type: ignore[import-not-found]
 
-        if d.get("explanation_ar"):
-            d["explanation_ar"] = normalize_arabic_english_formatting(str(d["explanation_ar"]).strip())[:195]
-        if d.get("listener_effect"):
-            d["listener_effect"] = str(d["listener_effect"]).strip()[:195]
-        if d.get("l1_pattern"):
-            d["l1_pattern"] = str(d["l1_pattern"]).strip()[:60]
-        if d.get("l1_source_ar"):
-            d["l1_source_ar"] = str(d["l1_source_ar"]).strip()[:75]
+        return llm_transport.CallClass(value)
+    except Exception:
+        return value
 
-        sec_alts = []
-        for sa in (d.get("secondary_alternatives") or [])[:2]:
-            if isinstance(sa, dict) and sa.get("phrase"):
-                reg_p = str(sa.get("register_profile") or "casual").lower()
-                if reg_p not in {"casual", "warm", "witty", "diplomatic", "executive", "analytical"}:
-                    reg_p = "casual"
-                dir_p = str(sa.get("directness") or "balanced").lower()
-                if dir_p not in {"soft", "balanced", "direct"}:
-                    dir_p = "balanced"
-                sec_alts.append({
-                    "phrase": str(sa["phrase"]).strip(),
-                    "register_profile": reg_p,
-                    "directness": dir_p,
-                    "pragmatic_effect": str(sa.get("pragmatic_effect") or "Natural spoken option")[:155],
-                })
-        d["secondary_alternatives"] = sec_alts
-        clean_diags.append(d)
 
-    raw_dict["diagnostics"] = clean_diags
+def _meta_dict(meta: Any) -> Optional[CallMetaDict]:
+    if meta is None:
+        return None
+    try:
+        return CallMetaDict.from_meta(meta)
+    except Exception:
+        return None
 
-    # Preserve valid target_assessments if present
-    raw_tas = raw_dict.get("target_assessments") or []
-    clean_tas = []
-    for ta in raw_tas[:3]:
-        if isinstance(ta, dict) and ta.get("target_id") and ta.get("matched_span"):
-            m_span = str(ta["matched_span"]).strip()
-            if m_span and m_span.lower() in learner_text.lower():
-                clean_tas.append(ta)
-    raw_dict["target_assessments"] = clean_tas
 
-    raw_dict.setdefault("communicative_intention", "share_comment")
-    raw_dict.setdefault("learner_invites_question", "?" in learner_text)
-    raw_dict.setdefault("communicative_goal_achieved", True)
-    raw_dict.setdefault("pragmatic_cave_in", False)
-    raw_dict.setdefault("requires_clarification", False)
-    raw_dict.setdefault("in_emotional_or_story_flow", False)
-    return raw_dict
+def _coerce_status(value: Any) -> str:
+    try:
+        return ComprehensionStatus(str(value).strip().lower()).value
+    except ValueError:
+        return ComprehensionStatus.OK.value
+
+
+def _identity_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("model reply is not a JSON object")
+    return raw
 
 
 def _deterministic_responder_repair(
@@ -346,7 +218,13 @@ def _post_gemini_with_400_schema_fallback(url: str, payload: dict, timeout: int 
 
 
 class DualLLMEngine:
-    def __init__(self, keys: Optional[list[str]] = None, primary_model: str = GEMINI_MODEL):
+    def __init__(
+        self,
+        keys: Optional[list[str]] = None,
+        primary_model: str = GEMINI_MODEL,
+        transport_call_json: Optional[Callable[..., Any]] = None,
+    ):
+        self.transport_call_json = transport_call_json
         self.keys = list(keys) if keys is not None else (list(GEMINI_KEYS_LIST) if GEMINI_KEYS_LIST else ([GEMINI_API_KEY] if GEMINI_API_KEY else []))
         self.key_idx = 0
         self.primary_model = primary_model
@@ -487,59 +365,73 @@ class DualLLMEngine:
 
         raise RuntimeError(f"All Gemini models/keys failed: {last_err}")
 
-    def run_analyst(
+    # ------------------------------------------------------------------ V3.0 calls (S0 6, A12)
+
+    def _call_json(
+        self,
+        call_class: str,
+        system: str,
+        user: str,
+        validator: Callable[[dict[str, Any]], Any],
+        *,
+        deadline_s: Optional[float] = None,
+        correlation_id: Optional[str] = None,
+        temperature: float = 0.15,
+    ) -> Any:
+        """One model call through ``llm_transport.call_json`` (Gemini's transport: lanes, cooldowns, deadlines).
+        Returns an object with ``.value`` and ``.meta``. ``transport_call_json`` is injectable for tests; when
+        the transport module is not importable the engine's own single-model path is used, so a checkout
+        without it keeps working. ``QuotaShed`` / ``DeadlineExceeded`` / ``ResponderUnavailable`` propagate."""
+        fn = self.transport_call_json or _default_call_json()
+        if fn is not None:
+            return fn(
+                _coerce_call_class(call_class), system, user, validator,
+                deadline_s=deadline_s, correlation_id=correlation_id,
+            )
+        value = self._call_gemini_json(
+            system_prompt=system, user_prompt=user, validator_fn=validator, temperature=temperature, max_tries=1,
+        )
+        return _CallResult(value, None)
+
+    def run_analyst_v3(
         self,
         *,
         learner_text: str,
         recent_history: list[dict[str, str]],
         register_profile: RegisterProfile,
         directness: DirectnessLevel,
-        training_mode: TrainingMode,
         scene_bible: SceneBible,
-        revealed_target_ids: set[str],
-        directly_cued_target_ids: set[str],
-        catalog_targets: list[dict[str, Any]],
+        active_targets: Optional[list[dict[str, str]]] = None,
         active_workout_task: Optional[dict[str, Any]] = None,
-    ) -> Analysis:
-        words = learner_text.strip().split()
-        if len(words) <= 3 and all(w.lower().strip(".,!?") in {"hey", "hi", "hello", "yo", "sup", "morning", "evening", "alex", "guys", "there", "ok", "okay", "thanks", "yes", "no"} for w in words):
-            return Analysis(communicative_intention="greeting")
-
+        correlation_id: Optional[str] = None,
+        deadline_s: Optional[float] = 30.0,
+    ) -> tuple[dict[str, Any], Optional[CallMetaDict]]:
+        """The raw V3 Analyst object (``validation.validate_analysis`` checks it; nothing here is trusted)."""
         user_prompt = json.dumps(
             {
-                "register": register_profile.value,
-                "directness": directness.value,
-                "recent_history": recent_history[-3:],
                 "learner_message": learner_text,
+                "register_profile": register_profile.value,
+                "directness": directness.value,
+                "scene": f"{scene_bible.setting} ({scene_bible.relationship})"[:240],
+                "recent_turns": [{"speaker": h.get("role", ""), "text": h.get("text", "")} for h in recent_history[-4:]],
+                "active_targets": [{"id": t["target_id"], "expression": t["canonical_form"]} for t in (active_targets or [])],
                 "active_workout_task": active_workout_task,
             },
             ensure_ascii=False,
         )
 
-        def _validate_analyst(raw_dict: dict[str, Any]) -> Analysis:
-            normalized_dict = _fast_normalize_raw_analysis(raw_dict, learner_text)
-            parsed = Analysis.model_validate(normalized_dict)
-            return validate_analyst_output_against_turn(
-                analysis=parsed,
-                learner_text=learner_text,
-                revealed_target_ids=revealed_target_ids,
-                directly_cued_target_ids=directly_cued_target_ids,
-                active_training_mode=training_mode,
-            )
+        def _validate(raw: dict[str, Any]) -> dict[str, Any]:
+            if not isinstance(raw, dict):
+                raise ValueError("analyst reply is not a JSON object")
+            return raw
 
-        try:
-            return self._call_gemini_json(
-                system_prompt=ANALYST_SYSTEM_PROMPT,
-                user_prompt=user_prompt,
-                validator_fn=_validate_analyst,
-                temperature=0.15,
-                max_tries=1,
-            )
-        except Exception as err:
-            logger.warning(f"Fast Analyst fallback: {err}")
-            return Analysis(communicative_intention="share_comment")
+        result = self._call_json(
+            "analyst", load_analyst_v3_prompt(), user_prompt, _validate,
+            deadline_s=deadline_s, correlation_id=correlation_id, temperature=0.15,
+        )
+        return result.value, _meta_dict(result.meta)
 
-    def run_responder(
+    def run_responder_v3(
         self,
         *,
         learner_text: str,
@@ -553,7 +445,10 @@ class DualLLMEngine:
         advisory_recast_candidate: Optional[str] = None,
         stealth_target_info: Optional[dict[str, str]] = None,
         active_workout_task: Optional[dict[str, Any]] = None,
-    ) -> ResponderOutput:
+        pending_clarification: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        deadline_s: Optional[float] = None,
+    ) -> "ResponderResult":
         stealth_form = stealth_target_info.get("canonical_form") if stealth_target_info else None
         user_prompt = json.dumps(
             {
@@ -569,16 +464,20 @@ class DualLLMEngine:
                     "avoid_openers": dialogue_decision.avoid_openers,
                 },
                 "advisory_recast_candidate": advisory_recast_candidate,
+                "pending_clarification": pending_clarification,
                 "recent_history": recent_history[-4:],
                 "learner_message": learner_text,
                 "active_workout_task": active_workout_task,
             },
             ensure_ascii=False,
         )
+        status_holder: dict[str, str] = {"status": ComprehensionStatus.OK.value}
 
         def _validate_resp(raw_dict: dict[str, Any]) -> ResponderOutput:
+            raw = dict(raw_dict)
+            status_holder["status"] = _coerce_status(raw.pop("comprehension_status", None))
             try:
-                out = ResponderOutput.model_validate(raw_dict)
+                out = ResponderOutput.model_validate(raw)
                 return validate_responder_output(
                     output=out,
                     decision=dialogue_decision,
@@ -586,20 +485,27 @@ class DualLLMEngine:
                     stealth_target_form=stealth_form,
                 )
             except Exception:
-                return _deterministic_responder_repair(
-                    raw_dict,
-                    dialogue_decision,
-                    advisory_recast_candidate,
-                    stealth_form,
-                )
+                return _deterministic_responder_repair(raw, dialogue_decision, advisory_recast_candidate, stealth_form)
 
-        return self._call_gemini_json(
-            system_prompt=RESPONDER_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            validator_fn=_validate_resp,
-            temperature=0.65,
-            max_tries=1,
+        result = self._call_json(
+            "responder", RESPONDER_SYSTEM_PROMPT, user_prompt, _validate_resp,
+            deadline_s=deadline_s, correlation_id=correlation_id, temperature=0.65,
         )
+        return ResponderResult(result.value, ComprehensionStatus(status_holder["status"]), _meta_dict(result.meta))
+
+    def run_responder(self, **kwargs: Any) -> ResponderOutput:
+        """v2 entry point (same kwargs as ``run_responder_v3``); returns only the output."""
+        return self.run_responder_v3(**kwargs).output
+
+    def call_llm_for_judge(self, system: str, user: str) -> Any:
+        """``retrieval.CallLLM``: the retrieval judge's model call (transport class ``judge``)."""
+        result = self._call_json("judge", system, user, _identity_dict, deadline_s=8.0, temperature=0.0)
+        return result.value
+
+    def build_judge(self) -> Callable[[Any], Any]:
+        from retrieval import make_judge
+
+        return make_judge(self.call_llm_for_judge)
 
     def generate_register_shift_coaching(self, learner_text: str) -> RegisterShiftResult:
         sys_p = (

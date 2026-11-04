@@ -142,7 +142,8 @@ def test_built_prompts_and_hints_come_from_the_catalog_text(seed):
     entry = PhraseEntry(e.phrase_id, e.canonical_form, e.communicative_intention, e.arabic_gloss, tuple(e.acceptable_forms),
                         e.meaning_prompt, e.situation_prompt, e.function_prompt, tuple(f.value for f in e.context_families))
     assert build_prompt(entry, "meaning") == e.meaning_prompt.strip()
-    assert build_hint(entry, 1) == e.arabic_gloss.strip()
+    assert build_hint(entry, 2) == e.arabic_gloss.strip()  # S5 ladder: 1 = structure, 2 = Arabic gloss
+    assert build_hint(entry, 1) != e.arabic_gloss.strip() and "_" in build_hint(entry, 1)
 
 
 # ------------------------------------------------------------------------------ Zero-Bias

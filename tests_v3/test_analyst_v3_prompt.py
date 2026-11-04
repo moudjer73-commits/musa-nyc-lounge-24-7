@@ -42,9 +42,9 @@ def validate(message: str, raw: dict):
 # ------------------------------------------------------------------------------ the loader
 
 
-def test_the_loader_returns_the_file_and_the_v2_prompt_is_untouched():
+def test_the_loader_returns_the_file_and_the_v2_prompt_is_gone():
     assert ai_engine.load_analyst_v3_prompt() == PROMPT.strip()
-    assert "diagnostician" in ai_engine.ANALYST_SYSTEM_PROMPT  # the v2 pipeline keeps its own prompt until the rewire
+    assert not hasattr(ai_engine, "ANALYST_SYSTEM_PROMPT")  # S5: the v3 Analyst is the only one
 
 
 def test_the_prompt_has_no_template_slots_so_it_can_be_sent_as_is():

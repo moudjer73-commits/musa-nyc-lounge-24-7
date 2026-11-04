@@ -1,62 +1,169 @@
-from concurrent.futures import ThreadPoolExecutor
+"""orchestrator.py (V3.0, owner Claude): one learner turn, end to end (S0 6, A13, A14).
+
+``process_turn`` accepts the message (one transaction: ``learner_message_received`` and ``session_revision`` + 1),
+asks the Responder, stores the reply and returns at once; the Analyst runs in the background and its future is
+on the result. ``apply_analysis_outcome`` then validates nothing itself (``validation.validate_analysis`` already
+did), asks ``feedback_policy`` what to show, and writes the analysis, the target assessments, the policy decision
+and any P0 follow-up in ONE compare-and-set on ``session_revision``. If the learner has already sent another scene
+turn the revision has moved: the findings are written as deferred (they reach the Review queue) and a P0 line is
+kept in ``sessions.pending_clarification_json`` for the next Responder brief (A14).
+
+``app.py`` never writes events and never touches revisions; it holds the learner lock around these two calls.
+"""
+
+from __future__ import annotations
+
 import json
+import logging
+import threading
 import uuid
-from typing import Any, Callable, Optional
-from ai_engine import DualLLMEngine
-from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
+from collections import OrderedDict
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Callable, Literal, Optional
+
+import interaction
+import retrieval
+import validation as V
+from ai_engine import DualLLMEngine, is_trivial_message
+from database import EventSourcedDatabase, EventSpec
+from dialogue import DialogueController
+from feedback_policy import PolicyInputs, RuntimeState, resolve_interaction_policy
 from policy_engine import (
+    compute_learner_strain,
+    extract_recent_partner_openers,
     get_active_workout_task,
     update_workout_task_after_turn,
-    DialogueController,
-    _normalize_text_for_match,
-    compute_learner_strain,
-    decide,
-    extract_recent_partner_openers,
 )
 from schemas import (
     Analysis,
-    Diagnostic,
+    AnalysisSkippedV2,
+    AnalysisV2,
+    ComprehensionStatus,
+    Delivery,
     DirectnessLevel,
-    InterventionLevel,
+    FeedbackPreference,
     PersonaCard,
-    PolicyDecision,
+    PolicyDecisionV2,
     ProductionEvidence,
     RegisterProfile,
     ResponderOutput,
+    ResponderReplyV2,
     SceneBible,
     SceneMode,
+    SkipReason,
     TrainingMode,
+    TurnOrigin,
 )
 
+logger = logging.getLogger(__name__)
+
 _TURN_EXECUTOR = ThreadPoolExecutor(max_workers=6)
+ANALYSIS_WAIT_S = 35.0  # S0 6: app.py waits this long for the background Analyst
+_CONTEXT_CACHE_SIZE = 200
+_CREDITED_EVIDENCE = (ProductionEvidence.INDEPENDENT_PRODUCTION, ProductionEvidence.SPONTANEOUS_PRODUCTION)
+
+
+# ------------------------------------------------------------------------------ results (S0 6)
+
+
+@dataclass(frozen=True)
+class TurnHandle:
+    turn_event_id: str
+    reply_event_seq: int
+    turn_session_revision: int
+    correlation_id: str
+    session_id: str = ""
+    learner_id: int = 0
+
+
+@dataclass(frozen=True)
+class AnalysisOutcome:
+    status: Literal["ok", "skipped"]
+    skip_reason: Optional[SkipReason] = None
+    validated: Optional[V.ValidationResult] = None
+    detail: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class PostTurnActions:
+    followup_text: Optional[str] = None
+    attach_upgrade_button: bool = False
+    upgrade_callback: Optional[str] = None
+    deferred_count: int = 0
+    card_id: Optional[str] = None
 
 
 class TurnResult:
+    """The live v2 fields plus the V3 ones. At return time the Analyst has not finished, so the policy fields
+    are empty; ``apply_analysis_outcome`` returns what to show."""
+
     def __init__(
         self,
         *,
         correlation_id: str,
         session_id: str,
-        responder_output: ResponderOutput,
-        policy_decision: PolicyDecision,
-        selected_diagnostic: Optional[Diagnostic],
-        all_diagnostics: list[Diagnostic],
-        card_id: Optional[str],
+        responder_output: Optional[ResponderOutput],
+        handle: Optional[TurnHandle],
+        analysis_future: Optional["Future[AnalysisOutcome]"],
+        comprehension_status: ComprehensionStatus = ComprehensionStatus.OK,
+        duplicate: bool = False,
     ):
         self.correlation_id = correlation_id
         self.session_id = session_id
         self.responder_output = responder_output
-        self.policy_decision = policy_decision
-        self.selected_diagnostic = selected_diagnostic
-        self.all_diagnostics = all_diagnostics
-        self.card_id = card_id
+        self.policy_decision: Optional[PolicyDecisionV2] = None
+        self.selected_diagnostic = None
+        self.all_diagnostics: list[Any] = []
+        self.card_id: Optional[str] = None
+        self.handle = handle
+        self.analysis_future = analysis_future
+        self.comprehension_status = comprehension_status
+        self.duplicate = duplicate
+
+
+@dataclass
+class _TurnContext:
+    session_id: str
+    learner_text: str
+    register_profile: str
+    feedback_preference: FeedbackPreference
+    comprehension_status: ComprehensionStatus
+    primary_context_family: str = "general"
+    input_modality: str = "text"
+
+
+def skip_reason_for(err: BaseException) -> SkipReason:
+    """Map a failed Analyst call to the stored reason: a missed deadline, a quota shed, or anything else."""
+    if isinstance(err, TimeoutError):
+        return SkipReason.DEADLINE
+    shed = tuple(c for c in retrieval.default_shed_exceptions() if c not in (retrieval.JudgeShed, TimeoutError))
+    if shed and isinstance(err, shed):
+        return SkipReason.SHED
+    return SkipReason.ERROR
+
+
+def _new_event_id() -> str:
+    return f"ev_{uuid.uuid4().hex[:12]}"
 
 
 class TurnOrchestrator:
-    def __init__(self, db: EventSourcedDatabase, ai: DualLLMEngine):
+    def __init__(
+        self,
+        db: EventSourcedDatabase,
+        ai: DualLLMEngine,
+        *,
+        executor: Optional[ThreadPoolExecutor] = None,
+    ):
         self.db = db
         self.ai = ai
         self.default_persona = PersonaCard()
+        self._executor = executor or _TURN_EXECUTOR
+        self._contexts: "OrderedDict[str, _TurnContext]" = OrderedDict()
+        self._contexts_lock = threading.Lock()
+
+    # ------------------------------------------------------------------ the turn
 
     def process_turn(
         self,
@@ -65,306 +172,518 @@ class TurnOrchestrator:
         learner_text: str,
         message_idempotency_key: Optional[str] = None,
         is_voice_message: bool = False,
-        on_fast_reply: Optional[Callable[[ResponderOutput], None]] = None,
+        origin: str = "scene",
+        interaction_id: Optional[int] = None,
+        telegram_message_id: Optional[int] = None,
+        on_fast_reply: Optional[Callable[[ResponderOutput, TurnHandle], None]] = None,
     ) -> TurnResult:
         corr_id = f"turn_{uuid.uuid4().hex[:10]}"
         idem_base = message_idempotency_key or corr_id
 
         learner_cfg = self.db.get_learner_settings(learner_id)
-        feedback_pref = learner_cfg.get("feedback_preference", "light")
-        arabic_support = learner_cfg.get("arabic_support", "bilingual")
-        opted_in_workouts = bool(learner_cfg.get("opted_in_workouts", 1))
-
+        feedback_pref = _preference(learner_cfg.get("feedback_preference"))
         session = self.db.get_or_create_active_session(learner_id)
         session_id = str(session["session_id"])
         training_mode = TrainingMode(session.get("training_mode", "open_scene"))
         scene_mode = SceneMode(session.get("scene_mode", "real_conversation"))
         register_profile = RegisterProfile(session.get("register_profile", "casual"))
         directness = DirectnessLevel(session.get("directness", "balanced"))
-
-        try:
-            raw_bible = json.loads(session.get("scene_bible_json") or "{}")
-            scene_bible = SceneBible(
-                scene_id=session_id,
-                scene_mode=scene_mode,
-                setting=raw_bible.get("setting", "Everyday conversation"),
-                relationship=raw_bible.get("relationship", "friendly peer"),
-                established_facts=raw_bible.get(
-                    "established_facts",
-                    ["Respond directly to the learner's real topic; never invent fake crises or 'me-too' mirroring stories."],
-                ),
-                counterpart_goal=raw_bible.get("counterpart_goal", "Engage naturally and authentically"),
-                counterpart_pushback_plan=raw_bible.get("counterpart_pushback_plan"),
-            )
-        except Exception:
-            scene_bible = SceneBible(scene_id=session_id, scene_mode=scene_mode)
+        scene_bible = self._scene_bible(session, session_id, scene_mode)
 
         recent_history = self.db.get_recent_dialogue_history(session_id, limit=6)
-        runtime_state = self.db.get_session_runtime_state(session_id, learner_id)
-        prior_occurrence_counts = self.db.get_authoritative_occurrence_counts(learner_id)
+        runtime = self.db.get_session_runtime_state(session_id, learner_id)
 
-        learner_turns_txt = [h["text"] for h in recent_history if h.get("role") == "learner"] + [learner_text]
-        partner_turns_txt = [h["text"] for h in recent_history if h.get("role") == "partner"]
-        strain_val = compute_learner_strain(learner_turns_txt)
-        avoid_ops = extract_recent_partner_openers(partner_turns_txt)
-
-        fast_intent = "ask_opinion" if "?" in learner_text else "share_comment"
-        pre_analysis = Analysis(
-            communicative_intention=fast_intent,
-            learner_invites_question=("?" in learner_text),
+        msg, revision = self.db.accept_scene_turn(
+            learner_id=learner_id,
+            session_id=session_id,
+            text=learner_text,
+            idempotency_key=f"{idem_base}:msg",
+            origin=TurnOrigin(origin),
+            correlation_id=corr_id,
+            input_modality="voice" if is_voice_message else "text",
+            interaction_id=interaction_id,
+            telegram_message_id=telegram_message_id,
         )
-        dialogue_dec = DialogueController.select_dialogue_decision(
+        if not msg.inserted:  # the same Telegram message delivered twice
+            return TurnResult(
+                correlation_id=corr_id, session_id=session_id, responder_output=None, handle=None,
+                analysis_future=None, duplicate=True,
+            )
+
+        pending_clarification = self.db.take_pending_clarification(session_id)
+        learner_turns = [h["text"] for h in recent_history if h.get("role") == "learner"] + [learner_text]
+        partner_turns = [h["text"] for h in recent_history if h.get("role") == "partner"]
+        strain = compute_learner_strain(learner_turns)
+        fast_intent = "ask_opinion" if "?" in learner_text else "share_comment"
+        decision = DialogueController.select_dialogue_decision(
             learner_text=learner_text,
-            analysis=pre_analysis,
-            recent_optional_question_flags=runtime_state["recent_questions"],
+            analysis=Analysis(communicative_intention=fast_intent, learner_invites_question=("?" in learner_text)),
+            recent_optional_question_flags=runtime["recent_questions"],
             register=register_profile,
             training_mode=training_mode,
-        ).model_copy(update={"avoid_openers": avoid_ops, "strain_score": strain_val})
+        ).model_copy(update={"avoid_openers": extract_recent_partner_openers(partner_turns), "strain_score": strain})
+        if pending_clarification:  # A14: a P0 line the learner never saw goes into this brief
+            decision = decision.model_copy(update={"allow_question": True, "max_questions": 1})
 
-        stealth_target_info = self.db.select_stealth_target_for_session(learner_id, register_profile.value)
+        candidates = self._spontaneous_targets(learner_id, register_profile.value)
+        workout_task = get_active_workout_task(learner_id)
+        input_modality = "voice" if is_voice_message else "text"
 
-        catalog_targets = [
-            {"target_id": p[0], "canonical_form": p[1], "communicative_intention": p[2]}
-            for p in DEFAULT_CURATED_PHRASES
-        ]
-
-        fut_analyst = _TURN_EXECUTOR.submit(
-            self.ai.run_analyst,
-            learner_text=learner_text,
-            recent_history=recent_history,
-            register_profile=register_profile,
-            directness=directness,
-            training_mode=training_mode,
-            scene_bible=scene_bible,
-            revealed_target_ids=runtime_state["revealed_targets"],
-            directly_cued_target_ids=runtime_state["cued_targets"],
-            catalog_targets=catalog_targets,
-        )
-        fut_responder = _TURN_EXECUTOR.submit(
-            self.ai.run_responder,
-            learner_text=learner_text,
-            recent_history=recent_history,
-            persona=self.default_persona,
-            scene_bible=scene_bible,
-            register_profile=register_profile,
-            directness=directness,
-            training_mode=training_mode,
-            dialogue_decision=dialogue_dec,
-            advisory_recast_candidate=None,
-            stealth_target_info=stealth_target_info,
-        )
-
-        resp_out = fut_responder.result()
-        if on_fast_reply is not None:
-            try:
-                on_fast_reply(resp_out)
-            except Exception:
-                pass
-        analysis = fut_analyst.result()
-        if get_active_workout_task(learner_id) is not None:
-            update_workout_task_after_turn(learner_id, bool(analysis.communicative_goal_achieved))
-
-        policy_dec = decide(
-            analysis=analysis,
-            learner_id=learner_id,
-            turns_since_last_visible_card=runtime_state["turns_since_visible_card"],
-            authoritative_occurrence_counts=prior_occurrence_counts,
-            already_counted_in_message_keys=set(),
-            active_learning_goals=[],
-            feedback_preference=feedback_pref,
-            learner_opted_in_workouts=opted_in_workouts,
-            workout_already_scheduled=False,
-            is_voice_message=is_voice_message,
-        )
-
-        if policy_dec.advisory_recast_candidate:
-            norm_rec = _normalize_text_for_match(policy_dec.advisory_recast_candidate)
-            if norm_rec and norm_rec in _normalize_text_for_match(resp_out.reply_text):
-                resp_out = resp_out.model_copy(update={"recast_used": True})
-
-        selected_diag: Optional[Diagnostic] = None
-        if policy_dec.selected_diagnostic_id:
-            for d in analysis.diagnostics:
-                if d.diagnostic_id == policy_dec.selected_diagnostic_id:
-                    selected_diag = d
-                    break
-
-        _, msg_ev_id = self.db.append_event(
-            learner_id=learner_id,
-            session_id=session_id,
-            event_type="learner_message_received",
-            payload={"text": learner_text, "is_voice": is_voice_message},
-            correlation_id=corr_id,
-            idempotency_key=f"{idem_base}:msg",
-            rebuild=False,
-        )
-
-        _, diag_ev_id = self.db.append_event(
-            learner_id=learner_id,
-            session_id=session_id,
-            event_type="analyst_diagnosis_recorded",
-            payload=analysis.model_dump(),
-            correlation_id=corr_id,
-            causation_id=msg_ev_id,
-            idempotency_key=f"{idem_base}:diag",
-            rebuild=False,
-        )
-
-        for idx, ta in enumerate(analysis.target_assessments):
-            if ta.evidence != ProductionEvidence.NONE:
-                self.db.append_event(
-                    learner_id=learner_id,
-                    session_id=session_id,
-                    event_type="phrase_production_assessed",
-                    payload={
-                        **ta.model_dump(),
-                        "register_profile": register_profile.value,
-                        "training_mode": training_mode.value,
-                        "is_novel_context": True,
-                    },
-                    correlation_id=corr_id,
-                    causation_id=diag_ev_id,
-                    idempotency_key=f"{idem_base}:target:{idx}:{ta.target_id}",
-                    rebuild=False,
-                )
-
-        if selected_diag and selected_diag.alternative and selected_diag.confidence_band.value == "high":
-            organic_pid = self.db.register_organic_phrase_from_diagnostic(
-                normalized_pattern_id=selected_diag.normalized_pattern_id,
-                canonical_form=selected_diag.alternative,
-                communicative_intention=analysis.communicative_intention,
-                register_profile=register_profile.value,
-            )
-            if policy_dec.intervention == InterventionLevel.BRIEF_CARD:
-                self.db.append_event(
-                    learner_id=learner_id,
-                    session_id=session_id,
-                    event_type="phrase_exposure_recorded",
-                    payload={"phrase_id": organic_pid, "revealed_to_learner": True, "directly_cued": False},
-                    correlation_id=corr_id,
-                    causation_id=diag_ev_id,
-                    idempotency_key=f"{idem_base}:org_exp:{organic_pid}",
-                    rebuild=False,
-                )
-
-        self.db.append_event(
-            learner_id=learner_id,
-            session_id=session_id,
-            event_type="policy_decision_recorded",
-            payload={
-                **policy_dec.model_dump(),
-                "selected_pattern_id": selected_diag.normalized_pattern_id if selected_diag else None,
-                "selected_context_family": (
-                    selected_diag.relevant_context_family
-                    if selected_diag and selected_diag.kind.value in ("pragmatics", "register")
-                    else "global"
-                ),
-            },
-            correlation_id=corr_id,
-            causation_id=diag_ev_id,
-            idempotency_key=f"{idem_base}:pol",
-            rebuild=False,
-        )
-
-        if policy_dec.schedule_micro_workout and policy_dec.workout_candidate_pattern_id:
-            self.db.append_event(
+        if is_trivial_message(learner_text):
+            analysis_future: "Future[AnalysisOutcome]" = Future()
+            analysis_future.set_result(AnalysisOutcome("skipped", SkipReason.TRIVIAL))
+        else:
+            analysis_future = self._executor.submit(
+                self._analyze,
                 learner_id=learner_id,
-                session_id=session_id,
-                event_type="micro_workout_scheduled",
-                payload={
-                    "normalized_pattern_id": policy_dec.workout_candidate_pattern_id,
-                    "relevant_context_family": policy_dec.workout_candidate_context_family or "global",
-                },
+                learner_text=learner_text,
+                recent_history=recent_history,
+                register_profile=register_profile,
+                directness=directness,
+                scene_bible=scene_bible,
+                candidates=candidates,
+                workout_task=workout_task,
+                turn_event_id=msg.event_id,
                 correlation_id=corr_id,
-                causation_id=diag_ev_id,
-                idempotency_key=f"{idem_base}:workout:{policy_dec.workout_candidate_pattern_id}",
-                rebuild=False,
+                input_modality=input_modality,
             )
 
-        asked_q = DialogueController.count_genuine_questions(resp_out.reply_text) > 0
-        self.db.append_event(
+        try:
+            result = self.ai.run_responder_v3(
+                learner_text=learner_text,
+                recent_history=recent_history,
+                persona=self.default_persona,
+                scene_bible=scene_bible,
+                register_profile=register_profile,
+                directness=directness,
+                training_mode=training_mode,
+                dialogue_decision=decision,
+                advisory_recast_candidate=None,
+                stealth_target_info=candidates[0] if candidates else None,
+                active_workout_task=workout_task,
+                pending_clarification=pending_clarification,
+                correlation_id=corr_id,
+            )
+        except BaseException:
+            analysis_future.cancel()
+            if pending_clarification:  # the learner has not seen it yet
+                self.db.set_pending_clarification(session_id, pending_clarification)
+            raise
+
+        reply = result.output
+        reply_event = self.db.append_event_ex(
             learner_id=learner_id,
             session_id=session_id,
             event_type="responder_reply_delivered",
-            payload={
-                "reply_text": resp_out.reply_text,
-                "second_bubble_text": resp_out.second_bubble_text,
-                "recast_used": resp_out.recast_used,
-                "asked_optional_question": asked_q and not policy_dec.clarification_needed,
-                "was_clarification_question": policy_dec.clarification_needed,
-            },
+            payload=ResponderReplyV2(
+                kind="reply",
+                turn_event_id=msg.event_id,
+                reply_text=reply.reply_text,
+                second_bubble_text=reply.second_bubble_text,
+                comprehension_status=result.comprehension_status,
+                recast_used=reply.recast_used,
+                elicitation_used=reply.elicitation_used,
+                call_meta=result.call_meta,
+            ),
             correlation_id=corr_id,
-            causation_id=msg_ev_id,
+            causation_id=msg.event_id,
             idempotency_key=f"{idem_base}:resp",
             rebuild=True,
         )
-
-        if selected_diag and arabic_support == "english_only":
-            selected_diag = selected_diag.model_copy(update={"explanation_ar": None})
-
-        card_id: Optional[str] = None
-        if policy_dec.intervention == InterventionLevel.BRIEF_CARD and selected_diag:
-            card_id = f"card_{uuid.uuid4().hex[:10]}"
-            diag_payload = selected_diag.model_dump()
-            # Attach secondary turn findings (e.g. 'discuss about', 'took a decision') as extra compact bullets if in Active mode
-            other_diags = [
-                d.model_dump()
-                for d in analysis.diagnostics
-                if d.diagnostic_id != selected_diag.diagnostic_id and d.alternative
-            ]
-            if other_diags:
-                diag_payload["additional_turn_findings"] = other_diags[:2]
-            self.db.save_pending_card(
-                card_id=card_id,
-                learner_id=learner_id,
-                session_id=session_id,
-                correlation_id=corr_id,
-                reply_text=resp_out.reply_text,
-                diagnostic_dict=diag_payload,
-            )
-
-        return TurnResult(
+        handle = TurnHandle(
+            turn_event_id=msg.event_id,
+            reply_event_seq=reply_event.event_seq,
+            turn_session_revision=revision,
             correlation_id=corr_id,
             session_id=session_id,
-            responder_output=resp_out,
-            policy_decision=policy_dec,
-            selected_diagnostic=selected_diag,
-            all_diagnostics=analysis.diagnostics,
-            card_id=card_id,
+            learner_id=learner_id,
         )
+        self._remember(
+            msg.event_id,
+            _TurnContext(
+                session_id=session_id,
+                learner_text=learner_text,
+                register_profile=register_profile.value,
+                feedback_preference=feedback_pref,
+                comprehension_status=result.comprehension_status,
+                primary_context_family=str(session.get("primary_context_family") or "general"),
+                input_modality=input_modality,
+            ),
+        )
+        if on_fast_reply is not None:
+            try:
+                on_fast_reply(reply, handle)
+            except Exception:  # delivery trouble must not lose the turn
+                logger.warning("on_fast_reply failed", exc_info=True)
+        out = TurnResult(
+            correlation_id=corr_id,
+            session_id=session_id,
+            responder_output=reply,
+            handle=handle,
+            analysis_future=analysis_future,
+            comprehension_status=result.comprehension_status,
+        )
+        return out
 
-    def confirm_card_delivered(
+    # ------------------------------------------------------------------ the Analyst (background)
+
+    def _analyze(
         self,
         *,
         learner_id: int,
-        session_id: str,
+        learner_text: str,
+        recent_history: list[dict[str, str]],
+        register_profile: RegisterProfile,
+        directness: DirectnessLevel,
+        scene_bible: SceneBible,
+        candidates: list[dict[str, str]],
+        workout_task: Optional[dict[str, Any]],
+        turn_event_id: str,
         correlation_id: str,
-        diagnostic: Diagnostic,
-    ) -> None:
-        ctx_fam = (
-            diagnostic.relevant_context_family
-            if diagnostic.kind.value in ("pragmatics", "register")
-            else "global"
-        )
-        self.db.append_event(
-            learner_id=learner_id,
-            session_id=session_id,
-            event_type="feedback_card_delivered",
-            payload={
-                "diagnostic_id": diagnostic.diagnostic_id,
-                "normalized_pattern_id": diagnostic.normalized_pattern_id,
-                "relevant_context_family": ctx_fam,
-            },
-            correlation_id=correlation_id,
-            idempotency_key=f"{correlation_id}:card_delivered:{diagnostic.diagnostic_id}",
+        input_modality: str,
+    ) -> AnalysisOutcome:
+        try:
+            raw, meta = self.ai.run_analyst_v3(
+                learner_text=learner_text,
+                recent_history=recent_history,
+                register_profile=register_profile,
+                directness=directness,
+                scene_bible=scene_bible,
+                active_targets=[
+                    {"target_id": c["phrase_id"], "canonical_form": c["canonical_form"]} for c in candidates
+                ],
+                active_workout_task=workout_task,
+                correlation_id=correlation_id,
+            )
+        except Exception as err:
+            logger.warning("Analyst unavailable: %s", err)
+            return AnalysisOutcome("skipped", skip_reason_for(err), None, str(err)[:200])
+        try:
+            validated = V.validate_analysis(
+                raw,
+                turn_event_id=turn_event_id,
+                learner_text=learner_text,
+                input_modality=input_modality,
+                recent_bot_texts=self._recent_bot_texts(learner_id, recent_history),
+                active_target_ids={c["phrase_id"] for c in candidates},
+                prior_counts=self.db.get_authoritative_occurrence_counts(learner_id),
+                learner_id=learner_id,
+                taken_ids=self.db.taken_diagnostic_ids(),
+                call_meta=meta,
+            )
+        except Exception as err:  # validation never raises on bad model output; this is a code bug
+            logger.error("validate_analysis failed", exc_info=True)
+            return AnalysisOutcome("skipped", SkipReason.ERROR, None, str(err)[:200])
+        return AnalysisOutcome("ok", None, validated)
+
+    # ------------------------------------------------------------------ apply (A14)
+
+    def apply_analysis_outcome(
+        self,
+        *,
+        learner_id: int,
+        handle: TurnHandle,
+        outcome: AnalysisOutcome,
+        now: Optional[datetime] = None,
+    ) -> PostTurnActions:
+        now = now or self.db.clock.now()
+        ctx = self._context_for(handle)
+        session_id = handle.session_id or ctx.session_id
+
+        if outcome.status != "ok" or outcome.validated is None:
+            self.db.append_event_ex(
+                learner_id=learner_id,
+                session_id=session_id,
+                event_type="analysis_skipped",
+                payload=AnalysisSkippedV2(
+                    turn_event_id=handle.turn_event_id, reason=outcome.skip_reason or SkipReason.ERROR, detail=outcome.detail
+                ),
+                correlation_id=handle.correlation_id,
+                causation_id=handle.turn_event_id,
+                idempotency_key=f"{handle.correlation_id}:skipped",
+            )
+            return PostTurnActions()
+
+        validated = outcome.validated
+        analysis = validated.analysis
+        if get_active_workout_task(learner_id) is not None:
+            update_workout_task_after_turn(learner_id, bool(analysis.communicative.communicative_goal_achieved))
+
+        policy = resolve_interaction_policy(self._policy_inputs(learner_id, handle, ctx, analysis, now), validated.scored)
+
+        analysis_id = _new_event_id()
+        specs: list[EventSpec] = [
+            EventSpec(
+                event_type="analyst_diagnosis_recorded",
+                payload=analysis,
+                idempotency_key=f"{handle.correlation_id}:diag",
+                correlation_id=handle.correlation_id,
+                causation_id=handle.turn_event_id,
+                event_id=analysis_id,
+                rebuild=False,
+            )
+        ]
+        specs += self._target_specs(learner_id, handle, ctx, analysis, analysis_id)
+
+        late = False
+        reserved: list[EventSpec] = []
+        p0_followup_text: Optional[str] = None
+        had_immediate_p0 = False
+        if policy.selected_diagnostic_id is not None:
+            selected = next((d for d in policy.decisions if d.diagnostic_id == policy.selected_diagnostic_id), None)
+            if selected is not None and selected.delivery == Delivery.IMMEDIATE_FOLLOWUP:
+                p0_followup_text = analysis.p0.line
+                had_immediate_p0 = bool(p0_followup_text)
+                if p0_followup_text:
+                    reserved.append(
+                        EventSpec(
+                            event_type="responder_reply_delivered",
+                            payload=ResponderReplyV2(
+                                kind="p0_followup", turn_event_id=handle.turn_event_id, reply_text=p0_followup_text,
+                                comprehension_status=ctx.comprehension_status,
+                            ),
+                            idempotency_key=f"{handle.correlation_id}:p0",
+                            correlation_id=handle.correlation_id,
+                            causation_id=handle.turn_event_id,
+                            rebuild=False,
+                        )
+                    )
+        policy_spec = EventSpec(
+            event_type="policy_decision_recorded",
+            payload=policy,
+            idempotency_key=f"{handle.correlation_id}:pol",
+            correlation_id=handle.correlation_id,
+            causation_id=analysis_id,
             rebuild=True,
         )
+        results = self.db.append_events_if_revision_ex(
+            session_id, handle.turn_session_revision, [*specs, *reserved, policy_spec]
+        )
+        if results is None:  # the learner moved on: deferred, and a P0 line waits for the next brief
+            late = True
+            policy = _as_late(policy)
+            p0_followup_text = None
+            for spec in specs:
+                self.db.append_event_ex(
+                    learner_id=learner_id,
+                    session_id=session_id,
+                    event_type=spec.event_type,
+                    payload=spec.payload,
+                    correlation_id=spec.correlation_id,
+                    causation_id=spec.causation_id,
+                    idempotency_key=spec.idempotency_key,
+                    event_id=spec.event_id,
+                    rebuild=False,
+                )
+            self.db.append_event_ex(
+                learner_id=learner_id,
+                session_id=session_id,
+                event_type="policy_decision_recorded",
+                payload=policy,
+                correlation_id=handle.correlation_id,
+                causation_id=analysis_id,
+                idempotency_key=f"{handle.correlation_id}:pol",
+                rebuild=True,
+            )
+        if policy.pending_clarification:
+            self.db.set_pending_clarification(session_id, policy.pending_clarification)
+        elif late and had_immediate_p0:
+            self.db.set_pending_clarification(session_id, analysis.p0.line)
+
+        selected_id = policy.selected_diagnostic_id
+        selected_decision = next((d for d in policy.decisions if d.diagnostic_id == selected_id), None) if selected_id else None
+        attach = selected_decision is not None and selected_decision.delivery == Delivery.END_OF_TURN
+        return PostTurnActions(
+            followup_text=p0_followup_text,
+            attach_upgrade_button=attach,
+            upgrade_callback=interaction.build_callback("ug", handle.reply_event_seq, handle.turn_session_revision) if attach else None,
+            deferred_count=sum(1 for d in policy.decisions if d.delivery == Delivery.DEFERRED),
+            card_id=selected_id if attach else None,
+        )
+
+    # ------------------------------------------------------------------ pieces
+
+    def _policy_inputs(
+        self, learner_id: int, handle: TurnHandle, ctx: _TurnContext, analysis: AnalysisV2, now: datetime
+    ) -> PolicyInputs:
+        session_id = handle.session_id or ctx.session_id
+        with self.db.read() as conn:
+            row = conn.execute(
+                "SELECT turns_since_visible_card, cards_in_scene, turns_since_p0 FROM session_state_projection WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        history = self.db.get_recent_dialogue_history(session_id, limit=6)
+        strain = compute_learner_strain([h["text"] for h in history if h.get("role") == "learner"])
+        runtime = RuntimeState(
+            turns_since_visible_card=int(row["turns_since_visible_card"]) if row else 4,
+            cards_in_scene=int(row["cards_in_scene"]) if row else 0,
+            turns_since_p0=int(row["turns_since_p0"]) if row else 99,
+            strain=min(max(float(strain), 0.0), 1.0),
+        )
+        return PolicyInputs(
+            turn_event_id=handle.turn_event_id,
+            scene_turn_index=max(1, self.db.get_debrief_counts(session_id).turns),
+            feedback_preference=ctx.feedback_preference,
+            comprehension_status=ctx.comprehension_status,
+            responder_asked_clarification=ctx.comprehension_status != ComprehensionStatus.OK,
+            communicative=analysis.communicative,
+            p0=analysis.p0,
+            runtime=runtime,
+            has_active_interaction=interaction.get_active_interaction(self.db, learner_id, now) is not None,
+        )
+
+    def _target_specs(
+        self, learner_id: int, handle: TurnHandle, ctx: _TurnContext, analysis: AnalysisV2, analysis_id: str
+    ) -> list[EventSpec]:
+        """Silent spontaneous detection. The Analyst proposes, Python decides: credit needs the catalog form (or an
+        acceptable form) to be in the learner's own text, and echo was already downgraded by validation."""
+        specs: list[EventSpec] = []
+        for idx, ta in enumerate(analysis.target_assessments):
+            if ta.evidence == ProductionEvidence.NONE:
+                continue
+            if ta.evidence in _CREDITED_EVIDENCE:
+                entry = self.db.get_phrase_entry(ta.target_id)
+                if entry is None or retrieval.find_match(ctx.learner_text, entry.target()) is None:
+                    continue
+            specs.append(
+                EventSpec(
+                    event_type="phrase_production_assessed",
+                    payload={
+                        **ta.model_dump(mode="json"),
+                        "register_profile": ctx.register_profile,
+                        "training_mode": "open_scene",
+                        "is_novel_context": True,
+                    },
+                    idempotency_key=f"{handle.correlation_id}:target:{idx}:{ta.target_id}",
+                    correlation_id=handle.correlation_id,
+                    causation_id=analysis_id,
+                    rebuild=False,
+                )
+            )
+        return specs
+
+    def _spontaneous_targets(self, learner_id: int, register: str) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        for phrase_id in self.db.get_spontaneous_candidates(learner_id, register)[:3]:
+            entry = self.db.get_phrase_entry(phrase_id)
+            if entry is not None:
+                out.append(
+                    {
+                        "phrase_id": entry.phrase_id,
+                        "canonical_form": entry.canonical_form,
+                        "communicative_intention": entry.communicative_intention,
+                    }
+                )
+        return out
+
+    def _recent_bot_texts(self, learner_id: int, history: list[dict[str, str]]) -> list[str]:
+        """What the learner could be copying: Alex's last replies and the text of recently delivered cards."""
+        texts = [h["text"] for h in history if h.get("role") == "partner"]
+        with self.db.read() as conn:
+            rows = conn.execute(
+                """
+                SELECT original_span, alternative, explanation_en FROM feedback_item_projection
+                WHERE learner_id = ? AND status = 'delivered' ORDER BY delivered_at_utc DESC, diagnostic_id LIMIT 3
+                """,
+                (learner_id,),
+            ).fetchall()
+        for r in rows:
+            texts.extend(str(r[k]) for k in ("alternative", "explanation_en") if r[k])
+        return texts
+
+    def _scene_bible(self, session: dict[str, Any], session_id: str, scene_mode: SceneMode) -> SceneBible:
+        try:
+            raw = json.loads(session.get("scene_bible_json") or "{}")
+            return SceneBible(
+                scene_id=session_id,
+                scene_mode=scene_mode,
+                setting=raw.get("setting", "Everyday conversation"),
+                relationship=raw.get("relationship", "friendly peer"),
+                established_facts=raw.get(
+                    "established_facts",
+                    ["Respond directly to the learner's real topic; never invent fake crises or 'me-too' mirroring stories."],
+                ),
+                counterpart_goal=raw.get("counterpart_goal", "Engage naturally and authentically"),
+                counterpart_pushback_plan=raw.get("counterpart_pushback_plan"),
+            )
+        except Exception:
+            return SceneBible(scene_id=session_id, scene_mode=scene_mode)
+
+    # ------------------------------------------------------------------ turn contexts
+
+    def _remember(self, turn_event_id: str, ctx: _TurnContext) -> None:
+        with self._contexts_lock:
+            self._contexts[turn_event_id] = ctx
+            while len(self._contexts) > _CONTEXT_CACHE_SIZE:
+                self._contexts.popitem(last=False)
+
+    def _context_for(self, handle: TurnHandle) -> _TurnContext:
+        with self._contexts_lock:
+            cached = self._contexts.get(handle.turn_event_id)
+        if cached is not None:
+            return cached
+        # After a restart: rebuild what apply needs from the log.
+        with self.db.read() as conn:
+            msg = conn.execute(
+                "SELECT payload_json, session_id, learner_id FROM event_log WHERE event_id = ?", (handle.turn_event_id,)
+            ).fetchone()
+            reply = conn.execute(
+                "SELECT payload_json FROM event_log WHERE event_seq = ?", (handle.reply_event_seq,)
+            ).fetchone()
+        text = str(json.loads(msg["payload_json"]).get("text", "")) if msg else ""
+        status = ComprehensionStatus.OK
+        if reply is not None:
+            status = _status(json.loads(reply["payload_json"]).get("comprehension_status"))
+        session_id = handle.session_id or (str(msg["session_id"]) if msg else "")
+        learner_id = handle.learner_id or (int(msg["learner_id"]) if msg else 0)
+        cfg = self.db.get_learner_settings(learner_id) if learner_id else {}
+        with self.db.read() as conn:
+            srow = conn.execute(
+                "SELECT register_profile, primary_context_family FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return _TurnContext(
+            session_id=session_id,
+            learner_text=text,
+            register_profile=str(srow["register_profile"]) if srow else "casual",
+            feedback_preference=_preference(cfg.get("feedback_preference")),
+            comprehension_status=status,
+            primary_context_family=str(srow["primary_context_family"]) if srow else "general",
+        )
 
 
-# ==============================================================================
-# V3.0 S2 Orchestrator Extensions (S0 Contracts, Amendment A14 & Section 6)
-# ==============================================================================
-from concurrent.futures import Future
-from dataclasses import dataclass as _s2_dataclass
-from datetime import datetime as _s2_datetime
-from typing import Literal as _s2_Literal
+# ------------------------------------------------------------------------------ helpers
+
+
+def _preference(value: Any) -> FeedbackPreference:
+    try:
+        return FeedbackPreference(str(value or "light"))
+    except ValueError:
+        return FeedbackPreference.LIGHT
+
+
+def _status(value: Any) -> ComprehensionStatus:
+    try:
+        return ComprehensionStatus(str(value or "ok"))
+    except ValueError:
+        return ComprehensionStatus.OK
+
+
+def _as_late(policy: PolicyDecisionV2) -> PolicyDecisionV2:
+    """Every card that would have been shown now is deferred to Review; nothing is selected."""
+    decisions = []
+    for d in policy.decisions:
+        if d.delivery in (Delivery.END_OF_TURN, Delivery.IMMEDIATE_FOLLOWUP):
+            d = d.model_copy(update={"delivery": Delivery.DEFERRED, "reasons": [*d.reasons, "late_analysis"]})
+        decisions.append(d)
+    return policy.model_copy(update={"decisions": decisions, "selected_diagnostic_id": None})
+
+
+__all__ = [
+    "ANALYSIS_WAIT_S",
+    "AnalysisOutcome",
+    "PostTurnActions",
+    "TurnHandle",
+    "TurnOrchestrator",
+    "TurnResult",
+    "skip_reason_for",
+]

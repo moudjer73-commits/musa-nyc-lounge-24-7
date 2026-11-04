@@ -1436,6 +1436,7 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
     phrase_events_map: dict[tuple[int, str], list[dict[str, Any]]] = {}
     evidence_rows: list[tuple[Any, ...]] = []
     feedback_items: dict[str, dict[str, Any]] = {}
+    in_scene_counted: set[str] = set()  # S5: an end_of_turn offer and its later tap are ONE visible card
     # S3: per (learner, phrase) history for mastery.PhraseTracker, and the last evidence event of a phrase
     v3_records: dict[tuple[int, str], list[tuple[Any, ...]]] = {}
     last_phrase_event: dict[tuple[int, str], tuple[str, str]] = {}
@@ -1626,10 +1627,14 @@ def rebuild_projections_in_tx(conn: sqlite3.Connection, learner_id: Optional[int
             else:
                 resolved = resolve_diagnostic(ev, str(payload.get("diagnostic_id", "")))
                 key = pattern_key_of(resolved) if resolved else None
+            repeat_view = bool(resolved) and resolved in in_scene_counted and trigger in _IN_SCENE_CARD_TRIGGERS
             if s_proj and trigger in _IN_SCENE_CARD_TRIGGERS:
                 s_proj["turns_since_visible_card"] = 0
-                s_proj["cards_in_scene"] += 1
-            if key is not None and (lid, *key) in error_proj:
+                if not repeat_view:
+                    s_proj["cards_in_scene"] += 1
+            if resolved and trigger in _IN_SCENE_CARD_TRIGGERS:
+                in_scene_counted.add(resolved)
+            if key is not None and (lid, *key) in error_proj and not repeat_view:
                 error_proj[(lid, *key)]["times_feedback_shown"] += 1
                 error_proj[(lid, *key)]["updated_at_utc"] = occ_ts
             item = feedback_items.get(resolved) if resolved else None

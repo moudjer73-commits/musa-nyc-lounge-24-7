@@ -5,10 +5,10 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 GUIDE_CHAPTERS_HTML = {
     "overview": (
-        "📖 <b>Spoken English Lab 🎙️ — Interactive User Guide (v2_complete)</b>\n"
+        "📖 <b>Spoken English Lab 🎙️ — Interactive User Guide (v3_complete)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "Welcome to your personal studio for mastering natural, unscripted <b>Spoken American English (B2–C2)</b>.\n\n"
-        "<b>What's New in v2_complete:</b>\n"
+        "<b>What's New in v3_complete:</b>\n"
         "• ⚡ <b>Sub-Second Replies:</b> Alex replies immediately while diagnostics attach silently as a <b>💡 Quick Upgrade</b> button.\n"
         "• 🎧 <b>2-Phase Listen &amp; Decode:</b> Decode reduced American speech &amp; hidden subtext first, then get instant evaluation + IPA breakdown.\n"
         "• 🏋️ <b>Task-Aware Phrase Workout:</b> Spontaneous retrieval with in-character reinforcement if you drift off-task.\n"

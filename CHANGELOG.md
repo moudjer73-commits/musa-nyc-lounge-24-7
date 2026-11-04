@@ -1,5 +1,24 @@
 # Changelog
 
+## V3.0, Sprint S5: orchestrator rewire, dead v2 policy removed, end-to-end cutover (Claude's files + the requested `app.py`)
+
+Baseline after S4 (CI): 1,075 tests (816 `tests_v3`, 239 `tests_v2`, 20 `tests.py`); locally on Python 3.13 that suite is 1,071 (235 `tests_v2`).
+After S5, run locally on Python 3.13: 1187 tests (934 `tests_v3`, 235 `tests_v2`, 18 `tests.py`), result: all pass. CI should show 1191 (`tests_v2` collects 239 there).
+
+### What changed
+* `orchestrator.py` rewritten for the V3 turn protocol (S0 6, A13, A14): `process_turn` accepts the message in one transaction (`learner_message_received` + `session_revision`), asks the Responder, stores the reply and returns a `TurnHandle`; the Analyst runs in the background (`analysis_future`). `apply_analysis_outcome` writes analysis, target assessments, policy decision and any P0 follow-up with one compare-and-set on `session_revision`; a late analysis is written as deferred and a P0 line is kept for the next Responder brief. Duplicate Telegram messages and greetings (`SkipReason.TRIVIAL`) are handled.
+* `ai_engine.py`: `run_analyst_v3` (prompt `prompts/analyst_v3_system.md`), `run_responder_v3` (+ `comprehension_status`, `pending_clarification`), `call_llm_for_judge` / `build_judge` (class `judge`, deadline 8 s), all through one injectable `llm_transport.call_json` (falls back to the single-model path when the module is absent). Removed the v2 inline Analyst prompt, `_fast_normalize_raw_analysis` and `run_analyst`.
+* `flows.py` (new): the Telegram-agnostic flows: 💡 card (`ug`), reconstruction (`rc`, `rs`, `bk`), Review & Retrieval (`rvn`, `rvh`, `rvs`) with the 2-step hint ladder, listen (`ls`), merged debrief, 5D `/progress`, organic phrase registration, stale handling ("That option expired." / "Saved to Review").
+* `app.py` rewired to those pieces: durable interaction routing of free text, background analysis with `apply_analysis_outcome`, V3 and legacy callbacks, `/review`, `/progress`, `/debrief`, `🔁 Review` button, durable auto-voice (`learner_settings`) and `audio_cache`, optional admin-only canary (`CANARY_ADMIN_ONLY`). The `v2_complete` broadcast is gone.
+* `policy_engine.py` shrank from 707 to about 275 lines: removed `decide`, `validate_analyst_output_against_turn`, `should_schedule_micro_workout`, `_is_pattern_relevant_to_goals` and the process-memory auto-voice functions. `DialogueController` moved unchanged to `dialogue.py` (it builds the Responder brief; it is not policy).
+* `retrieval.py`: hint ladder per the S4 answer: level 1 = structure (first letters), level 2 = Arabic gloss. `prompts/retrieval_judge_system.md` describes the two levels.
+* `database.py`: an end-of-turn 💡 offer and the later tap of the same diagnostic count as ONE visible card (`cards_in_scene`, `turns_since_visible_card`, `times_feedback_shown`). Before this, offer plus tap would have counted twice.
+
+### Tests
+* New: `test_s5_orchestrator.py` 20, `test_s5_flows.py` 53, `test_s5_ai_engine.py` 26, `test_s5_app.py` 17 (helpers in `helpers_s5.py`).
+* Removed from `tests.py` (20 to 18), because the code they pinned is gone and `tests_v3` covers its replacement: `test_05_workout_eligibility` (`decide`, `should_schedule_micro_workout`) and `test_12_end_to_end_orchestrator_pipeline` (v2 `process_turn(on_fast_reply)` + `confirm_card_delivered`; replaced by `test_s5_orchestrator` and `test_s5_app`).
+* Edited: `tests.py` test_03 (3c, `decide`, removed), test_04 (`DialogueController` import path), test_11 (first half pinned `validate_analyst_output_against_turn`; now covered by `test_validation.py`), test_19 (auto-voice now `db.get_auto_voice` / `set_auto_voice`); `test_policy_engine_shrink.py` rewritten for the new state; `test_analyst_v3_prompt.py` (the v2 prompt is gone); `test_validation.py` (false-frame check reads `prompts/analyst_v3_system.md`); `test_retrieval.py` and `test_catalog_release.py` (hint ladder order).
+
 ## V3.0, Sprint S4: catalog v1.0.0, Zero-Bias, V3 Analyst prompt, retrieval judge (Claude's files)
 
 Baseline after S3 (CI): 996 tests (737 `tests_v3`, 239 `tests_v2`, 20 `tests.py`); the same suite run locally on Python 3.13 gave 992 (235 `tests_v2`).

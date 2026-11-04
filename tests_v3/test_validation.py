@@ -438,7 +438,7 @@ def test_the_live_prompts_do_not_teach_the_false_frame():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    for rel in ("ai_engine.py", "prompts/_partials/l1_taxonomy.md", "RENDERED_PROMPTS.md"):
+    for rel in ("prompts/analyst_v3_system.md", "prompts/_partials/l1_taxonomy.md", "RENDERED_PROMPTS.md"):
         text = (root / rel).read_text(encoding="utf-8")
         assert "«ناقش في»، «شرح لي»" not in text  # the old COLLOC_PREP_VERB line
         assert "(تناقشوا حول الموضوع) → discuss it" not in text  # the old PREP_CALQUE example

@@ -1,42 +1,50 @@
-from clock import SystemClock
-import threading
 import asyncio
 import html
-import json
 import logging
 import os
+import threading
 import time
 import uuid
+from concurrent.futures import TimeoutError as FutureTimeout
+from typing import Any, Optional
+
 import edge_tts
 import requests
 import telebot
 from telebot import apihelper, types
+
 apihelper.SESSION_TIME_TO_LIVE = 600
+import interaction
 from ai_engine import DualLLMEngine
 from config import ADMIN_ID, DEFAULT_VOICE, TELEGRAM_BOT_TOKEN, TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
-from orchestrator import TurnOrchestrator
+from flows import CallbackResult, V3Flows, View, script_hash
+from guide_and_branding import GUIDE_CHAPTERS_HTML, generate_bot_branding_images
+from orchestrator import ANALYSIS_WAIT_S, AnalysisOutcome, TurnOrchestrator, TurnResult
 from policy_engine import (
-    extract_alex_spoken_text,
-    get_auto_voice_pref,
-    set_auto_voice_pref,
     complete_decode_session,
+    extract_alex_spoken_text,
     format_decode_phase1_message,
     format_decode_phase2_reveal,
     get_active_decode_session,
     register_workout_task,
     start_decode_session,
 )
-from guide_and_branding import GUIDE_CHAPTERS_HTML, generate_bot_branding_images
-from schemas import DirectnessLevel, InterventionLevel, RegisterProfile, TrainingMode
+from schemas import ResponderReplyV2, SkipReason
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("SpokenEnglishLab")
 
-db = EventSourcedDatabase(clock=SystemClock())
+db = EventSourcedDatabase()
 ai = DualLLMEngine()
 orchestrator = TurnOrchestrator(db=db, ai=ai)
+flows = V3Flows(db, ai)
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=True, num_threads=4) if TELEGRAM_BOT_TOKEN else None
+
+# V3.0 cutover canary (S0 acceptance): while this is on, only ADMIN_ID is served.
+CANARY_ADMIN_ONLY = os.getenv("CANARY_ADMIN_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+CANARY_NOTICE = "🛠️ <i>Spoken English Lab is in a short private test. Back soon.</i>"
+RETRY_NOTICE = "⏳ <i>Alex is catching his breath (high traffic). Please resend your message in a few seconds!</i>"
 
 
 _LEARNER_LOCKS: dict[str, threading.Lock] = {}
@@ -90,9 +98,10 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         {"command": "think", "description": "Analytical Think-Aloud sparring"},
         {"command": "workout", "description": "Spontaneous phrase retrieval workout"},
         {"command": "decode", "description": "2-phase connected speech & subtext challenge"},
-        {"command": "debrief", "description": "End-of-scene summary of wins & top shifts"},
-        {"command": "progress", "description": "View evidence-based acquisition profile"},
-        {"command": "guide", "description": "Interactive 5-chapter v2 User Guide (EN + AR)"},
+        {"command": "debrief", "description": "End-of-scene recap: counts and top shifts"},
+        {"command": "review", "description": "Review & Retrieval: phrases that are due"},
+        {"command": "progress", "description": "5-dimension mastery profile"},
+        {"command": "guide", "description": "Interactive 5-chapter User Guide (EN + AR)"},
     ]
     active_scopes = [{"type": "default"}, {"type": "all_private_chats"}]
     if target_chat_id:
@@ -158,6 +167,7 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("⚙️ Register & Tone"),
         types.KeyboardButton("📊 My Progress"),
         types.KeyboardButton("🏁 Scene Debrief"),
+        types.KeyboardButton("🔁 Review"),
         types.KeyboardButton("📖 User Guide"),
         types.KeyboardButton("🔄 New Scene"),
     )
@@ -251,7 +261,7 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     ]
     markup.row(*tier_btns)
 
-    auto_v = get_auto_voice_pref(lid)
+    auto_v = db.get_auto_voice(lid)
     v_btns = [
         types.InlineKeyboardButton(
             f"{'✅ ' if not auto_v else ''}🎧 Voice: On Tap",
@@ -314,10 +324,370 @@ def synthesize_tts_mp3(text: str) -> str:
     return out_path
 
 
+def build_guide_inline_markup(active_key: str = "overview") -> types.InlineKeyboardMarkup:
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    chapters = [
+        ("overview", "📖 Overview"),
+        ("ch1_layers", "🏛️ 1. 3-Layer System"),
+        ("ch2_modes", "🎯 2. Training Modes"),
+        ("ch3_registers", "⚙️ 3. Registers & Tone"),
+        ("ch4_mastery", "📊 4. Mastery Ladder"),
+    ]
+    buttons = []
+    for k, label in chapters:
+        prefix = "✅ " if k == active_key else ""
+        buttons.append(types.InlineKeyboardButton(f"{prefix}{label}", callback_data=f"guide:{k}"))
+    markup.add(*buttons)
+    return markup
+
+
+# ------------------------------------------------------------------------------ V3.0 delivery helpers
+# Everything below takes the bot as a parameter, so the scripted end-to-end test can drive it with a fake.
+
+
+def _markup(view: View) -> Optional[types.InlineKeyboardMarkup]:
+    if not view.buttons:
+        return None
+    markup = types.InlineKeyboardMarkup()
+    for row in view.buttons:
+        markup.row(*[types.InlineKeyboardButton(b.label, callback_data=b.data) for b in row])
+    return markup
+
+
+def _allowed(lid: int) -> bool:
+    return (not CANARY_ADMIN_ONLY) or int(lid) == int(ADMIN_ID)
+
+
+def begin_command(bot_, chat_id: int, lid: int) -> bool:
+    """Every command and keyboard button: canary gate, then close the open interaction row (S0 5.4)."""
+    if not _allowed(lid):
+        bot_.send_message(chat_id, CANARY_NOTICE, parse_mode="HTML")
+        return False
+    flows.close_active(lid)
+    return True
+
+
+def send_view(bot_, chat_id: int, view: View):
+    return bot_.send_message(chat_id, view.text, parse_mode="HTML", reply_markup=_markup(view))
+
+
+def edit_view(bot_, chat_id: int, message_id: int, view: View) -> None:
+    try:
+        bot_.edit_message_text(
+            view.text, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=_markup(view)
+        )
+    except Exception as err:  # "message is not modified" and deleted messages are not errors for the learner
+        logger.info("edit_view skipped: %s", err)
+
+
+def _answer(bot_, call_id: str, text: Optional[str] = None) -> None:
+    try:
+        bot_.answer_callback_query(call_id, text) if text else bot_.answer_callback_query(call_id)
+    except Exception as err:
+        logger.info("answer_callback_query skipped: %s", err)
+
+
+def send_alex_voice(bot_, chat_id: int, text: str) -> bool:
+    """Speak ``text``. A line that was spoken before is sent by its stored Telegram file id (``audio_cache``)."""
+    spoken = (extract_alex_spoken_text(text) or text or "").strip()
+    if not spoken:
+        return False
+    key = script_hash(spoken)
+    cached = db.get_audio_file_id(key, DEFAULT_VOICE)
+    if cached:
+        try:
+            bot_.send_voice(chat_id, cached)
+            return True
+        except Exception as err:  # Telegram forgot the file: drop the entry and synthesize again
+            logger.info("cached voice rejected: %s", err)
+            db.drop_audio_file_id(key, DEFAULT_VOICE)
+    path = ""
+    try:
+        path = synthesize_tts_mp3(spoken)
+        with open(path, "rb") as f_audio:
+            sent = bot_.send_voice(chat_id, f_audio)
+        voice = getattr(sent, "voice", None)
+        file_id = getattr(voice, "file_id", None)
+        if file_id:
+            db.put_audio_file_id(key, DEFAULT_VOICE, str(file_id), getattr(voice, "file_unique_id", None), getattr(voice, "duration", None))
+        return True
+    except Exception as err:
+        logger.warning("TTS error: %s", err)
+        return False
+    finally:
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _listen_markup(reply_event_seq: int, upgrade_callback: Optional[str] = None) -> types.InlineKeyboardMarkup:
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    buttons = []
+    if upgrade_callback:
+        buttons.append(types.InlineKeyboardButton("💡 Quick Upgrade", callback_data=upgrade_callback))
+    buttons.append(types.InlineKeyboardButton("🎧 Listen", callback_data=interaction.build_callback("ls", reply_event_seq, 0)))
+    markup.add(*buttons)
+    return markup
+
+
+def run_scene_turn(
+    bot_,
+    chat_id: int,
+    lid: int,
+    text: str,
+    *,
+    message_id: Optional[int] = None,
+    origin: str = "scene",
+    interaction_id: Optional[int] = None,
+    background: bool = True,
+) -> Optional[TurnResult]:
+    """One scene turn (S0 6): the reply goes out as soon as the Responder has it; the Analyst finishes in the background."""
+    if message_id is not None:
+        key = f"tg_msg_{chat_id}_{message_id}"
+    else:
+        key = f"tg_{origin}_{chat_id}_{interaction_id if interaction_id is not None else uuid.uuid4().hex[:8]}"
+    sent: dict[str, Any] = {}
+
+    def _deliver(reply, handle) -> None:
+        markup = _listen_markup(handle.reply_event_seq)
+        sent["first"] = bot_.send_message(chat_id, f"💬 <b>Alex:</b> {_e(reply.reply_text)}", parse_mode="HTML", reply_markup=markup)
+        if reply.second_bubble_text:
+            bot_.send_message(chat_id, f"💬 <b>Alex:</b> {_e(reply.second_bubble_text)}", parse_mode="HTML", reply_markup=markup)
+        if db.get_auto_voice(lid):
+            spoken = reply.reply_text if not reply.second_bubble_text else f"{reply.reply_text} {reply.second_bubble_text}"
+            send_alex_voice(bot_, chat_id, spoken)
+
+    try:
+        try:
+            bot_.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        with _get_learner_lock(lid):
+            res = orchestrator.process_turn(
+                learner_id=lid,
+                learner_text=text,
+                message_idempotency_key=key,
+                is_voice_message=False,
+                origin=origin,
+                interaction_id=interaction_id,
+                telegram_message_id=message_id,
+                on_fast_reply=_deliver,
+            )
+    except Exception as err:
+        logger.error("Turn error: %s", err, exc_info=True)
+        bot_.send_message(chat_id, RETRY_NOTICE, parse_mode="HTML")
+        return None
+    if res.duplicate or res.handle is None:
+        return None
+    if background:
+        threading.Thread(target=finish_turn, args=(bot_, chat_id, lid, res, sent.get("first")), daemon=True).start()
+    else:
+        finish_turn(bot_, chat_id, lid, res, sent.get("first"))
+    return res
+
+
+def finish_turn(bot_, chat_id: int, lid: int, res: TurnResult, first_message: Any = None) -> None:
+    """Wait for the Analyst, apply its outcome (one compare-and-set on the revision), then show what the policy allows."""
+    handle = res.handle
+    try:
+        outcome = res.analysis_future.result(timeout=ANALYSIS_WAIT_S)
+    except FutureTimeout:
+        outcome = AnalysisOutcome("skipped", SkipReason.DEADLINE, None, "analysis wait elapsed")
+    except Exception as err:
+        outcome = AnalysisOutcome("skipped", SkipReason.ERROR, None, str(err)[:200])
+    try:
+        with _get_learner_lock(lid):
+            actions = orchestrator.apply_analysis_outcome(learner_id=lid, handle=handle, outcome=outcome)
+    except Exception as err:
+        logger.error("apply_analysis_outcome failed: %s", err, exc_info=True)
+        return
+    try:
+        if actions.followup_text:
+            bot_.send_message(chat_id, f"💬 <b>Alex:</b> {_e(actions.followup_text)}", parse_mode="HTML")
+        if actions.attach_upgrade_button and actions.upgrade_callback and actions.card_id and first_message is not None:
+            bot_.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=first_message.message_id,
+                reply_markup=_listen_markup(handle.reply_event_seq, actions.upgrade_callback),
+            )
+            flows.mark_card_offered(lid, res.session_id, actions.card_id, handle.turn_event_id, first_message.message_id)
+    except Exception as err:
+        logger.warning("post-turn delivery failed: %s", err)
+
+
+def on_text(bot_, chat_id: int, lid: int, text: str, message_id: Optional[int] = None, *, background: bool = True) -> None:
+    """A free-text message that is not a keyboard button: the open interaction, a legacy mode, or a scene turn."""
+    if not _allowed(lid):
+        bot_.send_message(chat_id, CANARY_NOTICE, parse_mode="HTML")
+        return
+    try:
+        with _get_learner_lock(lid):
+            sess = db.get_or_create_active_session(lid)
+            sid = str(sess["session_id"])
+            routed = flows.handle_text(lid, text)
+            if routed.views:
+                for view in routed.views:
+                    send_view(bot_, chat_id, view)
+                return
+            active_dec = get_active_decode_session(str(lid)) or get_active_decode_session(str(chat_id))
+            if active_dec is not None:
+                ch_obj = active_dec["challenge"]
+                eval_res = ai.evaluate_listen_decode_attempt(ch_obj, text)
+                complete_decode_session(str(lid))
+                complete_decode_session(str(chat_id))
+                db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
+                bot_.send_message(chat_id, format_decode_phase2_reveal(ch_obj, eval_res), parse_mode="HTML")
+                return
+            if sess.get("training_mode") == "register_shift":
+                rs_out = ai.generate_register_shift_coaching(text)
+                db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
+                rs_html = (
+                    f"🎛️ <b>Register Shift: {_e(rs_out.communicative_intention)}</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>Casual (Friend):</b> “{_e(rs_out.casual_friend_version)}”\n"
+                    f"• <b>Diplomatic (Colleague):</b> “{_e(rs_out.diplomatic_colleague_version)}”\n"
+                    f"• <b>Executive (Manager):</b> “{_e(rs_out.executive_manager_version)}”\n\n"
+                    f"<b>Why it shifts:</b> {_e(rs_out.key_pragmatic_distinction_en)}\n"
+                    f"<b>بالعربية:</b> <tg-spoiler>{_e(rs_out.key_pragmatic_distinction_ar)}</tg-spoiler>\n\n"
+                    f"🎯 <b>Try it:</b> {_e(rs_out.practice_prompt)}"
+                )
+                bot_.send_message(chat_id, rs_html, parse_mode="HTML")
+                return
+    except Exception as err:
+        logger.error("Text routing error: %s", err, exc_info=True)
+        bot_.send_message(chat_id, RETRY_NOTICE, parse_mode="HTML")
+        return
+    run_scene_turn(bot_, chat_id, lid, text, message_id=message_id, background=background)
+
+
+def send_progress(bot_, chat_id: int, lid: int) -> None:
+    send_view(bot_, chat_id, flows.progress_view(lid))
+
+
+def send_debrief(bot_, chat_id: int, lid: int) -> None:
+    send_view(bot_, chat_id, flows.debrief_view(lid))
+
+
+def send_review(bot_, chat_id: int, lid: int) -> None:
+    with _get_learner_lock(lid):
+        views = flows.start_review(lid)
+    for view in views:
+        send_view(bot_, chat_id, view)
+
+
+def _v3_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, data: str, *, background: bool = True) -> None:
+    from flows import TurnSubmission  # noqa: F401  (type of CallbackResult.submit_turn)
+
+    with _get_learner_lock(lid):
+        res: CallbackResult = flows.handle_callback(lid, data)
+    _answer(bot_, call_id, res.toast)
+    if res.edit is not None:
+        edit_view(bot_, chat_id, message_id, res.edit)
+    for view in res.send:
+        send_view(bot_, chat_id, view)
+    if res.tts_text:
+        send_alex_voice(bot_, chat_id, res.tts_text)
+    if res.submit_turn is not None:
+        sub = res.submit_turn
+        run_scene_turn(
+            bot_, chat_id, lid, sub.text, origin=sub.origin, interaction_id=sub.interaction_id, background=background
+        )
+
+
+def on_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, data: str, message_text: str = "", *, background: bool = True) -> None:
+    if not _allowed(lid):
+        _answer(bot_, call_id, "Private test")
+        return
+    if data.split(":", 1)[0] in interaction.CALLBACK_OPS:
+        _v3_callback(bot_, call_id, lid, chat_id, message_id, data, background=background)
+        return
+
+    sess = db.get_or_create_active_session(lid)
+    sid = str(sess["session_id"])
+
+    if data == "decode_reveal":
+        st = complete_decode_session(str(lid)) or complete_decode_session(str(chat_id))
+        if not st:
+            _answer(bot_, call_id, "Breakdown already revealed.")
+            return
+        ch_obj = st["challenge"]
+        db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
+        _answer(bot_, call_id, "Revealing sound & subtext breakdown...")
+        bot_.send_message(chat_id, format_decode_phase2_reveal(ch_obj, None), parse_mode="HTML")
+        return
+
+    if data.startswith("guide:"):
+        ch_key = data.split(":", 1)[1]
+        ch_html = GUIDE_CHAPTERS_HTML.get(ch_key, GUIDE_CHAPTERS_HTML["overview"])
+        bot_.edit_message_text(
+            ch_html, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=build_guide_inline_markup(ch_key)
+        )
+        _answer(bot_, call_id, "Guide chapter loaded")
+        return
+
+    if data.startswith("card:"):  # buttons on messages sent before V3.0 keep working
+        card_id = data.split(":", 1)[1]
+        info = db.get_pending_card(card_id)
+        if not info:
+            _answer(bot_, call_id, "Card expired.")
+            return
+        expanded_html = render_layer2_card_html(info["reply_text"], info["diagnostic"])
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🎧 Listen", callback_data=f"tts:{card_id}"))
+        bot_.edit_message_text(expanded_html, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=markup)
+        _answer(bot_, call_id, "Upgrade expanded")
+        return
+
+    if data.startswith("tts:"):
+        card_id = data.split(":", 1)[1]
+        info = db.get_pending_card(card_id) if card_id != "msg" else None
+        raw_target = info["reply_text"] if info else (message_text or "")
+        _answer(bot_, call_id, "🎧 Generating Alex's voice...")
+        send_alex_voice(bot_, chat_id, extract_alex_spoken_text(raw_target))
+        return
+
+    if data.startswith(("setreg:", "setdir:", "setfb:", "setar:", "setmodel:", "setvoice:")):
+        kind, val = data.split(":", 1)
+        if kind == "setreg":
+            db.update_session_settings(sid, lid, register_profile=val)
+            db.update_learner_preference(lid, default_register=val)
+            toast = f"Register → {val.upper()}"
+        elif kind == "setdir":
+            db.update_session_settings(sid, lid, directness=val)
+            db.update_learner_preference(lid, default_directness=val)
+            toast = f"Directness → {val.upper()}"
+        elif kind == "setfb":
+            db.update_learner_preference(lid, feedback_preference=val)
+            toast = f"Coaching → {val.upper()}"
+        elif kind == "setar":
+            db.update_learner_preference(lid, arabic_support=val)
+            toast = f"Arabic Notes → {val.upper()}"
+        elif kind == "setvoice":
+            enabled = val == "auto"
+            db.set_auto_voice(lid, enabled)
+            toast = "Alex Voice → AUTO 🔊" if enabled else "Alex Voice → ON TAP 🎧"
+        else:
+            chain = ai.set_model_tier(val)
+            toast = f"Engine → {chain[0] if chain else val.upper()}"
+        panel_html, markup = build_live_settings_panel(lid)
+        try:
+            bot_.edit_message_text(panel_html, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=markup)
+        except Exception:
+            pass
+        _answer(bot_, call_id, f"✅ {toast}")
+        return
+
+    _answer(bot_, call_id, interaction.STALE_CALLBACK_TEXT)
+
+
 if bot is not None:
     @bot.message_handler(commands=["start", "reset", "scene"])
     def handle_start(message):
         lid = message.from_user.id
+        if not begin_command(bot, message.chat.id, lid):
+            return
         new_sid = f"sess_{uuid.uuid4().hex[:10]}"
         db.upsert_learner(lid)
         cfg = db.get_learner_settings(lid)
@@ -334,7 +704,7 @@ if bot is not None:
         )
         bot.send_message(
             message.chat.id,
-            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ (v2_complete)</b>\n"
+            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️</b>\n"
             f"• Scene: <code>{new_sid}</code>\n"
             f"• Register: <b>{_e(reg.upper())}</b> | Directness: <b>{_e(direct.upper())}</b> | Coaching: <b>{_e(fb.upper())}</b>\n\n"
             "Talk naturally about anything on your mind, or use the mode buttons below.",
@@ -344,6 +714,8 @@ if bot is not None:
 
     @bot.message_handler(commands=["sync_telegram"])
     def handle_sync_telegram_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         force_sync_all_telegram_scopes_and_profile(message.chat.id)
         bot.send_message(
             message.chat.id,
@@ -354,40 +726,26 @@ if bot is not None:
 
     @bot.message_handler(commands=["progress", "audit"])
     def handle_progress(message):
-        lid = message.from_user.id
-        with db._conn() as conn:
-            p_rows = conn.execute(
-                "SELECT phrase_id, current_stage, spontaneous_count, independent_count, exposure_count FROM phrase_state_projection WHERE learner_id = ?",
-                (lid,),
-            ).fetchall()
-            e_rows = conn.execute(
-                "SELECT normalized_pattern_id, issue_kind, distinct_eligible_occurrences, times_feedback_shown, workout_scheduled FROM error_pattern_projection WHERE learner_id = ? ORDER BY distinct_eligible_occurrences DESC LIMIT 5",
-                (lid,),
-            ).fetchall()
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_progress(bot, message.chat.id, message.from_user.id)
 
-        out_lines = ["📊 <b>Evidence-Based Acquisition Profile</b>", "━━━━━━━━━━━━━━━━━━━━"]
-        if p_rows:
-            out_lines.append("<b>Tracked Expressions:</b>")
-            for r in p_rows:
-                out_lines.append(
-                    f"• <code>{_e(r['phrase_id'])}</code> → <b>{_e(r['current_stage'])}</b> "
-                    f"(spontaneous={r['spontaneous_count']}, independent={r['independent_count']}, seen={r['exposure_count']})"
-                )
-        else:
-            out_lines.append("• No tracked phrase events yet.")
+    @bot.message_handler(commands=["review"])
+    def handle_review_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_review(bot, message.chat.id, message.from_user.id)
 
-        if e_rows:
-            out_lines.append("\n<b>Recurring Diagnostic Patterns:</b>")
-            for r in e_rows:
-                out_lines.append(
-                    f"• <code>{_e(r['normalized_pattern_id'])}</code> ({_e(r['issue_kind'])}): "
-                    f"occurrences={r['distinct_eligible_occurrences']}, cards_shown={r['times_feedback_shown']}, "
-                    f"workout={'✅ due' if r['workout_scheduled'] else '—'}"
-                )
-        bot.send_message(message.chat.id, "\n".join(out_lines), parse_mode="HTML")
+    @bot.message_handler(commands=["debrief"])
+    def handle_debrief_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_debrief(bot, message.chat.id, message.from_user.id)
 
     @bot.message_handler(commands=["settings"])
     def handle_settings_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         lid = message.from_user.id
         panel_html, markup = build_live_settings_panel(lid)
         bot.send_message(
@@ -421,11 +779,12 @@ if bot is not None:
             scene_bible=dilemma_bible,
         )
         corr_id = f"dil_{uuid.uuid4().hex[:8]}"
-        db.append_event(
+        db.bump_scene_revision(sid)
+        db.append_event_ex(
             learner_id=lid,
             session_id=sid,
             event_type="responder_reply_delivered",
-            payload={"reply_text": dilemma.opening_line, "asked_optional_question": "?" in dilemma.opening_line},
+            payload=ResponderReplyV2(kind="opening", reply_text=dilemma.opening_line),
             correlation_id=corr_id,
             idempotency_key=f"{corr_id}:open",
         )
@@ -468,6 +827,7 @@ if bot is not None:
             scene_mode="micro_drill",
             scene_bible=workout_bible,
         )
+        db.bump_scene_revision(sid)
         bot.send_message(
             chat_id,
             f"🏋️ <b>Spontaneous Retrieval Workout</b> (Register: <b>{_e(reg.upper())}</b>)\n"
@@ -479,6 +839,8 @@ if bot is not None:
 
     @bot.message_handler(commands=["dilemma"])
     def handle_dilemma_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
         cfg = db.get_learner_settings(lid)
@@ -487,6 +849,8 @@ if bot is not None:
 
     @bot.message_handler(commands=["workout"])
     def handle_workout_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
         cfg = db.get_learner_settings(lid)
@@ -495,9 +859,12 @@ if bot is not None:
 
     @bot.message_handler(commands=["shift", "register"])
     def handle_shift_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
         db.update_session_settings(str(sess["session_id"]), lid, training_mode="register_shift", scene_mode="micro_drill")
+        db.bump_scene_revision(str(sess["session_id"]))
         bot.send_message(
             message.chat.id,
             "🎛️ <b>Register Shift Mode:</b> Send any message or communicative intention, and I'll calibrate it across Casual, Diplomatic, and Executive registers.",
@@ -506,9 +873,12 @@ if bot is not None:
 
     @bot.message_handler(commands=["think"])
     def handle_think_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         lid = message.from_user.id
         sess = db.get_or_create_active_session(lid)
         db.update_session_settings(str(sess["session_id"]), lid, training_mode="think_aloud", scene_mode="real_conversation")
+        db.bump_scene_revision(str(sess["session_id"]))
         bot.send_message(
             message.chat.id,
             f"🧠 <b>Think-Aloud Mode</b> (Register: <b>{_e(sess.get('register_profile', 'analytical').upper())}</b>): Share a view or argument on any topic, and let's test and refine it.",
@@ -517,6 +887,8 @@ if bot is not None:
 
     @bot.message_handler(commands=["decode"])
     def handle_decode_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         lid = message.from_user.id
         chat_id = message.chat.id
         sess = db.get_or_create_active_session(lid)
@@ -527,6 +899,7 @@ if bot is not None:
             pass
         ch = ai.generate_listen_decode_challenge(register_profile=reg)
         db.update_session_settings(str(sess["session_id"]), lid, training_mode="listen_and_decode", scene_mode="micro_drill")
+        db.bump_scene_revision(str(sess["session_id"]))
         try:
             mp3_p = synthesize_tts_mp3(ch.spoken_clip_text)
             with open(mp3_p, "rb") as f_audio:
@@ -544,71 +917,10 @@ if bot is not None:
             reply_markup=markup,
         )
 
-    @bot.message_handler(commands=["debrief"])
-    def handle_debrief_cmd(message):
-        lid = message.from_user.id
-        chat_id = message.chat.id
-        sess = db.get_or_create_active_session(lid)
-        sid = str(sess["session_id"])
-        try:
-            bot.send_chat_action(chat_id, "typing")
-        except Exception:
-            pass
-        hist = db.get_recent_dialogue_history(sid, limit=10)
-        with db._conn() as conn:
-            diag_rows = conn.execute(
-                "SELECT payload_json FROM event_log WHERE session_id = ? AND event_type = 'analyst_diagnosis_recorded' ORDER BY occurred_at_utc DESC LIMIT 5",
-                (sid,),
-            ).fetchall()
-        diags = []
-        for r in diag_rows:
-            p = json.loads(r["payload_json"])
-            diags.extend(p.get("diagnostics", []))
-
-        if not hist:
-            bot.send_message(chat_id, "🏁 <b>Scene Debrief:</b> Exchange a few turns in the current scene first, then tap <b>🏁 Scene Debrief</b>!", parse_mode="HTML")
-            return
-
-        deb = ai.generate_scene_debrief(hist, diags)
-        lines = [
-            "🏁 <b>End-of-Scene Debrief</b>",
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"<b>Scene Outcome:</b> {_e(deb.scene_outcome)}",
-        ]
-        if deb.spontaneous_wins:
-            lines.append("\n✅ <b>Spontaneous Wins:</b>")
-            for w in deb.spontaneous_wins:
-                lines.append(f"• {_e(w)}")
-        if deb.top_shifts:
-            lines.append("\n🔧 <b>Top Shifts to Keep:</b>")
-            for s in deb.top_shifts:
-                lines.append(
-                    f"• “<s>{_e(s.you_said)}</s>” → “<b>{_e(s.natural_alternative)}</b>”\n"
-                    f"  <i>{_e(s.why_it_matters)}</i>"
-                )
-                if s.arabic_note:
-                    lines.append(f"  <tg-spoiler>{_e(s.arabic_note)}</tg-spoiler>")
-        lines.append(f"\n💡 <i>{_e(deb.closing_note)}</i>")
-        bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
-
-    def build_guide_inline_markup(active_key: str = "overview") -> types.InlineKeyboardMarkup:
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        chapters = [
-            ("overview", "📖 Overview"),
-            ("ch1_layers", "🏛️ 1. 3-Layer System"),
-            ("ch2_modes", "🎯 2. Training Modes"),
-            ("ch3_registers", "⚙️ 3. Registers & Tone"),
-            ("ch4_mastery", "📊 4. Mastery Ladder"),
-        ]
-        buttons = []
-        for k, label in chapters:
-            prefix = "✅ " if k == active_key else ""
-            buttons.append(types.InlineKeyboardButton(f"{prefix}{label}", callback_data=f"guide:{k}"))
-        markup.add(*buttons)
-        return markup
-
     @bot.message_handler(commands=["guide", "help"])
     def handle_guide_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         bot.send_message(
             message.chat.id,
             GUIDE_CHAPTERS_HTML["overview"],
@@ -618,6 +930,8 @@ if bot is not None:
 
     @bot.message_handler(commands=["branding"])
     def handle_branding_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
         chat_id = message.chat.id
         try:
             bot.send_chat_action(chat_id, "upload_photo")
@@ -641,105 +955,15 @@ if bot is not None:
 
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callback(call):
-        data = call.data or ""
-        lid = call.from_user.id
-        sess = db.get_or_create_active_session(lid)
-        sid = str(sess["session_id"])
-
-        if data == "decode_reveal":
-            st = complete_decode_session(str(lid)) or complete_decode_session(str(call.message.chat.id))
-            if not st:
-                bot.answer_callback_query(call.id, "Breakdown already revealed.")
-                return
-            ch_obj = st["challenge"]
-            db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
-            bot.answer_callback_query(call.id, "Revealing sound & subtext breakdown...")
-            bot.send_message(call.message.chat.id, format_decode_phase2_reveal(ch_obj, None), parse_mode="HTML")
-            return
-
-        if data.startswith("guide:"):
-            ch_key = data.split(":", 1)[1]
-            ch_html = GUIDE_CHAPTERS_HTML.get(ch_key, GUIDE_CHAPTERS_HTML["overview"])
-            bot.edit_message_text(
-                ch_html,
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode="HTML",
-                reply_markup=build_guide_inline_markup(ch_key),
-            )
-            bot.answer_callback_query(call.id, "Guide chapter loaded")
-            return
-
-        if data.startswith("card:"):
-            card_id = data.split(":", 1)[1]
-            info = db.get_pending_card(card_id)
-            if not info:
-                bot.answer_callback_query(call.id, "Card expired.")
-                return
-            expanded_html = render_layer2_card_html(info["reply_text"], info["diagnostic"])
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🎧 Listen", callback_data=f"tts:{card_id}"))
-            bot.edit_message_text(
-                expanded_html,
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                parse_mode="HTML",
-                reply_markup=markup,
-            )
-            bot.answer_callback_query(call.id, "Upgrade expanded")
-            return
-
-        if data.startswith("tts:"):
-            card_id = data.split(":", 1)[1]
-            info = db.get_pending_card(card_id) if card_id != "msg" else None
-            raw_target = info["reply_text"] if info else (call.message.text or "")
-            target_txt = extract_alex_spoken_text(raw_target)
-            bot.answer_callback_query(call.id, "🎧 Generating Alex's voice...")
-            try:
-                mp3_p = synthesize_tts_mp3(target_txt)
-                with open(mp3_p, "rb") as f_audio:
-                    bot.send_voice(call.message.chat.id, f_audio)
-            except Exception as e:
-                logger.warning(f"TTS error: {e}")
-            return
-
-        if data.startswith(("setreg:", "setdir:", "setfb:", "setar:", "setmodel:", "setvoice:")):
-            kind, val = data.split(":", 1)
-            if kind == "setreg":
-                db.update_session_settings(sid, lid, register_profile=val)
-                db.update_learner_preference(lid, default_register=val)
-                toast = f"Register → {val.upper()}"
-            elif kind == "setdir":
-                db.update_session_settings(sid, lid, directness=val)
-                db.update_learner_preference(lid, default_directness=val)
-                toast = f"Directness → {val.upper()}"
-            elif kind == "setfb":
-                db.update_learner_preference(lid, feedback_preference=val)
-                toast = f"Coaching → {val.upper()}"
-            elif kind == "setar":
-                db.update_learner_preference(lid, arabic_support=val)
-                toast = f"Arabic Notes → {val.upper()}"
-            elif kind == "setvoice":
-                enabled = (val == "auto")
-                set_auto_voice_pref(lid, enabled)
-                toast = "Alex Voice → AUTO 🔊" if enabled else "Alex Voice → ON TAP 🎧"
-            else:
-                chain = ai.set_model_tier(val)
-                toast = f"Engine → {chain[0] if chain else val.upper()}"
-
-            panel_html, markup = build_live_settings_panel(lid)
-            try:
-                bot.edit_message_text(
-                    panel_html,
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    parse_mode="HTML",
-                    reply_markup=markup,
-                )
-            except Exception:
-                pass
-            bot.answer_callback_query(call.id, f"✅ {toast}")
-            return
+        on_callback(
+            bot,
+            call.id,
+            call.from_user.id,
+            call.message.chat.id,
+            call.message.message_id,
+            call.data or "",
+            call.message.text or "",
+        )
 
     @bot.message_handler(content_types=["text"])
     def handle_text(message):
@@ -761,145 +985,43 @@ if bot is not None:
         if text.startswith("⚙️"):
             handle_settings_cmd(message)
             return
-
-        sess = db.get_or_create_active_session(lid)
-        cfg = db.get_learner_settings(lid)
-        sid = str(sess["session_id"])
-        active_reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
-        active_dir = sess.get("directness") or cfg.get("default_directness") or "balanced"
-
-        if text.startswith("💬"):
-            db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation", register_profile=active_reg, directness=active_dir)
-            bot.send_message(
-                chat_id,
-                f"💬 <b>Open Scene</b> active (Register: <b>{_e(active_reg.upper())}</b> | Directness: <b>{_e(active_dir.upper())}</b>).",
-                parse_mode="HTML",
-            )
+        if text.startswith("🔁"):
+            handle_review_cmd(message)
             return
-
-        if text.startswith("🎛️"):
-            handle_shift_cmd(message)
-            return
-
-        if text.startswith("🤝"):
-            _launch_dynamic_dilemma(chat_id, lid, sid, active_reg)
-            return
-
-        if text.startswith("🧠"):
-            handle_think_cmd(message)
-            return
-
-        if text.startswith("🏋️"):
-            _launch_dynamic_workout(chat_id, lid, sid, active_reg)
-            return
-
-        if text.startswith("🎧"):
-            handle_decode_cmd(message)
-            return
-
         if text.startswith("🏁"):
             handle_debrief_cmd(message)
             return
 
-        try:
-            with _get_learner_lock(lid):
-                active_dec = get_active_decode_session(str(lid)) or get_active_decode_session(str(chat_id))
-                if active_dec is not None:
-                    ch_obj = active_dec["challenge"]
-                    eval_res = ai.evaluate_listen_decode_attempt(ch_obj, text)
-                    complete_decode_session(str(lid))
-                    complete_decode_session(str(chat_id))
-                    db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
-                    bot.send_message(chat_id, format_decode_phase2_reveal(ch_obj, eval_res), parse_mode="HTML")
-                    return
-
-                if sess.get("training_mode") == "register_shift":
-                    rs_out = ai.generate_register_shift_coaching(text)
-                    db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation")
-                    rs_html = (
-                        f"🎛️ <b>Register Shift: {_e(rs_out.communicative_intention)}</b>\n"
-                        "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"• <b>Casual (Friend):</b> “{_e(rs_out.casual_friend_version)}”\n"
-                        f"• <b>Diplomatic (Colleague):</b> “{_e(rs_out.diplomatic_colleague_version)}”\n"
-                        f"• <b>Executive (Manager):</b> “{_e(rs_out.executive_manager_version)}”\n\n"
-                        f"<b>Why it shifts:</b> {_e(rs_out.key_pragmatic_distinction_en)}\n"
-                        f"<b>بالعربية:</b> <tg-spoiler>{_e(rs_out.key_pragmatic_distinction_ar)}</tg-spoiler>\n\n"
-                        f"🎯 <b>Try it:</b> {_e(rs_out.practice_prompt)}"
-                    )
-                    bot.send_message(chat_id, rs_html, parse_mode="HTML")
-                    return
-
-                fast_sent_holder = {"msg": None}
-
-                def _deliver_fast_reply(resp_out):
-                    reply_html = f"💬 <b>Alex:</b> {_e(resp_out.reply_text)}"
-                    listen_markup = types.InlineKeyboardMarkup()
-                    listen_markup.add(types.InlineKeyboardButton("🎧 Listen", callback_data="tts:msg"))
-                    fast_sent_holder["msg"] = bot.send_message(
-                        chat_id, reply_html, parse_mode="HTML", reply_markup=listen_markup
-                    )
-                    if resp_out.second_bubble_text:
-                        b2_markup = types.InlineKeyboardMarkup()
-                        b2_markup.add(types.InlineKeyboardButton("🎧 Listen", callback_data="tts:msg"))
-                        bot.send_message(
-                            chat_id,
-                            f"💬 <b>Alex:</b> {_e(resp_out.second_bubble_text)}",
-                            parse_mode="HTML",
-                            reply_markup=b2_markup,
-                        )
-                    if get_auto_voice_pref(lid):
-                        try:
-                            full_spoken = resp_out.reply_text
-                            if resp_out.second_bubble_text:
-                                full_spoken = f"{full_spoken} {resp_out.second_bubble_text}"
-                            mp3_p = synthesize_tts_mp3(full_spoken)
-                            with open(mp3_p, "rb") as f_audio:
-                                bot.send_voice(chat_id, f_audio)
-                        except Exception as e_tts:
-                            logger.warning(f"Auto-voice TTS notice: {e_tts}")
-
-                turn_res = orchestrator.process_turn(
-                    learner_id=lid,
-                    learner_text=text,
-                    message_idempotency_key=f"tg_msg_{chat_id}_{message.message_id}",
-                    is_voice_message=False,
-                    on_fast_reply=_deliver_fast_reply,
+        keyboard_modes = ("💬", "🎛️", "🤝", "🧠", "🏋️", "🎧")
+        if text.startswith(keyboard_modes):
+            if not begin_command(bot, chat_id, lid):
+                return
+            sess = db.get_or_create_active_session(lid)
+            cfg = db.get_learner_settings(lid)
+            sid = str(sess["session_id"])
+            active_reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
+            active_dir = sess.get("directness") or cfg.get("default_directness") or "balanced"
+            if text.startswith("💬"):
+                db.update_session_settings(sid, lid, training_mode="open_scene", scene_mode="real_conversation", register_profile=active_reg, directness=active_dir)
+                db.bump_scene_revision(sid)
+                bot.send_message(
+                    chat_id,
+                    f"💬 <b>Open Scene</b> active (Register: <b>{_e(active_reg.upper())}</b> | Directness: <b>{_e(active_dir.upper())}</b>).",
+                    parse_mode="HTML",
                 )
+            elif text.startswith("🎛️"):
+                handle_shift_cmd(message)
+            elif text.startswith("🤝"):
+                _launch_dynamic_dilemma(chat_id, lid, sid, active_reg)
+            elif text.startswith("🧠"):
+                handle_think_cmd(message)
+            elif text.startswith("🏋️"):
+                _launch_dynamic_workout(chat_id, lid, sid, active_reg)
+            else:
+                handle_decode_cmd(message)
+            return
 
-                sent_msg = fast_sent_holder["msg"]
-                if turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.card_id and turn_res.selected_diagnostic:
-                    markup = types.InlineKeyboardMarkup(row_width=2)
-                    markup.add(
-                        types.InlineKeyboardButton("💡 Quick Upgrade", callback_data=f"card:{turn_res.card_id}"),
-                        types.InlineKeyboardButton("🎧 Listen", callback_data=f"tts:{turn_res.card_id}"),
-                    )
-                    if sent_msg is not None:
-                        try:
-                            bot.edit_message_reply_markup(chat_id=chat_id, message_id=sent_msg.message_id, reply_markup=markup)
-                        except Exception:
-                            pass
-                    else:
-                        reply_html = f"💬 <b>Alex:</b> {_e(turn_res.responder_output.reply_text)}"
-                        sent_msg = bot.send_message(chat_id, reply_html, parse_mode="HTML", reply_markup=markup)
-
-                if sent_msg and turn_res.policy_decision.intervention == InterventionLevel.BRIEF_CARD and turn_res.selected_diagnostic:
-                    orchestrator.confirm_card_delivered(
-                        learner_id=lid,
-                        session_id=turn_res.session_id,
-                        correlation_id=turn_res.correlation_id,
-                        diagnostic=turn_res.selected_diagnostic,
-                    )
-
-                if turn_res.policy_decision.schedule_micro_workout and not turn_res.policy_decision.defer_workout_until_scene_end:
-                    pat = turn_res.policy_decision.workout_candidate_pattern_id
-                    bot.send_message(
-                        chat_id,
-                        f"🎯 <b>Pattern Notice:</b> <code>{_e(pat)}</code> has come up 3 times across your turns. Tap 🎛️ <b>Register Shift</b> or 🏋️ <b>Phrase Workout</b> whenever you'd like a quick focused practice.",
-                        parse_mode="HTML",
-                    )
-        except Exception as err:
-            logger.error(f"Turn error: {err}", exc_info=True)
-            bot.send_message(chat_id, "⏳ <i>Alex is catching his breath (high traffic). Please resend your message in a few seconds!</i>", parse_mode="HTML")
+        on_text(bot, chat_id, lid, text, message.message_id)
 
 
 if __name__ == "__main__":
@@ -913,9 +1035,9 @@ if __name__ == "__main__":
             active_m = ai.get_active_model_chain()[0]
             bot.send_message(
                 ADMIN_ID,
-                f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — v2_complete Prompts & Card Format Wired!</b>\n"
+                "🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — V3.0 online</b>\n"
                 f"• Primary Discovered Model: <code>{_e(active_m)}</code>\n"
-                "• Full Card (How it sounds + L1 Transfer «...» + Additional turn findings) & Anti-Mirroring active.",
+                f"• Access: {'admin-only canary' if CANARY_ADMIN_ONLY else 'all learners'}",
                 parse_mode="HTML",
                 reply_markup=build_reply_keyboard(),
             )

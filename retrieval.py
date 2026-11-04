@@ -402,16 +402,17 @@ def build_prompt(entry: PhraseEntry, kind: PromptKind | str, family: str = "gene
 
 
 def build_hint(entry: PhraseEntry, level: int) -> Optional[str]:
-    """Level 0 none; level 1 the Arabic gloss (or the first word); level 2 the first letters of each word."""
+    """The 2-step hint ladder (S5): level 0 none; level 1 the structure (the first letters of each word, slots
+    kept visible); level 2 the Arabic gloss (or the first word when the entry has no gloss)."""
     if level <= 0:
         return None
     words = [w for w in _SLOT_RE.sub(" … ", entry.canonical_form).split() if w]
     if level == 1:
-        if entry.arabic_gloss and entry.arabic_gloss.strip():
-            return entry.arabic_gloss.strip()
-        return f"It starts with “{words[0]}”." if words else None
-    masked = [w if w == "…" else (w[0] + "_" * (len(w) - 1) if len(w) > 1 else w) for w in words]
-    return " ".join(masked)
+        masked = [w if w == "…" else (w[0] + "_" * (len(w) - 1) if len(w) > 1 else w) for w in words]
+        return " ".join(masked)
+    if entry.arabic_gloss and entry.arabic_gloss.strip():
+        return entry.arabic_gloss.strip()
+    return f"It starts with “{words[0]}”." if words else None
 
 
 # ------------------------------------------------------------------------------ the LLM judge (S4)
