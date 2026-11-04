@@ -46,10 +46,9 @@ GEMINI_API_KEY: str = GEMINI_KEYS_LIST[0] if GEMINI_KEYS_LIST else ""
 
 # 2026 Official Best-in-Class Gemini Model Tiers:
 GEMINI_FLASH_TIER_CHAIN: list[str] = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash",
-    "gemini-3-flash-preview",
     "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-3-flash-preview",
     "gemini-3.5-flash-lite",
     "gemini-2.5-flash-lite",
 ]
@@ -71,8 +70,7 @@ DEFAULT_VOICE: str = "en-US-AndrewMultilingualNeural"
 ABSTAIN_THRESHOLD: float = float(os.getenv("ABSTAIN_THRESHOLD", "0.80"))
 
 if "GEMINI_API_KEYS" not in globals():
-    _raw_env_keys = os.getenv("GEMINI_KEYS") or os.getenv("GEMINI_API_KEYS") or os.getenv("GEMINI_API_KEY") or ""
-    GEMINI_API_KEYS: list[str] = [k.strip() for k in _raw_env_keys.split(",") if k.strip()]
+    GEMINI_API_KEYS: list[str] = list(GEMINI_KEYS_LIST)
 
 if "GEMINI_MODEL_CHAIN" not in globals():
     GEMINI_MODEL_CHAIN: list[str] = [
@@ -84,19 +82,20 @@ if "GEMINI_MODEL_CHAIN" not in globals():
 
 def get_labeled_gemini_keys() -> list[tuple[str, str]]:
     """Unlabeled keys share the 'default' project label (A11)."""
-    raw_list = globals().get("GEMINI_API_KEYS") or globals().get("GEMINI_KEYS") or []
+    raw_list = globals().get("GEMINI_API_KEYS") or globals().get("GEMINI_KEYS") or globals().get("GEMINI_KEYS_LIST") or []
     if isinstance(raw_list, str):
-        raw_list = [k.strip() for k in raw_list.split(",") if k.strip()]
+        raw_list = [k.strip() for k in re.split(r"[,;\s\n]+", raw_list) if k.strip()]
     out: list[tuple[str, str]] = []
     for raw in raw_list:
-        entry = str(raw).strip()
-        if not entry:
-            continue
-        if ":" in entry and not entry.startswith("AIza"):
-            proj, k = entry.split(":", 1)
-            out.append((proj.strip() or "default", k.strip()))
-        else:
-            out.append(("default", entry))
+        for part in (re.split(r"[,;\s\n]+", str(raw)) if isinstance(raw, str) else [str(raw)]):
+            entry = part.strip().strip('"').strip("'").strip("[]")
+            if not entry:
+                continue
+            if ":" in entry and not entry.startswith("AIza"):
+                proj, k = entry.split(":", 1)
+                out.append((proj.strip() or "default", k.strip()))
+            else:
+                out.append(("default", entry))
     return out
 
 

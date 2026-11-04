@@ -351,7 +351,7 @@ class LLMTransport:
                 temperature=policy.temperature,
                 max_output_tokens=policy.max_output_tokens,
             )
-            url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
             try:
                 resp = self._http_post(url, json=payload, timeout=http_timeout)
