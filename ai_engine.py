@@ -1,3 +1,4 @@
+import time
 import json
 import logging
 import re
@@ -639,3 +640,41 @@ class DualLLMEngine:
         except Exception:
             return DecodeEvaluationResult()
 
+
+
+def probe_and_rank_live_models(keys: list[str], candidates: list[str]) -> list[str]:
+    """Self-healing startup probe: tests candidate models with a 1-token ping, drops 404/503 models, and ranks by speed."""
+    if not keys or not candidates:
+        return candidates
+    key = keys[0]
+    scored: list[tuple[int, str]] = []
+    for model in candidates[:5]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        t0 = time.monotonic()
+        try:
+            r = requests.post(
+                url,
+                json={
+                    "contents": [{"role": "user", "parts": [{"text": "ok"}]}],
+                    "generationConfig": {"maxOutputTokens": 4, "thinkingConfig": {"thinkingBudget": 0}},
+                },
+                timeout=4.5,
+            )
+            if r.status_code == 400 and "thinking" in r.text.lower():
+                r = requests.post(
+                    url,
+                    json={"contents": [{"role": "user", "parts": [{"text": "ok"}]}], "generationConfig": {"maxOutputTokens": 4}},
+                    timeout=4.5,
+                )
+            if r.status_code == 200:
+                scored.append((int((time.monotonic() - t0) * 1000), model))
+        except Exception:
+            continue
+    if not scored:
+        return candidates
+    scored.sort(key=lambda x: x[0])
+    healthy = [m for _, m in scored]
+    for m in candidates:
+        if m not in healthy:
+            healthy.append(m)
+    return healthy

@@ -15,6 +15,8 @@ from telebot import apihelper, types
 
 apihelper.SESSION_TIME_TO_LIVE = 600
 import interaction
+import podcast
+import replay
 from ai_engine import DualLLMEngine
 from config import ADMIN_ID, DEFAULT_VOICE, TELEGRAM_BOT_TOKEN, TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
@@ -100,6 +102,8 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         {"command": "decode", "description": "2-phase connected speech & subtext challenge"},
         {"command": "debrief", "description": "End-of-scene recap: counts and top shifts"},
         {"command": "review", "description": "Review & Retrieval: phrases that are due"},
+        {"command": "podcast", "description": "Generate your 2-host NYC learning podcast (V4.0)"},
+        {"command": "replay", "description": "Pragmatic Replay Studio across 3 registers (V4.0)"},
         {"command": "progress", "description": "5-dimension mastery profile"},
         {"command": "guide", "description": "Interactive 5-chapter User Guide (EN + AR)"},
     ]
@@ -168,6 +172,8 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("📊 My Progress"),
         types.KeyboardButton("🏁 Scene Debrief"),
         types.KeyboardButton("🔁 Review"),
+        types.KeyboardButton("🎙️ Podcast"),
+        types.KeyboardButton("🎭 Replay"),
         types.KeyboardButton("📖 User Guide"),
         types.KeyboardButton("🔄 New Scene"),
     )
@@ -562,6 +568,62 @@ def on_text(bot_, chat_id: int, lid: int, text: str, message_id: Optional[int] =
     run_scene_turn(bot_, chat_id, lid, text, message_id=message_id, background=background)
 
 
+
+_LAST_PODCAST_EPISODES: dict[int, podcast.PodcastEpisodeScript] = {}
+
+
+def deliver_podcast_episode(bot_, chat_id: int, lid: int, mode: podcast.PodcastMode = "recap", message_id: Optional[int] = None) -> None:
+    try:
+        bot_.send_chat_action(chat_id, "record_voice")
+    except Exception:
+        pass
+    ep = podcast.generate_podcast_episode(db, ai, lid, mode=mode)
+    _LAST_PODCAST_EPISODES[int(lid)] = ep
+    with_ar = str(db.get_learner_settings(lid).get("arabic_support", "bilingual")) != "english_only"
+    card_html = podcast.render_podcast_card_html(ep, show_transcript=False, with_arabic=with_ar)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📜 Show Transcript", callback_data="pod:tx:show"),
+        types.InlineKeyboardButton("🔄 Recap", callback_data="pod:mode:recap"),
+        types.InlineKeyboardButton("☕ Briefing", callback_data="pod:mode:briefing"),
+        types.InlineKeyboardButton("🎬 Narrative", callback_data="pod:mode:narrative"),
+    )
+    if message_id is not None:
+        try:
+            bot_.edit_message_text(card_html, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=markup)
+        except Exception:
+            bot_.send_message(chat_id, card_html, parse_mode="HTML", reply_markup=markup)
+    else:
+        bot_.send_message(chat_id, card_html, parse_mode="HTML", reply_markup=markup)
+
+    key = podcast.episode_script_hash(ep)
+    cached_id = db.get_audio_file_id(key, podcast.PODCAST_VOICE_TAG)
+    if cached_id:
+        try:
+            bot_.send_voice(chat_id, cached_id, caption=f"🎙️ {ep.title} (Alex & Maya)")
+            return
+        except Exception:
+            db.drop_audio_file_id(key, podcast.PODCAST_VOICE_TAG)
+
+    mp3_path = ""
+    try:
+        mp3_path = podcast.synthesize_podcast_mp3(ep)
+        with open(mp3_path, "rb") as f_audio:
+            sent = bot_.send_voice(chat_id, f_audio, caption=f"🎙️ {ep.title} (Alex & Maya)")
+        voice = getattr(sent, "voice", None)
+        file_id = getattr(voice, "file_id", None)
+        if file_id:
+            db.put_audio_file_id(key, podcast.PODCAST_VOICE_TAG, str(file_id), getattr(voice, "file_unique_id", None), getattr(voice, "duration", None))
+    except Exception as err:
+        logger.warning("Podcast TTS synthesis warning: %s", err)
+    finally:
+        if mp3_path and os.path.exists(mp3_path):
+            try:
+                os.remove(mp3_path)
+            except OSError:
+                pass
+
+
 def send_progress(bot_, chat_id: int, lid: int) -> None:
     send_view(bot_, chat_id, flows.progress_view(lid))
 
@@ -599,6 +661,46 @@ def _v3_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, da
 def on_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, data: str, message_text: str = "", *, background: bool = True) -> None:
     if not _allowed(lid):
         _answer(bot_, call_id, "Private test")
+        return
+    if data.startswith("pod:"):
+        if data.startswith("pod:mode:"):
+            mode_val = data.split(":", 2)[2]
+            m_clean: podcast.PodcastMode = mode_val if mode_val in ("recap", "briefing", "narrative") else "recap"
+            _answer(bot_, call_id, f"🎙️ Recording {m_clean.title()} episode...")
+            deliver_podcast_episode(bot_, chat_id, lid, mode=m_clean, message_id=message_id)
+            return
+        if data.startswith("pod:tx:"):
+            show_tx = data.endswith(":show")
+            ep = _LAST_PODCAST_EPISODES.get(int(lid)) or podcast.generate_podcast_episode(db, None, lid, mode="recap")
+            with_ar = str(db.get_learner_settings(lid).get("arabic_support", "bilingual")) != "english_only"
+            card_html = podcast.render_podcast_card_html(ep, show_transcript=show_tx, with_arabic=with_ar)
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            toggle_btn = (
+                types.InlineKeyboardButton("🙈 Hide Transcript", callback_data="pod:tx:hide")
+                if show_tx
+                else types.InlineKeyboardButton("📜 Show Transcript", callback_data="pod:tx:show")
+            )
+            markup.add(
+                toggle_btn,
+                types.InlineKeyboardButton("🔄 Recap", callback_data="pod:mode:recap"),
+                types.InlineKeyboardButton("☕ Briefing", callback_data="pod:mode:briefing"),
+                types.InlineKeyboardButton("🎬 Narrative", callback_data="pod:mode:narrative"),
+            )
+            try:
+                bot_.edit_message_text(card_html, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=markup)
+            except Exception:
+                pass
+            _answer(bot_, call_id, "Transcript updated")
+            return
+    if data.startswith("rep:"):
+        with _get_learner_lock(lid):
+            res_v4 = flows.handle_v4_callback(lid, data)
+        _answer(bot_, call_id, res_v4.toast)
+        if res_v4.edit is not None:
+            edit_view(bot_, chat_id, message_id, res_v4.edit)
+        if res_v4.submit_turn is not None:
+            sub = res_v4.submit_turn
+            run_scene_turn(bot_, chat_id, lid, sub.text, origin=sub.origin, interaction_id=sub.interaction_id, background=background)
         return
     if data.split(":", 1)[0] in interaction.CALLBACK_OPS:
         _v3_callback(bot_, call_id, lid, chat_id, message_id, data, background=background)
@@ -729,6 +831,19 @@ if bot is not None:
         if not begin_command(bot, message.chat.id, message.from_user.id):
             return
         send_progress(bot, message.chat.id, message.from_user.id)
+
+
+    @bot.message_handler(commands=["podcast"])
+    def handle_podcast_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_view(bot, message.chat.id, flows.podcast_hub_view(message.from_user.id))
+
+    @bot.message_handler(commands=["replay"])
+    def handle_replay_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_view(bot, message.chat.id, flows.replay_hub_view(message.from_user.id))
 
     @bot.message_handler(commands=["review"])
     def handle_review_cmd(message):
@@ -988,6 +1103,12 @@ if bot is not None:
         if text.startswith("🔁"):
             handle_review_cmd(message)
             return
+        if text.startswith("🎙️"):
+            handle_podcast_cmd(message)
+            return
+        if text.startswith("🎭"):
+            handle_replay_cmd(message)
+            return
         if text.startswith("🏁"):
             handle_debrief_cmd(message)
             return
@@ -1030,12 +1151,22 @@ if __name__ == "__main__":
     logger.info("Force-synchronizing Telegram Bot scopes, luxury name, descriptions & commands...")
     sync_rep = force_sync_all_telegram_scopes_and_profile(ADMIN_ID)
     logger.info(f"Telegram sync report: {sync_rep}")
+    try:
+        from ai_engine import probe_and_rank_live_models
+        import config as _cfg
+        if _cfg.GEMINI_KEYS_LIST:
+            healthy = probe_and_rank_live_models(_cfg.GEMINI_KEYS_LIST, list(_cfg.GEMINI_MODEL_CHAIN))
+            _cfg.GEMINI_MODEL_CHAIN[:] = healthy
+            _cfg.GEMINI_FLASH_TIER_CHAIN[:] = healthy
+            logger.info(f"Self-healing model probe ranked chain: {healthy}")
+    except Exception as _probe_err:
+        logger.warning(f"Startup model probe skipped: {_probe_err}")
     if ADMIN_ID:
         try:
             active_m = ai.get_active_model_chain()[0]
             bot.send_message(
                 ADMIN_ID,
-                "🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — V3.0 online</b>\n"
+                "🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — V4.0 Studio online</b>\n"
                 f"• Primary Discovered Model: <code>{_e(active_m)}</code>\n"
                 f"• Access: {'admin-only canary' if CANARY_ADMIN_ONLY else 'all learners'}",
                 parse_mode="HTML",

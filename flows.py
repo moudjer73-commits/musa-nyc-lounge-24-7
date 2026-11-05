@@ -20,6 +20,8 @@ from typing import Any, Callable, Optional
 
 import feedback_queue
 import interaction
+import podcast
+import replay
 import retrieval
 from database import EventSourcedDatabase
 from interaction import ActiveInteraction, ParsedCallback, TextRoute
@@ -162,7 +164,90 @@ class V3Flows:
 
     def close_active(self, learner_id: int) -> bool:
         """Any keyboard mode button, /start or the Session button closes the open row first (S0 5.4)."""
+        replay.close_replay_session(learner_id)
         return interaction.close_learner_interaction(self.db, learner_id)
+
+    def podcast_hub_view(self, learner_id: int) -> View:
+        self.close_active(learner_id)
+        text = (
+            "🎙️ <b>Spoken English Lab — Personal Podcast Studio (V4.0)</b>\n"
+            "Turn your real upgrades, L1-Arabic fixes, and due review phrases into a natural 2-host NYC dialogue (<b>Alex &amp; Maya</b>):\n\n"
+            "• <b>🔄 Session Recap:</b> Unpack the top shifts from your recent conversation.\n"
+            "• <b>☕ Daily Briefing:</b> Weave your due review items into a brisk morning exchange.\n"
+            "• <b>🎬 Context Transfer:</b> Hear your target phrases inside a fresh high-stakes scenario."
+        )
+        buttons = (
+            (
+                Button("🔄 Session Recap", "pod:mode:recap"),
+                Button("☕ Daily Briefing", "pod:mode:briefing"),
+            ),
+            (
+                Button("🎬 Context Transfer", "pod:mode:narrative"),
+            ),
+        )
+        return View(text, buttons)
+
+    def replay_hub_view(self, learner_id: int) -> View:
+        self.close_active(learner_id)
+        moment = replay.extract_latest_replay_moment(self.db, learner_id)
+        buttons = (
+            (
+                Button("🕊️ Diplomatic Pushback", "rep:angle:diplomatic"),
+                Button("🎯 Crisp Executive", "rep:angle:executive"),
+            ),
+            (
+                Button("⚡ Warm & Witty", "rep:angle:witty"),
+            ),
+        )
+        return View(replay.render_replay_hub_html(moment), buttons)
+
+    def replay_attempt_view(self, learner_id: int, text: str, moment: replay.ActiveReplaySession) -> View:
+        html_out, ready = replay.evaluate_replay_attempt(
+            moment, text, judge=self.judge, with_arabic=self._with_arabic(learner_id)
+        )
+        rows: list[tuple[Button, ...]] = []
+        if ready and moment.last_attempt_text:
+            rows.append((Button("📨 Send to Alex", "rep:send"),))
+        rows.append(
+            (
+                Button("🕊️ Diplomatic", "rep:angle:diplomatic"),
+                Button("🎯 Executive", "rep:angle:executive"),
+                Button("⚡ Witty", "rep:angle:witty"),
+            )
+        )
+        return View(html_out, tuple(rows))
+
+    def handle_v4_callback(self, learner_id: int, data: str) -> CallbackResult:
+        if data.startswith("rep:angle:"):
+            angle_raw = data.split(":", 2)[2]
+            angle: replay.ReplayAngle = (
+                angle_raw if angle_raw in ("diplomatic", "executive", "witty") else "diplomatic"
+            )
+            moment = replay.get_replay_session(learner_id) or replay.extract_latest_replay_moment(self.db, learner_id)
+            moment.selected_angle = angle
+            opt = replay.build_replay_angle_option(self.ai, moment, angle)
+            html_out = replay.render_replay_angle_html(moment, opt, with_arabic=self._with_arabic(learner_id))
+            buttons = (
+                (
+                    Button("🕊️ Diplomatic", "rep:angle:diplomatic"),
+                    Button("🎯 Executive", "rep:angle:executive"),
+                    Button("⚡ Witty", "rep:angle:witty"),
+                ),
+            )
+            return CallbackResult(toast=f"Angle: {angle.title()}", edit=View(html_out, buttons))
+
+        if data == "rep:send":
+            moment = replay.get_replay_session(learner_id)
+            if moment is None or not moment.last_attempt_text:
+                return CallbackResult(toast=interaction.STALE_CALLBACK_TEXT)
+            attempt = moment.last_attempt_text
+            replay.close_replay_session(learner_id)
+            return CallbackResult(
+                toast="Sent to Alex!",
+                submit_turn=TurnSubmission(text=attempt, origin="scene", interaction_id=None),
+            )
+
+        return CallbackResult(toast=interaction.STALE_CALLBACK_TEXT)
 
     # ------------------------------------------------------------------ text routing
 
@@ -172,6 +257,9 @@ class V3Flows:
             return TextResult(views=[self.reconstruction_attempt(learner_id, text, row)])
         if route == TextRoute.REVIEW_ATTEMPT and row is not None:
             return TextResult(views=[self.review_attempt(learner_id, text, row)])
+        rep_sess = replay.get_replay_session(learner_id)
+        if rep_sess is not None and rep_sess.selected_angle is not None:
+            return TextResult(views=[self.replay_attempt_view(learner_id, text, rep_sess)])
         # SCENE_TURN, and DECODE_ANSWER / WORKOUT_ATTEMPT (their sessions still live in the legacy registries, so the app handles them first)
         return TextResult(scene_turn=True)
 
