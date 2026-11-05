@@ -163,19 +163,13 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         types.KeyboardButton("💬 Open Scene"),
-        types.KeyboardButton("🎛️ Register Shift"),
-        types.KeyboardButton("🤝 Pragmatic Dilemma"),
-        types.KeyboardButton("🧠 Think-Aloud"),
-        types.KeyboardButton("🏋️ Phrase Workout"),
-        types.KeyboardButton("🎧 Listen & Decode"),
-        types.KeyboardButton("⚙️ Register & Tone"),
-        types.KeyboardButton("📊 My Progress"),
-        types.KeyboardButton("🏁 Scene Debrief"),
-        types.KeyboardButton("🔁 Review"),
-        types.KeyboardButton("🎙️ Podcast"),
         types.KeyboardButton("🎭 Replay"),
+        types.KeyboardButton("🎙️ Podcast"),
+        types.KeyboardButton("🔁 Review"),
+        types.KeyboardButton("🏁 Scene Debrief"),
+        types.KeyboardButton("📊 My Progress"),
+        types.KeyboardButton("⚙️ Register & Tone"),
         types.KeyboardButton("📖 User Guide"),
-        types.KeyboardButton("🔄 New Scene"),
     )
     return markup
 
@@ -581,13 +575,8 @@ def deliver_podcast_episode(bot_, chat_id: int, lid: int, mode: podcast.PodcastM
     _LAST_PODCAST_EPISODES[int(lid)] = ep
     with_ar = str(db.get_learner_settings(lid).get("arabic_support", "bilingual")) != "english_only"
     card_html = podcast.render_podcast_card_html(ep, show_transcript=False, with_arabic=with_ar)
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📜 Show Transcript", callback_data="pod:tx:show"),
-        types.InlineKeyboardButton("🔄 Recap", callback_data="pod:mode:recap"),
-        types.InlineKeyboardButton("☕ Briefing", callback_data="pod:mode:briefing"),
-        types.InlineKeyboardButton("🎬 Narrative", callback_data="pod:mode:narrative"),
-    )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("📜 Show Transcript", callback_data="pod:tx:show"))
     if message_id is not None:
         try:
             bot_.edit_message_text(card_html, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=markup)
@@ -674,18 +663,13 @@ def on_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, dat
             ep = _LAST_PODCAST_EPISODES.get(int(lid)) or podcast.generate_podcast_episode(db, None, lid, mode="recap")
             with_ar = str(db.get_learner_settings(lid).get("arabic_support", "bilingual")) != "english_only"
             card_html = podcast.render_podcast_card_html(ep, show_transcript=show_tx, with_arabic=with_ar)
-            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup = types.InlineKeyboardMarkup(row_width=1)
             toggle_btn = (
                 types.InlineKeyboardButton("🙈 Hide Transcript", callback_data="pod:tx:hide")
                 if show_tx
                 else types.InlineKeyboardButton("📜 Show Transcript", callback_data="pod:tx:show")
             )
-            markup.add(
-                toggle_btn,
-                types.InlineKeyboardButton("🔄 Recap", callback_data="pod:mode:recap"),
-                types.InlineKeyboardButton("☕ Briefing", callback_data="pod:mode:briefing"),
-                types.InlineKeyboardButton("🎬 Narrative", callback_data="pod:mode:narrative"),
-            )
+            markup.add(toggle_btn)
             try:
                 bot_.edit_message_text(card_html, chat_id=chat_id, message_id=message_id, parse_mode="HTML", reply_markup=markup)
             except Exception:
