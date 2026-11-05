@@ -689,6 +689,8 @@ def on_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, dat
             edit_view(bot_, chat_id, message_id, res_v4.edit)
         if res_v4.tts_text:
             send_tts(bot_, chat_id, res_v4.tts_text)
+        if res_v4.tts_text:
+            send_tts(bot_, chat_id, res_v4.tts_text)
         if res_v4.submit_turn is not None:
             sub = res_v4.submit_turn
             run_scene_turn(bot_, chat_id, lid, sub.text, origin=sub.origin, interaction_id=sub.interaction_id, background=background)
@@ -830,6 +832,12 @@ if bot is not None:
         if not begin_command(bot, message.chat.id, message.from_user.id):
             return
         send_view(bot, message.chat.id, flows.sparring_hub_view(message.from_user.id))
+
+    @bot.message_handler(commands=["prosody"])
+    def handle_prosody_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_view(bot, message.chat.id, flows.prosody_hub_view(message.from_user.id, 0))
 
     @bot.message_handler(commands=["prosody"])
     def handle_prosody_cmd(message):
@@ -1223,8 +1231,7 @@ if __name__ == "__main__":
             bot.send_message(
                 ADMIN_ID,
                 "🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️ — V4.0 Studio online</b>\n"
-                f"• Primary Discovered Model: <code>{_e(active_m)}</code>\n"
-                f"• Access: {'admin-only canary' if CANARY_ADMIN_ONLY else 'all learners'}",
+,
                 parse_mode="HTML",
                 reply_markup=build_reply_keyboard(),
             )
