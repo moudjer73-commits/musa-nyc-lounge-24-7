@@ -1,3 +1,4 @@
+import tempfile
 import asyncio
 import html
 import logging
@@ -104,6 +105,7 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         {"command": "decode", "description": "2-phase connected speech & subtext challenge"},
         {"command": "debrief", "description": "End-of-scene recap: counts and top shifts"},
         {"command": "review", "description": "Review & Retrieval: phrases that are due"},
+        {"command": "prosody", "description": "Acoustic Prosody & Connected Speech Lab (V4.0)"},
         {"command": "podcast", "description": "Generate your 2-host NYC learning podcast (V4.0)"},
         {"command": "replay", "description": "Pragmatic Replay Studio across 3 registers (V4.0)"},
         {"command": "sparring", "description": "3-Way C1-C2 Sparring Table with Alex & Maya (V4.0)"},
@@ -166,13 +168,13 @@ def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         types.KeyboardButton("💬 Open Scene"),
-        types.KeyboardButton("🎭 Replay"),
+        types.KeyboardButton("🎤 Prosody Lab"),
         types.KeyboardButton("🎙️ Podcast"),
+        types.KeyboardButton("🎭 Replay"),
         types.KeyboardButton("🔁 Review"),
         types.KeyboardButton("🏁 Scene Debrief"),
         types.KeyboardButton("📊 My Progress"),
         types.KeyboardButton("⚙️ Register & Tone"),
-        types.KeyboardButton("📖 User Guide"),
     )
     return markup
 
@@ -679,12 +681,14 @@ def on_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, dat
                 pass
             _answer(bot_, call_id, "Transcript updated")
             return
-    if data.startswith("rep:") or data.startswith("spar:"):
+    if data.startswith("rep:") or data.startswith("spar:") or data.startswith("pros:"):
         with _get_learner_lock(lid):
             res_v4 = flows.handle_v4_callback(lid, data)
         _answer(bot_, call_id, res_v4.toast)
         if res_v4.edit is not None:
             edit_view(bot_, chat_id, message_id, res_v4.edit)
+        if res_v4.tts_text:
+            send_tts(bot_, chat_id, res_v4.tts_text)
         if res_v4.submit_turn is not None:
             sub = res_v4.submit_turn
             run_scene_turn(bot_, chat_id, lid, sub.text, origin=sub.origin, interaction_id=sub.interaction_id, background=background)
@@ -827,18 +831,26 @@ if bot is not None:
             return
         send_view(bot, message.chat.id, flows.sparring_hub_view(message.from_user.id))
 
-    @bot.message_handler(content_types=["voice"])
+    @bot.message_handler(commands=["prosody"])
+    def handle_prosody_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_view(bot, message.chat.id, flows.prosody_hub_view(message.from_user.id, 0))
+
+    @bot.message_handler(content_types=["voice", "audio"])
     def handle_voice_msg(message):
         chat_id = message.chat.id
         lid = message.from_user.id
         if not is_authorized(lid):
             return
+        ogg_path = ""
         try:
             bot.send_chat_action(chat_id, "typing")
-            file_info = bot.get_file(message.voice.file_id)
+            media_obj = getattr(message, "voice", None) or getattr(message, "audio", None)
+            file_info = bot.get_file(media_obj.file_id)
             raw_bytes = bot.download_file(file_info.file_path)
-            os.makedirs(TEMP_AUDIO_DIR, exist_ok=True)
-            ogg_path = os.path.join(TEMP_AUDIO_DIR, f"voice_{lid}_{message.message_id}.ogg")
+            tmp_dir = tempfile.gettempdir()
+            ogg_path = os.path.join(tmp_dir, f"voice_{lid}_{message.message_id}.ogg")
             with open(ogg_path, "wb") as f_ogg:
                 f_ogg.write(raw_bytes)
         except Exception as err:
@@ -849,7 +861,7 @@ if bot is not None:
         try:
             report = prosody.analyze_voice_message(ogg_path, mime_type="audio/ogg")
         finally:
-            if os.path.exists(ogg_path):
+            if ogg_path and os.path.exists(ogg_path):
                 try:
                     os.remove(ogg_path)
                 except OSError:
@@ -863,7 +875,6 @@ if bot is not None:
         prosody_html = prosody.render_prosody_card_html(report, with_arabic=with_ar)
         bot.send_message(chat_id, prosody_html, parse_mode="HTML")
 
-        # Route the transcribed speech naturally into the active flow (Sparring, Replay, Review, or Scene with Alex)
         with _get_learner_lock(lid):
             res = flows.handle_text(lid, report.transcript)
         for v in res.views:
@@ -1144,6 +1155,9 @@ if bot is not None:
             return
         if text.startswith("🔁"):
             handle_review_cmd(message)
+            return
+        if text.startswith("🎤"):
+            handle_prosody_cmd(message)
             return
         if text.startswith("🎙️"):
             handle_podcast_cmd(message)

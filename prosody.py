@@ -227,7 +227,7 @@ def analyze_voice_message(audio_path: str, mime_type: str = "audio/ogg") -> Opti
                 ],
                 "generationConfig": {
                     "temperature": 0.3,
-                    "maxOutputTokens": 600,
+                    "maxOutputTokens": 1024,
                     "responseMimeType": "application/json",
                     "thinkingConfig": {"thinkingBudget": 0},
                 },
@@ -283,4 +283,52 @@ def render_prosody_card_html(report: ProsodyCoachingReport, *, with_arabic: bool
         lines.append(f"• <b>Acoustic Verdict:</b> {_e(report.intonation_verdict_en)}")
     if with_arabic and report.arabic_prosody_note_ar:
         lines.append(f"• <b>بالعربية:</b> <tg-spoiler>{_e(report.arabic_prosody_note_ar)}</tg-spoiler>")
+    return "\n".join(lines)
+
+
+PROSODY_SHADOW_DRILLS: list[dict[str, str]] = [
+    {
+        "id": "pushback",
+        "sentence": "To be fair, we simply don't have the bandwidth to take that on right now.",
+        "stress_map": "To be FAIR, we SIMPly don't have the BANDwidth / tə take THAT ON right NOW.",
+        "focus": "Reduce 'to' -> /tə/ and 'that on' -> flap /ðæɾɑn/, landing peak pitch on FAIR and BANDwidth.",
+        "focus_ar": "اخفض نبرة الأدوات (To be / to) وضع النبر الطويل الواضح على FAIR و BANDwidth.",
+    },
+    {
+        "id": "annoyance",
+        "sentence": "I'm always having to step in and clean up these last-minute scope changes.",
+        "stress_map": "I'm ALways having tə STEP IN / and CLEAN UP these LAST-minute SCOPE changes.",
+        "focus": "Hold the vowel on ALways to signal annoyance, and link 'step in' and 'clean up' smoothly.",
+        "focus_ar": "مدّ الصائت في ALways لإظهار الضيق التداولي، مع وصل الفاء الساكنة بالهمزة في step_in و clean_up.",
+    },
+    {
+        "id": "executive",
+        "sentence": "Let's make sure we're on the same page before we lock in the Friday deadline.",
+        "stress_map": "Let's make SURE we're on the SAME PAGE / before we LOCK IN the FRIday DEADline.",
+        "focus": "Group into two crisp thought chunks with a micro-pause after PAGE.",
+        "focus_ar": "قسّم الجملة إلى وحدتين إيقاعيتين مع وقفة خفيفة جداً بعد كلمة PAGE.",
+    },
+]
+
+
+def render_prosody_hub_html(drill_idx: int = 0, *, with_arabic: bool = True) -> str:
+    d = PROSODY_SHADOW_DRILLS[drill_idx % len(PROSODY_SHADOW_DRILLS)]
+    lines = [
+        "🎤 <b>Acoustic Prosody &amp; Connected Speech Lab (V4.0)</b>",
+        "Send <b>any voice note</b> in English (or read the shadowing target below) to measure your physical pacing (WPM), pauses, nuclear stress, and American linking:",
+        "",
+        f"🎯 <b>Shadowing Target #{drill_idx % len(PROSODY_SHADOW_DRILLS) + 1}:</b>",
+        f"“<b>{_e(d['sentence'])}</b>”",
+        "",
+        f"🎼 <b>Rhythm &amp; Stress Map:</b> <code>{_e(d['stress_map'])}</code>",
+        f"🔗 <b>Acoustic Focus:</b> {_e(d['focus'])}",
+    ]
+    if with_arabic and d.get("focus_ar"):
+        lines.append(f"🇦🇪 <tg-spoiler>{_e(d['focus_ar'])}</tg-spoiler>")
+    lines.extend(
+        [
+            "",
+            "🎙️ <b>Tap the microphone icon in Telegram and record this line (or say whatever is on your mind)!</b>",
+        ]
+    )
     return "\n".join(lines)

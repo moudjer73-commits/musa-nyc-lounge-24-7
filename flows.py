@@ -21,6 +21,7 @@ from typing import Any, Callable, Optional
 import feedback_queue
 import interaction
 import podcast
+import prosody
 import replay
 import sparring
 import retrieval
@@ -169,6 +170,19 @@ class V3Flows:
         sparring.close_sparring(learner_id)
         return interaction.close_learner_interaction(self.db, learner_id)
 
+
+    def prosody_hub_view(self, learner_id: int, drill_idx: int = 0) -> View:
+        self.close_active(learner_id)
+        html_out = prosody.render_prosody_hub_html(drill_idx, with_arabic=self._with_arabic(learner_id))
+        d = prosody.PROSODY_SHADOW_DRILLS[drill_idx % len(prosody.PROSODY_SHADOW_DRILLS)]
+        buttons = (
+            (
+                Button("🎧 Hear Native Model", f"pros:listen:{drill_idx % len(prosody.PROSODY_SHADOW_DRILLS)}"),
+                Button("➡️ Next Rhythm Drill", f"pros:drill:{(drill_idx + 1) % len(prosody.PROSODY_SHADOW_DRILLS)}"),
+            ),
+        )
+        return View(html_out, buttons, tts_text=d["sentence"])
+
     def podcast_hub_view(self, learner_id: int) -> View:
         self.close_active(learner_id)
         text = (
@@ -247,6 +261,15 @@ class V3Flows:
         return View(html_out, buttons)
 
     def handle_v4_callback(self, learner_id: int, data: str) -> CallbackResult:
+        if data.startswith("pros:drill:"):
+            idx = int(data.split(":", 2)[2]) if data.split(":", 2)[2].isdigit() else 0
+            return CallbackResult(toast=f"Drill #{idx + 1}", edit=self.prosody_hub_view(learner_id, idx))
+
+        if data.startswith("pros:listen:"):
+            idx = int(data.split(":", 2)[2]) if data.split(":", 2)[2].isdigit() else 0
+            d = prosody.PROSODY_SHADOW_DRILLS[idx % len(prosody.PROSODY_SHADOW_DRILLS)]
+            return CallbackResult(toast="Playing native model...", tts_text=d["sentence"])
+
         if data.startswith("spar:topic:"):
             t_key = data.split(":", 2)[2]
             sess = sparring.start_sparring(learner_id, topic_key=t_key)
