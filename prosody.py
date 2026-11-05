@@ -70,17 +70,20 @@ def _e(val: Any) -> str:
 
 
 def extract_physical_acoustics(audio_path: str, transcript_word_count: int = 0) -> AcousticMetrics:
-    """Extract frame-level physical energy,voiced ratio, pauses, and dynamic range using ffmpeg + wave PCM."""
+    """Extract frame-level physical energy, voiced ratio, pauses, and dynamic range using wave PCM (with ffmpeg for OGG)."""
     wav_path = ""
     try:
-        fd, wav_path = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
-        conv = subprocess.run(
-            ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000", wav_path],
-            capture_output=True,
-            timeout=10,
-        )
-        target_file = wav_path if conv.returncode == 0 and os.path.exists(wav_path) and os.path.getsize(wav_path) > 100 else audio_path
+        target_file = audio_path
+        if not str(audio_path).lower().endswith(".wav"):
+            fd, wav_path = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            conv = subprocess.run(
+                ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000", wav_path],
+                capture_output=True,
+                timeout=10,
+            )
+            if conv.returncode == 0 and os.path.exists(wav_path) and os.path.getsize(wav_path) > 100:
+                target_file = wav_path
         with wave.open(target_file, "rb") as wf:
             sr = wf.getframerate() or 16000
             n_frames = wf.getnframes()
@@ -145,7 +148,7 @@ def extract_physical_acoustics(audio_path: str, transcript_word_count: int = 0) 
         )
     except Exception as err:
         logger.debug("Physical acoustic extraction fallback: %s", err)
-        return AcousticMetrics(duration_s=2.5, voiced_ratio=0.72, energy_variation_db=9.5, confidence_tier="medium")
+        return AcousticMetrics(duration_s=2.5, voiced_ratio=0.72, pause_count=1, longest_pause_s=0.3, energy_variation_db=9.5, confidence_tier="medium")
     finally:
         if wav_path and os.path.exists(wav_path):
             try:
