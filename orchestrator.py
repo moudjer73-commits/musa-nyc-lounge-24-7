@@ -594,15 +594,34 @@ class TurnOrchestrator:
     def _scene_bible(self, session: dict[str, Any], session_id: str, scene_mode: SceneMode) -> SceneBible:
         try:
             raw = json.loads(session.get("scene_bible_json") or "{}")
+            facts = list(
+                raw.get(
+                    "established_facts",
+                    ["Respond directly to the learner's real topic; never invent fake crises or 'me-too' mirroring stories."],
+                )
+            )
+            with self.db.read() as conn:
+                last_card = conn.execute(
+                    """
+                    SELECT original_span, alternative, kind, explanation_en
+                    FROM feedback_item_projection
+                    WHERE session_id = ? AND status = 'delivered'
+                    ORDER BY delivered_at_utc DESC, diagnostic_id DESC LIMIT 1
+                    """,
+                    (session_id,),
+                ).fetchone()
+            if last_card is not None:
+                facts.append(
+                    f"Recent Quick Upgrade card shown to learner ({last_card['kind']}): "
+                    f"You said '{last_card['original_span']}' -> More natural '{last_card['alternative']}'. "
+                    f"Note: {last_card['explanation_en']}"
+                )
             return SceneBible(
                 scene_id=session_id,
                 scene_mode=scene_mode,
                 setting=raw.get("setting", "Everyday conversation"),
                 relationship=raw.get("relationship", "friendly peer"),
-                established_facts=raw.get(
-                    "established_facts",
-                    ["Respond directly to the learner's real topic; never invent fake crises or 'me-too' mirroring stories."],
-                ),
+                established_facts=facts,
                 counterpart_goal=raw.get("counterpart_goal", "Engage naturally and authentically"),
                 counterpart_pushback_plan=raw.get("counterpart_pushback_plan"),
             )
