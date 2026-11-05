@@ -1,4 +1,4 @@
-"""podcast.py (V4.0): Personal Learning Podcast Generator (Alex & Maya)."""
+"""podcast.py (V4.0 Deep-Dive Edition): 3.5-to-5 Minute Personal Learning Podcast Generator (Alex & Maya)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,15 @@ import html
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any, Literal, Optional
 
 import edge_tts
+import requests
 from pydantic import BaseModel, Field
 
+import config
 from config import TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
 
@@ -21,14 +24,14 @@ logger = logging.getLogger(__name__)
 
 ALEX_VOICE = "en-US-AndrewMultilingualNeural"
 MAYA_VOICE = "en-US-AvaMultilingualNeural"
-PODCAST_VOICE_TAG = "v4_duet_alex_maya"
+PODCAST_VOICE_TAG = "v4_long_duet_alex_maya"
 
 PodcastMode = Literal["recap", "briefing", "narrative"]
 
 
 class PodcastTurn(BaseModel):
     speaker: Literal["Alex", "Maya"] = "Alex"
-    line: str = Field(..., min_length=2, max_length=320)
+    line: str = Field(..., min_length=2, max_length=650)
 
 
 class FeaturedPhraseNote(BaseModel):
@@ -41,29 +44,37 @@ class PodcastEpisodeScript(BaseModel):
     title: str
     mode: PodcastMode = "recap"
     context_hook: str
-    turns: list[PodcastTurn] = Field(..., min_length=4, max_length=12)
+    turns: list[PodcastTurn] = Field(..., min_length=14, max_length=30)
     featured_phrases: list[FeaturedPhraseNote] = Field(default_factory=list)
 
 
-PODCAST_SYSTEM_PROMPT = """You write brisk, natural 2-host American English mini-podcast episodes (hosts: Alex and Maya) for an advanced (B2+-C2) L1-Arabic learner.
+PODCAST_SYSTEM_PROMPT = """You write rich, engaging, 3.5-to-5 minute (600 to 850 words total, 18 to 24 turns) 2-host American English podcast episodes (hosts: Alex and Maya) tailored for an advanced (B2+-C2) L1-Arabic speaker.
+Inspiration: The natural chemistry, lexical depth, and pragmatic sharpness of 'Lexical Lab' and 'Superbly Said'.
+
+Structure the 18-to-24 turns into 3 seamless segments:
+1. Segment 1 (Turns 1-7) — Cold Open & In-Scene Story: Alex and Maya jump straight into a realistic NYC workplace or social situation where the `target_items` are used naturally in real-time dialogue.
+2. Segment 2 (Turns 8-16) — Pragmatic & Lexical Unpacking: Alex and Maya break down WHY those exact chunks and grammatical choices work to an American ear. If a target item has an `avoid_span` (e.g. an L1-Arabic calque or flat textbook phrasing), they contrast the trap with the natural American move, show 2-3 high-frequency collocations around the chunk, and compare how it shifts across Casual, Diplomatic, and Executive registers.
+3. Segment 3 (Turns 17-22) — Second-Context Pivot & Listener Challenge: They roleplay a quick second mini-scenario applying the same moves in a totally different situation, and sign off with a concrete spoken challenge for the listener.
+
 Rules:
-1. Sound like two sharp NYC colleagues grabbing coffee—use natural contractions, spoken rhythm, and authentic reactions. NEVER sound like an ESL textbook or say "Today we will learn".
-2. Naturally weave the provided `target_items` into the conversation so the learner hears how native Americans deploy them in real context.
-3. Keep the dialogue between 6 and 8 turns total (each turn 1-2 crisp spoken sentences, <= 32 words).
-4. Return ONLY valid JSON matching:
+- Every turn should be 2 to 4 natural spoken sentences (25 to 45 words per turn) so the total spoken episode is 600-850 words (~3.5 to 5 minutes of audio).
+- Sound 100% authentic, witty, and peer-level: use contractions, spoken connectors ("Look,", "Here's the thing,", "To be fair,", "That said,"), and zero robotic classroom cliches.
+- Never include stage directions like [laughs] or *sighs* inside `line` because `line` is fed directly to neural TTS.
+
+Return ONLY valid JSON matching:
 {
-  "title": "Short episode title",
+  "title": "Engaging episode title",
   "mode": "recap|briefing|narrative",
-  "context_hook": "1-sentence setting description",
+  "context_hook": "1-2 sentence teaser describing the scenario and pragmatic focus",
   "turns": [
-    {"speaker": "Alex", "line": "..."},
-    {"speaker": "Maya", "line": "..."}
+    {"speaker": "Alex", "line": "2-4 natural spoken sentences..."},
+    {"speaker": "Maya", "line": "2-4 natural spoken sentences..."}
   ],
   "featured_phrases": [
     {
       "phrase": "exact target phrase",
-      "how_used_en": "1 crisp sentence on the pragmatic punch of this phrase in the dialogue",
-      "arabic_anchor_ar": "شرح وظيفي موجز بالعربية الفصحى (<= 140 حرفاً)"
+      "how_used_en": "Crisp explanation of the pragmatic effect and collocation pattern",
+      "arabic_anchor_ar": "شرح وظيفي وتداولي دقيق بالعربية الفصحى (<= 160 حرفاً)"
     }
   ]
 }"""
@@ -74,98 +85,192 @@ def _e(val: Any) -> str:
 
 
 def collect_learner_podcast_material(db: EventSourcedDatabase, learner_id: int, mode: PodcastMode) -> list[dict[str, str]]:
-    """Gather real upgrades, due review items, or catalog phrases for this learner."""
+    """Gather up to 4 real upgrades, due review items, and recent learner context."""
     items: list[dict[str, str]] = []
     with db.read() as conn:
-        if mode in ("recap", "narrative"):
-            rows = conn.execute(
-                """
-                SELECT original_span, alternative, explanation_en, explanation_ar
-                FROM feedback_item_projection
-                WHERE learner_id = ?
-                ORDER BY delivered_at_utc DESC, diagnostic_id DESC
-                LIMIT 4
-                """,
-                (learner_id,),
-            ).fetchall()
-            for r in rows:
-                alt = str(r["alternative"] or "").strip()
-                if alt and not any(x["phrase"].lower() == alt.lower() for x in items):
-                    items.append(
-                        {
-                            "phrase": alt,
-                            "avoid_span": str(r["original_span"] or ""),
-                            "note_en": str(r["explanation_en"] or "Natural American phrasing in context."),
-                            "note_ar": str(r["explanation_ar"] or "صياغة أمريكية طبيعية في السياق المحكي."),
-                        }
-                    )
+        rows = conn.execute(
+            """
+            SELECT original_span, alternative, kind, explanation_en, explanation_ar
+            FROM feedback_item_projection
+            WHERE learner_id = ?
+            ORDER BY delivered_at_utc DESC, diagnostic_id DESC
+            LIMIT 5
+            """,
+            (learner_id,),
+        ).fetchall()
+        for r in rows:
+            alt = str(r["alternative"] or "").strip()
+            if alt and not any(x["phrase"].lower() == alt.lower() for x in items):
+                items.append(
+                    {
+                        "phrase": alt,
+                        "avoid_span": str(r["original_span"] or ""),
+                        "kind": str(r["kind"] or "pragmatics"),
+                        "note_en": str(r["explanation_en"] or "Natural American phrasing in context."),
+                        "note_ar": str(r["explanation_ar"] or "صياغة أمريكية طبيعية تحافظ على القصد التداولي."),
+                    }
+                )
 
-    if len(items) < 3:
+    if len(items) < 4:
         try:
             cand_ids = db.get_spontaneous_candidates(learner_id, "casual")
         except Exception:
             cand_ids = []
-        for pid in cand_ids[:4]:
+        for pid in cand_ids[:5]:
             entry = db.get_phrase_entry(str(pid))
             if entry and not any(x["phrase"].lower() == entry.canonical_form.lower() for x in items):
                 items.append(
                     {
                         "phrase": entry.canonical_form,
                         "avoid_span": "",
-                        "note_en": f"Used to {entry.communicative_intention.replace('_', ' ')}.",
+                        "kind": "idiomatic_chunk",
+                        "note_en": f"High-leverage spoken move used to {entry.communicative_intention.replace('_', ' ')}.",
                         "note_ar": "عبارة محورية من جدول المراجعة النشط لتعزيز الطلاقة التلقائية.",
                     }
                 )
 
-    if len(items) < 3:
-        for p in DEFAULT_CURATED_PHRASES[:6]:
+    if len(items) < 4:
+        for p in DEFAULT_CURATED_PHRASES[:8]:
             phrase = str(p.get("canonical_form") if isinstance(p, dict) else (p[1] if len(p) > 1 else p[0])).strip()
-            intent = str(p.get("communicative_intention", "natural flow") if isinstance(p, dict) else (p[2] if len(p) > 2 else "natural flow")).replace("_", " ")
+            intent = str(
+                p.get("communicative_intention", "natural flow")
+                if isinstance(p, dict)
+                else (p[2] if len(p) > 2 else "natural flow")
+            ).replace("_", " ")
             if phrase and not any(x["phrase"].lower() == phrase.lower() for x in items):
                 items.append(
                     {
                         "phrase": phrase,
                         "avoid_span": "",
+                        "kind": "collocation",
                         "note_en": f"High-leverage spoken move for {intent}.",
                         "note_ar": "تعبير أمريكي أصيل شائع في المواقف اليومية والمهنية.",
                     }
                 )
-            if len(items) >= 3:
+            if len(items) >= 4:
                 break
-    return items[:3]
+    return items[:4]
 
 
 def build_deterministic_podcast(mode: PodcastMode, material: list[dict[str, str]]) -> PodcastEpisodeScript:
-    """Zero-failure fallback episode built directly from the learner's real phrases."""
-    p1 = material[0]["phrase"] if len(material) > 0 else "push back on that"
-    p2 = material[1]["phrase"] if len(material) > 1 else "on the same page"
-    p3 = material[2]["phrase"] if len(material) > 2 else "bandwidth"
+    """Full 20-turn (~650-word, ~4-minute) deep-dive episode built directly from the learner's real phrases."""
+    m1 = material[0] if len(material) > 0 else {"phrase": "push back on that", "avoid_span": "refuse that", "note_en": "Firm diplomatic disagreement.", "note_ar": "اعتراض مهني لبق."}
+    m2 = material[1] if len(material) > 1 else {"phrase": "on the same page", "avoid_span": "agreeing together", "note_en": "Shared operational alignment.", "note_ar": "توافق في الرؤية وخطة العمل."}
+    m3 = material[2] if len(material) > 2 else {"phrase": "bandwidth", "avoid_span": "free time", "note_en": "Mental and schedule capacity.", "note_ar": "الطاقة والقدرة المتاحة لإنجاز المهام."}
+    m4 = material[3] if len(material) > 3 else {"phrase": "make a call on", "avoid_span": "take a decision", "note_en": "Decide decisively in real time.", "note_ar": "اتخاذ قرار حاسم في موقف عملي."}
+
+    p1, p2, p3, p4 = m1["phrase"], m2["phrase"], m3["phrase"], m4["phrase"]
+    av1 = m1.get("avoid_span") or "the literal phrasing"
 
     titles = {
-        "recap": "NYC Coffee Debrief: Sharp Moves from Your Scene",
-        "briefing": "Morning Commute Briefing: High-Leverage Spoken Moves",
-        "narrative": "Inside the Studio: High-Stakes Project Pushback",
+        "recap": "NYC Deep-Dive: Mastering Pragmatic Pushback & Real-Time Flow",
+        "briefing": "Morning Studio Briefing: High-Leverage Chunks for High-Stakes Days",
+        "narrative": "Inside the Room: Navigating Workload & Strategy Like a Native",
     }
     hooks = {
-        "recap": "Alex and Maya unpack the exact phrasing shifts from your recent conversation.",
-        "briefing": "A fast-paced morning catch-up weaving your active review phrases into natural flow.",
-        "narrative": "Alex and Maya navigate a tight deadline dispute using your target expressions.",
+        "recap": "A full 3-part studio breakdown of your recent conversation shifts, register pivots, and collocation traps.",
+        "briefing": "Alex and Maya run through a 4-minute deep dive into your active review targets across casual and executive settings.",
+        "narrative": "First, hear your target moves inside a live project standoff; then unpack exactly why each phrase changes your status in the room.",
     }
+
     turns = [
-        PodcastTurn(speaker="Maya", line="Morning, Alex. You look like you've been putting out fires since seven."),
-        PodcastTurn(speaker="Alex", line=f"Honestly, I'm always dealing with last-minute scope changes, so I finally had to {p1}."),
-        PodcastTurn(speaker="Maya", line="Good for you. If you don't draw a line early, people just assume you have endless time."),
-        PodcastTurn(speaker="Alex", line=f"Exactly. I told the team we need to get {p2} before we commit to another sprint."),
-        PodcastTurn(speaker="Maya", line=f"How did they take it when you brought up the {p3} issue?"),
-        PodcastTurn(speaker="Alex", line="Way better than I expected. Being direct without sounding defensive really shifts the room."),
+        PodcastTurn(
+            speaker="Maya",
+            line="Welcome back to the Spoken English Lab studio. Alex, you walked in here five minutes ago looking like you just survived a three-hour budget meeting. What happened upstairs?",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"Honestly, Maya, you're not far off. Operations tried to dump two extra client migrations onto my team's plate for Friday, and I finally had to {p1} right there in the room.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line="Wait, seriously? Usually you try to absorb the extra work and figure it out later. What made you draw a hard line this time?",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"Because I'm always dealing with these last-minute scope surprises, and it's burning people out. I told the director, look, we simply don't have the {p3} to take this on without dropping our core deliverables.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line=f"That is such a clean way to frame it. And once you put it in terms of capacity, did they actually get {p2}, or did they keep pressing?",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"At first there was a little friction, sure. Folks at the top hate hearing no. But I asked leadership to {p4} which project they wanted us to pause if this new one was truly urgent.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line="Oh, that is a textbook executive pivot. The moment you ask a manager to choose which priority gets cut, the fake urgency disappears real fast.",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"Exactly. And let's pause right here and unpack what just happened linguistically, because our listener has been working on these exact moves—especially around '{p1}'.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line=f"Let's zoom in on that first one. In our recent session notes, the original temptation was around '{av1}', whereas native speakers naturally reach for '{p1}'. Why does that shift matter so much to an American ear?",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"It comes down to register and emotional control. {m1.get('note_en', '')} When you use '{p1}', you sound composed and collaborative rather than blunt or translated word-for-word.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line="Spot on. And notice another subtle grammar point we talked about earlier: when someone is annoyed about a recurring burden, Americans love using 'always' with the continuous '-ing' form—like 'I'm always dealing with' or 'I'm always having to fix'.",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line="Right! If a textbook tells you to flatten that into simple present—like 'I always have tough work'—it completely kills the annoyance you're trying to express. The real native trick is keeping the continuous tense, but pairing it with 'having to do' or 'getting stuck with'.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line=f"That distinction is huge at the C1 and C2 level. Now let's look at the second anchor we wove into the story: '{p2}'. Where do people usually slip up when trying to express shared alignment?",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"A lot of smart speakers overcomplicate it with formal written clauses like 'we must ensure our perspectives coincide'. In spoken American English, whether you're in a coffee shop or a boardroom, you just say 'let's make sure we're {p2}'.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line=f"And it pairs so naturally with verbs like 'get' and 'stay'—you 'get {p2}' before a launch, and you 'stay {p2}' when things get chaotic. What about '{p3}'?",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"'{p3}' is one of those effortless high-status words. Instead of saying 'I am very busy and tired', saying 'I don't have the {p3} for that right now' sounds objective, professional, and impossible to argue with.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line=f"And then you closed the loop with '{p4}'. Instead of the classic Arabic light-verb translation 'take a decision', Americans 'make a decision' or, even more idiomatically in fast speech, '{p4}'.",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line="Let's run a quick sixty-second pivot so you can hear how these same moves sound outside the office—say, planning a complicated weekend trip with friends who keep changing the plan.",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line=f"Ooh, let's do it. Imagine a friend wants to add a four-hour detour on Sunday night. In a warm, witty register, you'd say: 'Look, I love the ambition, but I have zero {p3} for a four-hour drive on a Sunday night.'",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"And if they keep insisting, you follow up with: 'I'm gonna have to {p1} a little bit—let's get {p2} about the route now so we aren't arguing at the gas station.'",
+        ),
+        PodcastTurn(
+            speaker="Maya",
+            line=f"See how flexible that is? Same core chunks, completely different social vibe. Before we wrap up, here is your spoken challenge right after this audio finishes.",
+        ),
+        PodcastTurn(
+            speaker="Alex",
+            line=f"Jump back into the chat with me or open Pragmatic Replay, and give me two sentences about a real pressure point in your week using '{p1}' or '{p3}'. Don't overthink it—just let it fly!",
+        ),
     ]
+
     featured = [
         FeaturedPhraseNote(
             phrase=m["phrase"],
-            how_used_en=m.get("note_en") or "Anchored naturally inside a spoken turn.",
-            arabic_anchor_ar=m.get("note_ar") or "توظيف طبيعي للعبارة في سياق الحديث الأمريكي.",
+            how_used_en=m.get("note_en") or "Anchored across both workplace negotiation and casual problem-solving.",
+            arabic_anchor_ar=m.get("note_ar") or "توظيف تداولي طبيعي للعبارة في السياقين المهني واليومي.",
         )
-        for m in material[:3]
+        for m in material[:4]
     ]
     return PodcastEpisodeScript(
         title=titles.get(mode, titles["recap"]),
@@ -176,49 +281,99 @@ def build_deterministic_podcast(mode: PodcastMode, material: list[dict[str, str]
     )
 
 
+def _call_gemini_long_podcast(user_payload: str, mode: PodcastMode) -> Optional[PodcastEpisodeScript]:
+    """Dedicated high-token Gemini call (maxOutputTokens=4096) so 20-turn scripts never truncate."""
+    keys = list(getattr(config, "GEMINI_KEYS_LIST", []) or [])
+    models = list(getattr(config, "GEMINI_MODEL_CHAIN", []) or ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.1-flash-lite"])
+    if not keys:
+        return None
+
+    for model in models[:3]:
+        for key in keys[:2]:
+            clean_key = re.sub(r"[^A-Za-z0-9._\-]", "", str(key).strip())
+            if len(clean_key) < 15:
+                continue
+            url = "https" + f"://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
+            body = {
+                "systemInstruction": {"parts": [{"text": PODCAST_SYSTEM_PROMPT}]},
+                "contents": [{"role": "user", "parts": [{"text": user_payload}]}],
+                "generationConfig": {
+                    "temperature": 0.65,
+                    "maxOutputTokens": 4096,
+                    "responseMimeType": "application/json",
+                    "thinkingConfig": {"thinkingBudget": 0},
+                },
+            }
+            try:
+                resp = requests.post(url, json=body, timeout=32)
+                if resp.status_code == 400 and "thinking" in resp.text.lower():
+                    body["generationConfig"].pop("thinkingConfig", None)
+                    resp = requests.post(url, json=body, timeout=32)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                candidates = data.get("candidates") or []
+                if not candidates:
+                    continue
+                parts = candidates[0].get("content", {}).get("parts") or []
+                raw_text = "".join(str(p.get("text", "")) for p in parts).strip()
+                if raw_text.startswith("```"):
+                    raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
+                parsed_dict = json.loads(raw_text)
+                parsed_dict["mode"] = mode
+                ep = PodcastEpisodeScript.model_validate(parsed_dict)
+                total_words = sum(len(t.line.split()) for t in ep.turns)
+                if len(ep.turns) >= 14 and total_words >= 420:
+                    return ep
+            except Exception as err:
+                logger.warning("Long podcast generation attempt on %s failed: %s", model, err)
+                continue
+    return None
+
+
 def generate_podcast_episode(db: EventSourcedDatabase, ai: Any, learner_id: int, mode: PodcastMode = "recap") -> PodcastEpisodeScript:
     material = collect_learner_podcast_material(db, learner_id, mode)
     user_payload = json.dumps(
         {
             "episode_mode": mode,
+            "target_word_count": "650 to 850 words (18 to 24 dialogue turns, ~4 minutes spoken duration)",
             "target_items": material,
         },
         ensure_ascii=False,
     )
 
-    def _validate(raw: dict[str, Any]) -> PodcastEpisodeScript:
-        raw["mode"] = mode
-        return PodcastEpisodeScript.model_validate(raw)
+    if ai is not None:
+        ep = _call_gemini_long_podcast(user_payload, mode)
+        if ep is not None:
+            return ep
 
-    if ai is not None and hasattr(ai, "_call_json"):
-        try:
-            res = ai._call_json(
-                "debrief",
-                PODCAST_SYSTEM_PROMPT,
-                user_payload,
-                _validate,
-                deadline_s=18.0,
-                temperature=0.6,
-            )
-            return res.parsed
-        except Exception as err:
-            logger.warning("Podcast LLM generation fell back to deterministic script: %s", err)
     return build_deterministic_podcast(mode, material)
 
 
 def episode_script_hash(episode: PodcastEpisodeScript) -> str:
     joined = "|".join(f"{t.speaker}:{t.line}" for t in episode.turns)
-    return hashlib.sha256(f"v4pod:{episode.mode}:{joined}".encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(f"v4longpod:{episode.mode}:{joined}".encode("utf-8")).hexdigest()[:32]
+
+
+async def _synthesize_single_turn(idx: int, turn: PodcastTurn, sem: asyncio.Semaphore) -> tuple[int, bytes]:
+    voice = ALEX_VOICE if turn.speaker == "Alex" else MAYA_VOICE
+    buf = bytearray()
+    async with sem:
+        comm = edge_tts.Communicate(text=turn.line.strip(), voice=voice)
+        async for chunk in comm.stream():
+            if chunk.get("type") == "audio" and chunk.get("data"):
+                buf.extend(chunk["data"])
+    return idx, bytes(buf)
 
 
 async def _synthesize_duet_async(turns: list[PodcastTurn], out_path: str) -> None:
+    sem = asyncio.Semaphore(6)
+    tasks = [_synthesize_single_turn(idx, turn, sem) for idx, turn in enumerate(turns)]
+    results = await asyncio.gather(*tasks)
+    results.sort(key=lambda x: x[0])
     with open(out_path, "wb") as out_f:
-        for turn in turns:
-            voice = ALEX_VOICE if turn.speaker == "Alex" else MAYA_VOICE
-            comm = edge_tts.Communicate(text=turn.line.strip(), voice=voice)
-            async for chunk in comm.stream():
-                if chunk.get("type") == "audio" and chunk.get("data"):
-                    out_f.write(chunk["data"])
+        for _, audio_bytes in results:
+            out_f.write(audio_bytes)
 
 
 def synthesize_podcast_mp3(episode: PodcastEpisodeScript) -> str:
@@ -234,17 +389,20 @@ def synthesize_podcast_mp3(episode: PodcastEpisodeScript) -> str:
 
 def render_podcast_card_html(episode: PodcastEpisodeScript, *, show_transcript: bool = False, with_arabic: bool = True) -> str:
     mode_labels = {
-        "recap": "🎙️ Session Recap Podcast",
+        "recap": "🎙️ Session Recap Deep-Dive",
         "briefing": "☕ Daily Briefing Podcast",
         "narrative": "🎬 Context Transfer Episode",
     }
+    total_words = sum(len(t.line.split()) for t in episode.turns)
+    est_mins = max(3, round(total_words / 160))
     lines = [
         f"<b>{_e(mode_labels.get(episode.mode, '🎙️ Personal Podcast'))}: {_e(episode.title)}</b>",
         f"<i>{_e(episode.context_hook)}</i>",
+        f"⏱️ <b>Length:</b> ~{est_mins} min ({len(episode.turns)} turns · {total_words} words)",
         "",
         "🎯 <b>Featured Moves in This Episode:</b>",
     ]
-    for fp in episode.featured_phrases[:3]:
+    for fp in episode.featured_phrases[:4]:
         lines.append(f"• <b>“{_e(fp.phrase)}”</b> — {_e(fp.how_used_en)}")
         if with_arabic and fp.arabic_anchor_ar:
             lines.append(f"  🇦🇪 <tg-spoiler>{_e(fp.arabic_anchor_ar)}</tg-spoiler>")
@@ -257,5 +415,18 @@ def render_podcast_card_html(episode: PodcastEpisodeScript, *, show_transcript: 
             lines.append(f"{icon} <b>{_e(t.speaker)}:</b> {_e(t.line)}")
     else:
         lines.append("")
-        lines.append("<i>🎧 Listen to the audio first, then tap <b>📜 Transcript</b> if you want to inspect every line.</i>")
-    return "\n".join(lines)
+        lines.append("<i>🎧 Listen to the full multi-part episode below, then tap <b>📜 Show Transcript</b> to read along.</i>")
+
+    full_html = "\n".join(lines)
+    if len(full_html) > 3950:
+        # Keep valid HTML within Telegram's 4096-character limit
+        trimmed_lines = []
+        acc = 0
+        for ln in lines:
+            if acc + len(ln) + 1 > 3850:
+                trimmed_lines.append("<i>... (Transcript continues in audio)</i>")
+                break
+            trimmed_lines.append(ln)
+            acc += len(ln) + 1
+        return "\n".join(trimmed_lines)
+    return full_html
