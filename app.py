@@ -16,7 +16,9 @@ from telebot import apihelper, types
 apihelper.SESSION_TIME_TO_LIVE = 600
 import interaction
 import podcast
+import prosody
 import replay
+import sparring
 from ai_engine import DualLLMEngine
 from config import ADMIN_ID, DEFAULT_VOICE, TELEGRAM_BOT_TOKEN, TEMP_AUDIO_DIR
 from database import DEFAULT_CURATED_PHRASES, EventSourcedDatabase
@@ -104,6 +106,7 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         {"command": "review", "description": "Review & Retrieval: phrases that are due"},
         {"command": "podcast", "description": "Generate your 2-host NYC learning podcast (V4.0)"},
         {"command": "replay", "description": "Pragmatic Replay Studio across 3 registers (V4.0)"},
+        {"command": "sparring", "description": "3-Way C1-C2 Sparring Table with Alex & Maya (V4.0)"},
         {"command": "progress", "description": "5-dimension mastery profile"},
         {"command": "guide", "description": "Interactive 5-chapter User Guide (EN + AR)"},
     ]
@@ -676,7 +679,7 @@ def on_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, dat
                 pass
             _answer(bot_, call_id, "Transcript updated")
             return
-    if data.startswith("rep:"):
+    if data.startswith("rep:") or data.startswith("spar:"):
         with _get_learner_lock(lid):
             res_v4 = flows.handle_v4_callback(lid, data)
         _answer(bot_, call_id, res_v4.toast)
@@ -816,6 +819,61 @@ if bot is not None:
             return
         send_progress(bot, message.chat.id, message.from_user.id)
 
+
+
+    @bot.message_handler(commands=["sparring"])
+    def handle_sparring_cmd(message):
+        if not begin_command(bot, message.chat.id, message.from_user.id):
+            return
+        send_view(bot, message.chat.id, flows.sparring_hub_view(message.from_user.id))
+
+    @bot.message_handler(content_types=["voice"])
+    def handle_voice_msg(message):
+        chat_id = message.chat.id
+        lid = message.from_user.id
+        if not is_authorized(lid):
+            return
+        try:
+            bot.send_chat_action(chat_id, "typing")
+            file_info = bot.get_file(message.voice.file_id)
+            raw_bytes = bot.download_file(file_info.file_path)
+            os.makedirs(TEMP_AUDIO_DIR, exist_ok=True)
+            ogg_path = os.path.join(TEMP_AUDIO_DIR, f"voice_{lid}_{message.message_id}.ogg")
+            with open(ogg_path, "wb") as f_ogg:
+                f_ogg.write(raw_bytes)
+        except Exception as err:
+            logger.warning("Voice download error: %s", err)
+            bot.send_message(chat_id, "⚠️ Could not download voice clip. Please try again.")
+            return
+
+        try:
+            report = prosody.analyze_voice_message(ogg_path, mime_type="audio/ogg")
+        finally:
+            if os.path.exists(ogg_path):
+                try:
+                    os.remove(ogg_path)
+                except OSError:
+                    pass
+
+        if report is None or not report.transcript.strip():
+            bot.send_message(chat_id, "🎙️ Could not clearly decode that audio clip—try speaking a bit closer to the mic.")
+            return
+
+        with_ar = str(db.get_learner_settings(lid).get("arabic_support", "bilingual")) != "english_only"
+        prosody_html = prosody.render_prosody_card_html(report, with_arabic=with_ar)
+        bot.send_message(chat_id, prosody_html, parse_mode="HTML")
+
+        # Route the transcribed speech naturally into the active flow (Sparring, Replay, Review, or Scene with Alex)
+        with _get_learner_lock(lid):
+            res = flows.handle_text(lid, report.transcript)
+        for v in res.views:
+            send_view(bot, chat_id, v)
+        if res.submit_turn is not None:
+            sub = res.submit_turn
+            run_scene_turn(
+                bot, chat_id, lid, sub.text,
+                origin=sub.origin, interaction_id=sub.interaction_id, background=background,
+            )
 
     @bot.message_handler(commands=["podcast"])
     def handle_podcast_cmd(message):

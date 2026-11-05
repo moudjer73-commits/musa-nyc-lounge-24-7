@@ -22,6 +22,7 @@ import feedback_queue
 import interaction
 import podcast
 import replay
+import sparring
 import retrieval
 from database import EventSourcedDatabase
 from interaction import ActiveInteraction, ParsedCallback, TextRoute
@@ -165,6 +166,7 @@ class V3Flows:
     def close_active(self, learner_id: int) -> bool:
         """Any keyboard mode button, /start or the Session button closes the open row first (S0 5.4)."""
         replay.close_replay_session(learner_id)
+        sparring.close_sparring(learner_id)
         return interaction.close_learner_interaction(self.db, learner_id)
 
     def podcast_hub_view(self, learner_id: int) -> View:
@@ -217,7 +219,56 @@ class V3Flows:
         )
         return View(html_out, tuple(rows))
 
+
+    def sparring_hub_view(self, learner_id: int, topic_key: str = "ai_decisions") -> View:
+        self.close_active(learner_id)
+        sess = sparring.start_sparring(learner_id, topic_key=topic_key)
+        buttons = (
+            (
+                Button("🏛️ AI vs. Discretion", "spar:topic:ai_decisions"),
+                Button("⚡ Autonomy vs. Sync", "spar:topic:remote_autonomy"),
+            ),
+            (
+                Button("🔥 Radical Candor", "spar:topic:candor_culture"),
+                Button("🚪 Exit to 1-on-1 Alex", "spar:exit"),
+            ),
+        )
+        return View(sparring.render_sparring_opening_html(sess), buttons)
+
+    def sparring_turn_view(self, learner_id: int, text: str, sess: sparring.SparringSession) -> View:
+        exch = sparring.run_sparring_turn(self.ai, sess, text)
+        html_out = sparring.render_sparring_exchange_html(exch, with_arabic=self._with_arabic(learner_id))
+        buttons = (
+            (
+                Button("🔄 Switch Topic", "spar:topic:remote_autonomy"),
+                Button("🚪 Exit Sparring", "spar:exit"),
+            ),
+        )
+        return View(html_out, buttons)
+
     def handle_v4_callback(self, learner_id: int, data: str) -> CallbackResult:
+        if data.startswith("spar:topic:"):
+            t_key = data.split(":", 2)[2]
+            sess = sparring.start_sparring(learner_id, topic_key=t_key)
+            buttons = (
+                (
+                    Button("🏛️ AI vs. Discretion", "spar:topic:ai_decisions"),
+                    Button("⚡ Autonomy vs. Sync", "spar:topic:remote_autonomy"),
+                ),
+                (
+                    Button("🔥 Radical Candor", "spar:topic:candor_culture"),
+                    Button("🚪 Exit to 1-on-1 Alex", "spar:exit"),
+                ),
+            )
+            return CallbackResult(toast="Topic switched!", edit=View(sparring.render_sparring_opening_html(sess), buttons))
+
+        if data == "spar:exit":
+            sparring.close_sparring(learner_id)
+            return CallbackResult(
+                toast="Back to 1-on-1 Scene",
+                edit=View("💬 <b>Back to 1-on-1 Open Scene with Alex.</b> Send any message or voice note to continue."),
+            )
+
         if data.startswith("rep:angle:"):
             angle_raw = data.split(":", 2)[2]
             angle: replay.ReplayAngle = (
@@ -257,6 +308,9 @@ class V3Flows:
             return TextResult(views=[self.reconstruction_attempt(learner_id, text, row)])
         if route == TextRoute.REVIEW_ATTEMPT and row is not None:
             return TextResult(views=[self.review_attempt(learner_id, text, row)])
+        spar_sess = sparring.get_sparring(learner_id)
+        if spar_sess is not None:
+            return TextResult(views=[self.sparring_turn_view(learner_id, text, spar_sess)])
         rep_sess = replay.get_replay_session(learner_id)
         if rep_sess is not None and rep_sess.selected_angle is not None:
             return TextResult(views=[self.replay_attempt_view(learner_id, text, rep_sess)])
