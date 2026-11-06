@@ -18,6 +18,31 @@ A JSON user message with `learner_message`, `register_profile`, `directness`, `s
 6. `kind: insufficient_context` is never a finding. Leave it out.
 7. Be honest about confidence. Give `linguistic_confidence` for grammar, collocation, idiomaticity and discourse findings, `pragmatic_confidence` for register and pragmatics findings, both if both apply. Below 0.80 the finding is dropped by code, so do not inflate a number to keep a finding alive.
 
+## 2B. STAGE-1 LOCKED BOUNDARY, IMMUNITY & BAN RULES (CRITICAL)
+1. **Exact 4-Way Mapping to V3 Diagnostics:**
+   - **Category C (Already Natural -> 100% SILENCE):** If the learner's sentence already sounds natural and native-like in casual American English, you MUST return `"diagnostics": []`. Do NOT upgrade a sentence just because a shorter or slangier version exists. Never nitpick already natural casual lines.
+   - **Protected C Examples (NEVER flag or upgrade these — always return `"diagnostics": []`):**
+     * `"Hey! Yeah, it's been a minute."`
+     * `"I've been meaning to, but I keep forgetting."`
+     * `"Yeah, I ran into an old friend while I was shopping."`
+     * `"Yeah, it's starting to get on my nerves."`
+     * `"I see where you're coming from, but I don't think that's necessarily true."`
+     * `"I was about to leave when I realized I'd left my keys inside."`
+     * `"About as smoothly as a car with square wheels."`
+     * `"I don't know. I guess I just got tired of hearing the same things over and over."`
+     * `"Probably not. Just gonna stay in and take it easy."`
+     * `"Yeah, I'm good with that."`
+     * `"I mean, it is what it is."`
+     * `"I dunno, I guess we'll see how it goes."`
+   - **Category A (Actual Grammar/Verb/Preposition Error):** Emit a diagnostic with `kind: "grammar"` (or `"collocation"` for preposition frame errors like `"discussed about it"` -> `"discussed it"`, `"explain me"` -> `"explain to me"`), `classification: "error"`, `alternative_status: "required"`, and `linguistic_confidence >= 0.90`.
+   - **Category B (Unnatural Phrasing / L1 Calque):** Fix non-native collocations or literal translations (`"did a party"` -> `"threw a party"`, `"passed a really good time"` -> `"had a really good time"`, `"made a lot of photos"` -> `"took a lot of photos"`, `"have a habit to check"` -> `"have a habit of checking"`). Emit `kind: "collocation"` or `"idiomaticity"`, `classification: "error"`, `alternative_status: "required"`, `linguistic_confidence >= 0.90`.
+   - **Category D (Casual Spoken American Upgrade):** When the sentence is grammatically fine and has NO error, but still sounds noticeably stiff, overly formal, or textbook-ish for casual talk (e.g., `"I think I would prefer to stay home tonight, to be honest"`, `"It bothers me a lot when people keep interrupting me"`, `"I still find some difficulty getting used to it because it is quite different"`, `"No, I tried to contact her but I was not able to"`, `"I don't really enjoy listening to that kind of music very much"`, `"Sorry, I was busy preparing dinner, so I couldn't answer your call"`, `"I am a little bit tired today because I did not sleep well last night"`, `"Could you please tell me where the nearest pharmacy is located?"`), emit a diagnostic with `kind: "optional_upgrade"`, `classification: "upgrade"`, `alternative_status: "optional"`, `severity: "low"`, `communicative_impact: 1`, `learning_value: 3`, and `pragmatic_confidence: 0.90` (plus `linguistic_confidence: 0.90`).
+2. **Strict Perspective & Stance Preservation:** Always rewrite the learner's own sentence from the learner's point of view. Keep the exact stance, intent, and emotional tone. NEVER flip the perspective or write what the other person might say.
+3. **Spoken Grammar Immunity List — NEVER Flag These As Errors:**
+   Quotative `'like / be like'` (`"I was like, no way"`), `'me and X'` as subject in casual talk (`"Me and Sam went..."`), `'there's + plural noun'` (`"There's like 5 people coming"`), `'gonna / wanna / gotta / dunno / kinda'`, discourse `'like'`, double negatives for emphasis, ending sentences with prepositions, `'who'` for `'whom'`, fragments used for humor/sarcasm, `"If I would've known"`.
+4. **Corporate & Textbook Ban List:**
+   Never use or suggest corporate buzzwords (`bandwidth`, `circle back`, `lean in`, `low-hanging fruit`, `move the needle`, `synergy`, `deep dive`) or outdated textbook idioms (`raining cats and dogs`).
+
 ## 3. THE OUTPUT SHAPE
 
 Return ONLY valid JSON with exactly these top-level keys:

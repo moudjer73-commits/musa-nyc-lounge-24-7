@@ -48,32 +48,28 @@ class PodcastEpisodeScript(BaseModel):
     featured_phrases: list[FeaturedPhraseNote] = Field(default_factory=list)
 
 
-PODCAST_SYSTEM_PROMPT = """You write rich, engaging, 3.5-to-5 minute (600 to 850 words total, 18 to 24 turns) 2-host American English podcast episodes (hosts: Alex and Maya) tailored for an advanced (B2+-C2) L1-Arabic speaker.
-Inspiration: The natural chemistry, lexical depth, and pragmatic sharpness of 'Lexical Lab' and 'Superbly Said'.
+PODCAST_SYSTEM_PROMPT = """You write a natural, engaging back-and-forth dialogue between Alex and Maya, two late-20s/early-30s American friends, tailored for an advanced (B2+-C2) learner of casual American English.
 
-Structure the 18-to-24 turns into 3 seamless segments:
-1. Segment 1 (Turns 1-7) — Cold Open & In-Scene Story: Alex and Maya jump straight into a realistic NYC workplace or social situation where the `target_items` are used naturally in real-time dialogue.
-2. Segment 2 (Turns 8-16) — Pragmatic & Lexical Unpacking: Alex and Maya break down WHY those exact chunks and grammatical choices work to an American ear. If a target item has an `avoid_span` (e.g. an L1-Arabic calque or flat textbook phrasing), they contrast the trap with the natural American move, show 2-3 high-frequency collocations around the chunk, and compare how it shifts across Casual, Diplomatic, and Executive registers.
-3. Segment 3 (Turns 17-22) — Second-Context Pivot & Listener Challenge: They roleplay a quick second mini-scenario applying the same moves in a totally different situation, and sign off with a concrete spoken challenge for the listener.
-
-Rules:
-- Every turn should be 2 to 4 natural spoken sentences (25 to 45 words per turn) so the total spoken episode is 600-850 words (~3.5 to 5 minutes of audio).
-- Sound 100% authentic, witty, and peer-level: use contractions, spoken connectors ("Look,", "Here's the thing,", "To be fair,", "That said,"), and zero robotic classroom cliches.
-- Never include stage directions like [laughs] or *sighs* inside `line` because `line` is fed directly to neural TTS.
+Core Rules (Prompt 5 — Alex & Maya Banter):
+1. Organically weave in the primary target chunk (and secondary targets from `target_items`) inside ordinary, everyday adult conversation — weekend plans, food, a small annoyance, roommates, neighbors, or texting a friend.
+2. Bury The Chunk Rule: Each target chunk must appear naturally in the MIDDLE of a sentence, not as a forced punchline. The other speaker should just continue the conversation naturally without acting like a classroom teacher.
+3. Zero Corporate or Meme Jargon: Never use corporate buzzwords (bandwidth, circle back, low-hanging fruit, move the needle, synergy, deep dive) or Gen Z meme slang.
+4. Keep turns natural and conversational across the 14-18 turns, and end the way real conversations trail off mid-thought ("Yeah, I dunno, I'll... whatever, we'll figure it out. How would you say it?").
+5. Never include stage directions like [laughs] or *sighs* inside `line` because `line` is fed directly to neural TTS.
 
 Return ONLY valid JSON matching:
 {
-  "title": "Engaging episode title",
+  "title": "Engaging everyday episode title",
   "mode": "recap|briefing|narrative",
-  "context_hook": "1-2 sentence teaser describing the scenario and pragmatic focus",
+  "context_hook": "1-2 sentence teaser describing the everyday scenario and spoken focus",
   "turns": [
-    {"speaker": "Alex", "line": "2-4 natural spoken sentences..."},
-    {"speaker": "Maya", "line": "2-4 natural spoken sentences..."}
+    {"speaker": "Alex", "line": "1-3 natural spoken sentences..."},
+    {"speaker": "Maya", "line": "1-3 natural spoken sentences..."}
   ],
   "featured_phrases": [
     {
       "phrase": "exact target phrase",
-      "how_used_en": "Crisp explanation of the pragmatic effect and collocation pattern",
+      "how_used_en": "Crisp explanation of the spoken American feel",
       "arabic_anchor_ar": "شرح وظيفي وتداولي دقيق بالعربية الفصحى (<= 160 حرفاً)"
     }
   ]
@@ -156,7 +152,7 @@ def build_deterministic_podcast(mode: PodcastMode, material: list[dict[str, str]
     """Full 20-turn (~650-word, ~4-minute) deep-dive episode built directly from the learner's real phrases."""
     m1 = material[0] if len(material) > 0 else {"phrase": "push back on that", "avoid_span": "refuse that", "note_en": "Firm diplomatic disagreement.", "note_ar": "اعتراض مهني لبق."}
     m2 = material[1] if len(material) > 1 else {"phrase": "on the same page", "avoid_span": "agreeing together", "note_en": "Shared operational alignment.", "note_ar": "توافق في الرؤية وخطة العمل."}
-    m3 = material[2] if len(material) > 2 else {"phrase": "bandwidth", "avoid_span": "free time", "note_en": "Mental and schedule capacity.", "note_ar": "الطاقة والقدرة المتاحة لإنجاز المهام."}
+    m3 = material[2] if len(material) > 2 else {"phrase": "get on my nerves", "avoid_span": "bother me a lot", "note_en": "High-frequency spoken chunk for everyday annoyance.", "note_ar": "تعبير محكي شائع للتعبير عن الانزعاج اليومي."}
     m4 = material[3] if len(material) > 3 else {"phrase": "make a call on", "avoid_span": "take a decision", "note_en": "Decide decisively in real time.", "note_ar": "اتخاذ قرار حاسم في موقف عملي."}
 
     p1, p2, p3, p4 = m1["phrase"], m2["phrase"], m3["phrase"], m4["phrase"]

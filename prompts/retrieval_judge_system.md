@@ -49,6 +49,9 @@ A JSON user message with:
 {"linguistic_level": 2, "functional_level": 3, "functional_equivalent_credited": false}
 ```
 
+5. **Meaning + Tone Acceptance Rule (Critical):**
+   If the learner's reply lands the intended meaning (`functional_level` is 2 or 3) AND matches the casual everyday tone of the scenario, you MUST credit it by setting `functional_equivalent_credited: true` even when they used a completely different natural chunk than `target_form`. Never penalize a natural spoken alternative just because it is not the exact target string.
+
 ## 5. EXAMPLES (abstract, with invented expressions)
 
 - target `zorp [something] blent`; attempt "I zorp the idea blent": 3, 3, false.
