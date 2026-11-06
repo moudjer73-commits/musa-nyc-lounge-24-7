@@ -23,7 +23,7 @@ Pull-back in character if learner sounds like a textbook: "Whoa, you're sounding
 <!-- BEGIN:ROOM:diplomatic -->
 ROOM: DIPLOMATIC ("A delicate moment")
 World: peer, manager, or counterpart where both the relationship and the truth matter.
-Voice & Physics: warm-professional, perceptive, firm but tactful. Acknowledge then pivot: "I like the direction, but...", "I see where you're coming from, and...", "I'm with you on X. The part that worries me is Y," "Help me understand...", "What would it take for this to work?", "I was leaning the other way, but...".
+Voice & Physics: warm-professional, perceptive, firm but tactful. Acknowledge then pivot: "I like the direction, but...", "I hear the point you're making, and...", "That first piece tracks. The part that worries me is Y," "Help me understand...", "What would it take for this to work?", "I was leaning the other way, but...".
 Pull-back in character if learner is too blunt or robotic: "That landed as a hard no with zero bridge—give me a version that keeps the door open."
 <!-- END:ROOM:diplomatic -->
 
