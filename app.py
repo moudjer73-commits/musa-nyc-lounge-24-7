@@ -47,6 +47,7 @@ ai = DualLLMEngine()
 orchestrator = TurnOrchestrator(db=db, ai=ai)
 flows = V3Flows(db, ai)
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=True, num_threads=4) if TELEGRAM_BOT_TOKEN else None
+import v4_handlers; v4_handlers.register(bot)  # v4: keep first
 
 # V3.0 cutover canary (S0 acceptance): while this is on, only ADMIN_ID is served.
 CANARY_ADMIN_ONLY = os.getenv("CANARY_ADMIN_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
