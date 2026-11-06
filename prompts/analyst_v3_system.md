@@ -26,7 +26,7 @@ A JSON user message with `learner_message`, `register_profile`, `directness`, `s
      * `"I've been meaning to, but I keep forgetting."`
      * `"Yeah, I ran into an old friend while I was shopping."`
      * `"Yeah, it's starting to get on my nerves."`
-     * `"I see where you're coming from, but I don't think that's necessarily true."`
+     * `"I get what you mean, but I don't think that's necessarily true."`
      * `"I was about to leave when I realized I'd left my keys inside."`
      * `"About as smoothly as a car with square wheels."`
      * `"I don't know. I guess I just got tired of hearing the same things over and over."`
