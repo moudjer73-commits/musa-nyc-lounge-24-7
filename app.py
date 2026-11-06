@@ -1,3 +1,5 @@
+import room_engine
+import prompt_assembly
 import tempfile
 import asyncio
 import html
@@ -54,6 +56,23 @@ RETRY_NOTICE = "⏳ <i>Alex is catching his breath (high traffic). Please resend
 
 _LEARNER_LOCKS: dict[str, threading.Lock] = {}
 _LEARNER_LOCKS_GUARD = threading.Lock()
+
+
+_LEARNER_FLAVORS: dict[str, str] = {}
+
+def _get_learner_flavor(lid: int, sess: dict | None = None, cfg: dict | None = None) -> str:
+    key = str(lid)
+    if key in _LEARNER_FLAVORS:
+        return _LEARNER_FLAVORS[key]
+    reg = (sess or {}).get("register_profile") or (cfg or {}).get("default_register") or "casual"
+    if reg in ("warm", "witty"):
+        _LEARNER_FLAVORS[key] = reg
+        return reg
+    return "neutral"
+
+def _set_learner_flavor(lid: int, flavor: str) -> None:
+    if flavor in ("neutral", "warm", "witty"):
+        _LEARNER_FLAVORS[str(lid)] = flavor
 
 def _get_learner_lock(lid) -> threading.Lock:
     key = str(lid)
@@ -167,12 +186,14 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
 def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
-        types.KeyboardButton("💬 Chat with Alex"),
-        types.KeyboardButton("🎙️ Podcast (Alex & Maya)"),
-        types.KeyboardButton("🔁 Review & Workout"),
+        types.KeyboardButton("💬 Open Scene"),
+        types.KeyboardButton("🎭 Replay"),
+        types.KeyboardButton("🤝 Dilemma"),
+        types.KeyboardButton("🎙️ Podcast"),
+        types.KeyboardButton("🔁 Review"),
         types.KeyboardButton("🏁 Scene Debrief"),
         types.KeyboardButton("📊 My Progress"),
-        types.KeyboardButton("⚙️ Settings"),
+        types.KeyboardButton("⚙️ Register & Tone"),
     )
     return markup
 
@@ -181,8 +202,11 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     sess = db.get_or_create_active_session(lid)
     cfg = db.get_learner_settings(lid)
 
-    cur_reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
+    raw_reg = sess.get("register_profile") or cfg.get("default_register") or "casual"
     cur_dir = sess.get("directness") or cfg.get("default_directness") or "balanced"
+    cur_flv = _get_learner_flavor(lid, sess, cfg)
+    cur_room, cur_dir, cur_flv = prompt_assembly.normalize_3d_config(raw_reg, cur_dir, cur_flv)
+
     cur_fb = cfg.get("feedback_preference") or "light"
     cur_ar = cfg.get("arabic_support") or "bilingual"
     cur_mode = sess.get("training_mode") or "open_scene"
@@ -191,66 +215,97 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     active_chain = ai.get_active_model_chain(prefer_pro=(cur_tier == "pro"))
     primary_m = active_chain[0] if active_chain else "gemini-2.5-flash"
 
-    text_html = (
-        "🎛️ <b>Spoken English Lab — Live Control Panel</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Mode:</b> <code>{_e(cur_mode)}</code>\n"
-        f"• <b>Spoken Register:</b> <b>{_e(cur_reg.upper())}</b>\n"
-        f"• <b>Coaching Intensity:</b> <b>{_e(cur_fb.upper())}</b>\n"
-        f"• <b>Gemini Engine:</b> <code>{_e(primary_m)}</code> (<b>{_e(cur_tier.upper())}</b>)\n"
-        f"• <b>Arabic Nuance Notes:</b> <b>{_e(cur_ar.upper())}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>Tap any button below to switch immediately (changes persist across scenes):</i>"
+    world_card_html = room_engine.render_world_card_html(
+        register_profile=cur_room,
+        directness=cur_dir,
+        flavor=cur_flv,
+        coaching=cur_fb,
     )
+    text_html = "\n".join([
+        "🎛️ <b>Spoken English Lab — Live Control Panel</b>",
+        f"• <b>Active Mode:</b> <code>{_e(cur_mode)}</code> | <b>Engine:</b> <code>{_e(primary_m)}</code>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        world_card_html,
+        "━━━━━━━━━━━━━━━━━━━━",
+        "<i>1️⃣ Pick a Room (World) · 2️⃣ Pick Flavor & Directness · 3️⃣ Tap ▶️ Enter Room Now:</i>",
+    ])
 
     markup = types.InlineKeyboardMarkup(row_width=3)
 
-    regs = [
-        ("casual", "☕ Casual"),
-        ("warm", "🤝 Warm"),
-        ("witty", "😏 Witty"),
+    rooms_row1 = [
+        ("casual", "🏠 Casual (Friends)"),
+        ("diplomatic", "🤝 Diplomatic (Tact)"),
     ]
-    reg_btns = [
+    rooms_row2 = [
+        ("executive", "💼 Executive (Decide)"),
+        ("analytical", "🧠 Analytical (Reason)"),
+    ]
+    markup.row(*[
         types.InlineKeyboardButton(
-            f"{'✅ ' if cur_reg == k else ''}{label}",
+            f"{'✅ ' if cur_room == k else ''}{label}",
             callback_data=f"setreg:{k}",
         )
-        for k, label in regs
+        for k, label in rooms_row1
+    ])
+    markup.row(*[
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_room == k else ''}{label}",
+            callback_data=f"setreg:{k}",
+        )
+        for k, label in rooms_row2
+    ])
+
+    flavors = [
+        ("neutral", "⚪ Neutral"),
+        ("warm", "💛 Warm"),
+        ("witty", "😏 Witty"),
     ]
-    markup.row(*reg_btns)
+    markup.row(*[
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_flv == k else ''}{label}",
+            callback_data=f"setflavor:{k}",
+        )
+        for k, label in flavors
+    ])
+
+    dirs = [("soft", "🕊️ Soft"), ("balanced", "⚖️ Balanced"), ("direct", "🎯 Direct")]
+    markup.row(*[
+        types.InlineKeyboardButton(
+            f"{'✅ ' if cur_dir == k else ''}{label}",
+            callback_data=f"setdir:{k}",
+        )
+        for k, label in dirs
+    ])
 
     fbs = [("silent", "🔇 Silent"), ("light", "💡 Light"), ("active", "🔬 Active")]
-    fb_btns = [
+    markup.row(*[
         types.InlineKeyboardButton(
             f"{'✅ ' if cur_fb == k else ''}{label}",
             callback_data=f"setfb:{k}",
         )
         for k, label in fbs
-    ]
-    markup.row(*fb_btns)
+    ])
 
     ars = [("bilingual", "🇦🇪 AR Notes: ON"), ("english_only", "🇺🇸 English Only")]
-    ar_btns = [
+    markup.row(*[
         types.InlineKeyboardButton(
             f"{'✅ ' if cur_ar == k else ''}{label}",
             callback_data=f"setar:{k}",
         )
         for k, label in ars
-    ]
-    markup.row(*ar_btns)
+    ])
 
     tiers = [("flash", "⚡ Flash (Fastest)"), ("pro", "🧠 Pro (Deepest)")]
-    tier_btns = [
+    markup.row(*[
         types.InlineKeyboardButton(
             f"{'✅ ' if cur_tier == k else ''}{label}",
             callback_data=f"setmodel:{k}",
         )
         for k, label in tiers
-    ]
-    markup.row(*tier_btns)
+    ])
 
     auto_v = db.get_auto_voice(lid)
-    v_btns = [
+    markup.row(
         types.InlineKeyboardButton(
             f"{'✅ ' if not auto_v else ''}🎧 Voice: On Tap",
             callback_data="setvoice:tap",
@@ -259,17 +314,30 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
             f"{'✅ ' if auto_v else ''}🔊 Voice: Auto",
             callback_data="setvoice:auto",
         ),
-    ]
-    markup.row(*v_btns)
+    )
+
+    markup.row(
+        types.InlineKeyboardButton(
+            "▶️ Enter Room Now (Alex Speaks First)",
+            callback_data="enter_room:now",
+        )
+    )
 
     return text_html, markup
 
 
 def render_layer2_card_html(reply_text: str, diag: dict) -> str:
+    kind = diag.get("kind", "usage")
+    sev = diag.get("severity", "important")
+    axis = diag.get("mismatch_axis")
+    cost = diag.get("cost")
+    is_cat_d = (sev == "optional_upgrade") or (kind in ("register", "pragmatic", "style")) or bool(axis)
+    badge_suffix = f"<i>{_e(axis)} → costs {_e(cost)}</i>" if (axis and cost) else f"<i>{_e(kind)}</i>"
+
     lines = [
         f"💬 <b>Alex:</b> {_e(reply_text)}",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"💡 <b>Quick Upgrade</b> (<i>{_e(diag.get('kind', 'usage'))}</i>)",
+        f"💡 <b>Quick Upgrade</b> ({badge_suffix})",
         f"• <b>You said:</b> “<s>{_e(diag.get('original_span', ''))}</s>”",
     ]
     if diag.get("alternative"):
@@ -281,23 +349,13 @@ def render_layer2_card_html(reply_text: str, diag: dict) -> str:
         )
     if diag.get("listener_effect"):
         lines.append(f"• <b>How it sounds:</b> <i>{_e(diag['listener_effect'])}</i>")
-    lines.append(f"• <b>Why:</b> {_e(diag.get('explanation_en', ''))}")
+    why_en = diag.get("explanation_en", "")
+    if is_cat_d and why_en and not why_en.lower().startswith(("that's fine", "grammatical, but", "clear, but", "in ")):
+        why_en = f"Grammatical, but {why_en[0].lower() + why_en[1:]}" if len(why_en) > 1 else why_en
+    lines.append(f"• <b>Why:</b> {_e(why_en)}")
     if diag.get("l1_source_ar") or diag.get("l1_pattern"):
         src_ar = f"«{_e(diag['l1_source_ar'])}» " if diag.get("l1_source_ar") else ""
-        pat_code = f"(<code>{_e(diag['l1_pattern'])}</code>)" if diag.get("l1_pattern") else ""
-        lines.append(f"• <b>L1 Transfer:</b> {src_ar}{pat_code}")
-    if diag.get("explanation_ar"):
-        lines.append(f"• <b>بالعربية:</b> <tg-spoiler>{_e(diag['explanation_ar'])}</tg-spoiler>")
-
-    extra_list = diag.get("additional_turn_findings") or []
-    if extra_list:
-        lines.append("\n🔎 <b>Also spotted in your turn:</b>")
-        for ex in extra_list:
-            ex_ar = f" — <tg-spoiler>{_e(ex['explanation_ar'])}</tg-spoiler>" if ex.get("explanation_ar") else ""
-            lines.append(
-                f"• “<s>{_e(ex.get('original_span', ''))}</s>” → “<b>{_e(ex.get('alternative', ''))}</b>”{ex_ar}"
-            )
-
+        lines.append(f"• <b>L1 Note:</b> <tg-spoiler>{src_ar}{_e(diag.get('l1_pattern', ''))}</tg-spoiler>")
     return "\n".join(lines)
 
 
@@ -726,12 +784,38 @@ def on_callback(bot_, call_id: str, lid: int, chat_id: int, message_id: int, dat
         send_alex_voice(bot_, chat_id, extract_alex_spoken_text(raw_target))
         return
 
-    if data.startswith(("setreg:", "setdir:", "setfb:", "setar:", "setmodel:", "setvoice:")):
+    if data.startswith(("setreg:", "setflavor:", "setdir:", "setfb:", "setar:", "setmodel:", "setvoice:", "enter_room:")):
         kind, val = data.split(":", 1)
-        if kind == "setreg":
+        if kind == "enter_room":
+            sess_now = db.get_or_create_active_session(lid)
+            cfg_now = db.get_learner_settings(lid)
+            r_now = sess_now.get("register_profile") or cfg_now.get("default_register") or "casual"
+            d_now = sess_now.get("directness") or cfg_now.get("default_directness") or "balanced"
+            f_now = _get_learner_flavor(lid, sess_now, cfg_now)
+            room_now, d_now, f_now = prompt_assembly.normalize_3d_config(r_now, d_now, f_now)
+            card_html = room_engine.render_world_card_html(room_now, d_now, f_now, cfg_now.get("feedback_preference", "light"))
+            opener = room_engine.get_alex_immediate_opener(room_now, d_now, f_now)
+            sp_label = room_engine.format_alex_speaker_label(room_now, f_now)
+            open_mk = types.InlineKeyboardMarkup()
+            open_mk.add(types.InlineKeyboardButton("🎧 Listen", callback_data="tts:msg"))
+            msg_html = "\n\n".join([card_html, f"💬 <b>{_e(sp_label)}:</b> “{_e(opener)}”"])
+            bot_.send_message(
+                chat_id,
+                msg_html,
+                parse_mode="HTML",
+                reply_markup=open_mk,
+            )
+            _answer(bot_, call_id, f"Entered {room_now.upper()} Room!")
+            return
+        if kind == "setflavor":
+            _set_learner_flavor(lid, val)
+            toast = f"Flavor → {val.upper()}"
+        elif kind == "setreg":
+            if val in ("warm", "witty"):
+                _set_learner_flavor(lid, val)
             db.update_session_settings(sid, lid, register_profile=val)
             db.update_learner_preference(lid, default_register=val)
-            toast = f"Register → {val.upper()}"
+            toast = f"Room → {val.upper()}"
         elif kind == "setdir":
             db.update_session_settings(sid, lid, directness=val)
             db.update_learner_preference(lid, default_directness=val)
@@ -769,23 +853,26 @@ if bot is not None:
         new_sid = f"sess_{uuid.uuid4().hex[:10]}"
         db.upsert_learner(lid)
         cfg = db.get_learner_settings(lid)
-        reg = cfg.get("default_register", "casual")
+        raw_reg = cfg.get("default_register", "casual")
         direct = cfg.get("default_directness", "balanced")
+        flv = _get_learner_flavor(lid, None, cfg)
+        room, direct, flv = prompt_assembly.normalize_3d_config(raw_reg, direct, flv)
         fb = cfg.get("feedback_preference", "light")
         db.create_session(
             new_sid,
             lid,
             training_mode="open_scene",
             scene_mode="real_conversation",
-            register_profile=reg,
+            register_profile=room,
             directness=direct,
         )
+        card_html = room_engine.render_world_card_html(room, direct, flv, fb)
+        opener = room_engine.get_alex_immediate_opener(room, direct, flv)
+        sp_label = room_engine.format_alex_speaker_label(room, flv)
+        msg_html = "\n\n".join([card_html, f"💬 <b>{_e(sp_label)}:</b> “{_e(opener)}”"])
         bot.send_message(
             message.chat.id,
-            f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️</b>\n"
-            f"• Scene: <code>{new_sid}</code>\n"
-            f"• Register: <b>{_e(reg.upper())}</b> | Coaching: <b>{_e(fb.upper())}</b>\n\n"
-            "Talk naturally about anything on your mind, or use the mode buttons below.",
+            msg_html,
             parse_mode="HTML",
             reply_markup=build_reply_keyboard(),
         )
@@ -1174,7 +1261,7 @@ if bot is not None:
                 db.bump_scene_revision(sid)
                 bot.send_message(
                     chat_id,
-                    f"💬 <b>Chat with Alex</b> active (Register: <b>{_e(active_reg.upper())}</b>).",
+                    room_engine.render_world_card_html(active_reg, active_dir, _get_learner_flavor(lid, sess, cfg)) + "\n\n💬 <b>" + _e(room_engine.format_alex_speaker_label(active_reg, _get_learner_flavor(lid, sess, cfg))) + ":</b> “" + _e(room_engine.get_alex_immediate_opener(active_reg, active_dir, _get_learner_flavor(lid, sess, cfg))) + "”",
                     parse_mode="HTML",
                 )
             elif text.startswith("🎛️"):
