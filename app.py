@@ -167,14 +167,12 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
 def build_reply_keyboard() -> types.ReplyKeyboardMarkup:
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
-        types.KeyboardButton("💬 Open Scene"),
-        types.KeyboardButton("🎤 Prosody Lab"),
-        types.KeyboardButton("🎙️ Podcast"),
-        types.KeyboardButton("🎭 Replay"),
-        types.KeyboardButton("🔁 Review"),
+        types.KeyboardButton("💬 Chat with Alex"),
+        types.KeyboardButton("🎙️ Podcast (Alex & Maya)"),
+        types.KeyboardButton("🔁 Review & Workout"),
         types.KeyboardButton("🏁 Scene Debrief"),
         types.KeyboardButton("📊 My Progress"),
-        types.KeyboardButton("⚙️ Register & Tone"),
+        types.KeyboardButton("⚙️ Settings"),
     )
     return markup
 
@@ -209,12 +207,9 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
     markup = types.InlineKeyboardMarkup(row_width=3)
 
     regs = [
-        ("casual", "Casual"),
-        ("warm", "Warm"),
-        ("witty", "Witty"),
-        ("diplomatic", "Diplomatic"),
-        ("executive", "Executive"),
-        ("analytical", "Analytical"),
+        ("casual", "☕ Casual"),
+        ("warm", "🤝 Warm"),
+        ("witty", "😏 Witty"),
     ]
     reg_btns = [
         types.InlineKeyboardButton(
@@ -223,18 +218,7 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
         )
         for k, label in regs
     ]
-    markup.row(*reg_btns[:3])
-    markup.row(*reg_btns[3:])
-
-    dirs = [("soft", "🕊️ Soft"), ("balanced", "⚖️ Balanced"), ("direct", "🎯 Direct")]
-    dir_btns = [
-        types.InlineKeyboardButton(
-            f"{'✅ ' if cur_dir == k else ''}{label}",
-            callback_data=f"setdir:{k}",
-        )
-        for k, label in dirs
-    ]
-    markup.row(*dir_btns)
+    markup.row(*reg_btns)
 
     fbs = [("silent", "🔇 Silent"), ("light", "💡 Light"), ("active", "🔬 Active")]
     fb_btns = [
