@@ -98,7 +98,7 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         {"command": "settings", "description": "Adjust register, directness, engine & coaching"},
         {"command": "scene", "description": "Open spontaneous conversation scene"},
         {"command": "dilemma", "description": "Generate a live pragmatic dilemma"},
-        {"command": "shift", "description": "Spoken-first register shift (Casual/Diplomatic/Executive)"},
+        {"command": "shift", "description": "Spoken American phrasing calibration"},
         {"command": "register", "description": "Transform a thought across spoken registers"},
         {"command": "think", "description": "Analytical Think-Aloud sparring"},
         {"command": "workout", "description": "Spontaneous phrase retrieval workout"},
@@ -146,7 +146,7 @@ def force_sync_all_telegram_scopes_and_profile(target_chat_id: int = ADMIN_ID) -
         "Your personal studio for mastering real, unscripted Spoken American English (B2–C2).\n\n"
         "• 💬 Natural Flow First: Chat with Alex without robotic interrogations or textbook scripts.\n"
         "• 💡 Surgical On-Demand Coaching: Fix L1-Arabic transfer traps, collocations & tone on your terms.\n"
-        "• 🎛️ 6 Live Registers: Shift seamlessly between Casual, Warm, Witty, Diplomatic, Executive & Analytical.\n"
+        "• 🎛️ Everyday Spoken Tones: Casual, Warm & Witty American English with zero corporate jargon.\n"
         "• 🤝 Pragmatic Dilemmas, Listen & Decode, and Unaided Retrieval.\n\n"
         "اضغط Start لبدء المحادثة والتدريب العملي فوراً 👇"
     )
@@ -196,7 +196,6 @@ def build_live_settings_panel(lid: int) -> tuple[str, types.InlineKeyboardMarkup
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Active Mode:</b> <code>{_e(cur_mode)}</code>\n"
         f"• <b>Spoken Register:</b> <b>{_e(cur_reg.upper())}</b>\n"
-        f"• <b>Pragmatic Directness:</b> <b>{_e(cur_dir.upper())}</b>\n"
         f"• <b>Coaching Intensity:</b> <b>{_e(cur_fb.upper())}</b>\n"
         f"• <b>Gemini Engine:</b> <code>{_e(primary_m)}</code> (<b>{_e(cur_tier.upper())}</b>)\n"
         f"• <b>Arabic Nuance Notes:</b> <b>{_e(cur_ar.upper())}</b>\n"
@@ -785,7 +784,7 @@ if bot is not None:
             message.chat.id,
             f"🟢 <b>𝐒𝐩𝐨𝐤𝐞𝐧 𝐄𝐧𝐠𝐥𝐢𝐬𝐡 𝐋𝐚𝐛 🎙️</b>\n"
             f"• Scene: <code>{new_sid}</code>\n"
-            f"• Register: <b>{_e(reg.upper())}</b> | Directness: <b>{_e(direct.upper())}</b> | Coaching: <b>{_e(fb.upper())}</b>\n\n"
+            f"• Register: <b>{_e(reg.upper())}</b> | Coaching: <b>{_e(fb.upper())}</b>\n\n"
             "Talk naturally about anything on your mind, or use the mode buttons below.",
             parse_mode="HTML",
             reply_markup=build_reply_keyboard(),
@@ -1175,7 +1174,7 @@ if bot is not None:
                 db.bump_scene_revision(sid)
                 bot.send_message(
                     chat_id,
-                    f"💬 <b>Open Scene</b> active (Register: <b>{_e(active_reg.upper())}</b> | Directness: <b>{_e(active_dir.upper())}</b>).",
+                    f"💬 <b>Chat with Alex</b> active (Register: <b>{_e(active_reg.upper())}</b>).",
                     parse_mode="HTML",
                 )
             elif text.startswith("🎛️"):
