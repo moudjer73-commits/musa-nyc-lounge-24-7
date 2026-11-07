@@ -5,7 +5,6 @@ from src.analyst.engine import AnalystEngine
 from src.bot.alex_handlers import register_alex_handlers
 from src.bot.analyst_handlers import register_analyst_handlers
 from src.bot.interaction_reentry_handlers import register_interaction_and_reentry_handlers
-from src.bot.onboarding_handlers import register_onboarding
 from src.bot.phase3_handlers import register_phase3_handlers
 from src.bot.podcast_handlers import register_podcast_handlers
 from src.bot.pressure_tracking_handlers import register_pressure_and_tracking_handlers
@@ -95,4 +94,67 @@ def register_all_modules(app: Application, container: LabContainer) -> None:
     register_podcast_handlers(app, container.podcast_repo, container.podcast_pipeline, container.listening_ladder)
     register_interaction_and_reentry_handlers(app, container.interaction_engine, container.reentry_mgr)
     register_phase3_handlers(app, container.profile_repo, container.prosody_lab, container.phase3_engine)
-    register_onboarding(app, container.profile_repo, container.onboarding_engine)
+    register_core_turn_and_privacy_handlers(app, container)
+
+
+def register_core_turn_and_privacy_handlers(app: Application, container: LabContainer) -> None:
+    from telegram import Update
+    from telegram.ext import CommandHandler, ContextTypes, MessageHandler, filters
+    from src.bot.onboarding_handlers import format_profile_summary, route_learner_turn
+    from src.llm.gemini_client import QuotaExceededError
+
+    async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message:
+            return
+        p = container.profile_repo.get_or_create_profile(update.effective_user.id)
+        mode = "Active Practice" if p.onboarding_completed else f"Onboarding Session {p.onboarding_session}/3"
+        await update.message.reply_text(
+            f"Hey! I'm Alex ({mode}). Send a voice note or text message anytime to jump right in."
+        )
+
+    async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message:
+            return
+        p = container.profile_repo.get_or_create_profile(update.effective_user.id)
+        await update.message.reply_text(format_profile_summary(p))
+
+    async def delete_data_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message:
+            return
+        deleted = container.purge_all_user_data(update.effective_user.id)
+        msg = "All your records across all tables have been permanently wiped." if deleted else "No stored data found."
+        await update.message.reply_text(msg)
+
+    async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message or not update.message.text:
+            return
+        try:
+            replies = await route_learner_turn(container, update.effective_user.id, update.message.text)
+            for r in replies:
+                await update.message.reply_text(r)
+        except QuotaExceededError as exc:
+            await update.message.reply_text(str(exc))
+
+    async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message or not update.message.voice:
+            return
+        uid = update.effective_user.id
+        try:
+            tg_file = await update.message.voice.get_file()
+            raw_bytes = bytes(await tg_file.download_as_bytearray())  # Memory-only: never saved to disk
+            transcript = await container.llm.transcribe_voice(uid, raw_bytes)
+            replies = await route_learner_turn(container, uid, transcript)
+            for r in replies:
+                await update.message.reply_text(r)
+        except QuotaExceededError as exc:
+            await update.message.reply_text(str(exc))
+        except Exception:
+            await update.message.reply_text(
+                "Voice processing hit a temporary limit—please send that turn as text so we keep the conversation going."
+            )
+
+    app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("profile", profile_cmd))
+    app.add_handler(CommandHandler("delete_my_data", delete_data_cmd))
+    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))

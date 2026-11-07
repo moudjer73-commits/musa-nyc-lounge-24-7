@@ -81,3 +81,27 @@ class GeminiService:
                 logger.warning("Structured JSON validation/call failed (attempt %d): %s", attempt + 1, exc)
                 await asyncio.sleep(1.0)
         return fallback_instance
+
+    async def transcribe_voice(self, user_id: int, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+        allowed, used = self.repo.check_and_increment_quota(user_id)
+        if not allowed:
+            raise QuotaExceededError(f"Daily free quota reached ({used} calls).")
+        if not self.client:
+            raise RuntimeError("GEMINI_API_KEY is not configured.")
+        prompt = (
+            "Transcribe this spoken English audio verbatim, preserving natural contractions, "
+            "hesitations, and any grammar or preposition slips without auto-correcting them."
+        )
+        for model_name in (PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL):
+            try:
+                part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+                resp = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=model_name,
+                    contents=[part, prompt],
+                )
+                if resp and resp.text:
+                    return resp.text.strip()
+            except Exception as exc:
+                logger.warning("Voice transcription failed on %s: %s", model_name, exc)
+        raise RuntimeError("Voice transcription unavailable; fallback to text.")

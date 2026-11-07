@@ -49,3 +49,36 @@ def test_phase3_eight_dimensions_humor_gate_pilot_and_full_purge(tmp_path: Path)
     assert milestone.leaderboard_enabled is False and milestone.collective_e3_targets_reached == 1
     assert container.purge_all_user_data(301) is True
     assert container.phase3_engine.get_group_aggregate_milestone().total_active_learners == 0
+
+
+import pytest
+from src.bot.onboarding_handlers import route_learner_turn
+from src.models.analyst import AnalystLLMOutput
+from src.onboarding.diagnosis import CalibrationResult
+
+class E2EDummyLLM:
+    async def generate_text(self, user_id: int, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> str:
+        return "I'm glad you brought that up. Let's look at how that works in practice."
+
+    async def generate_structured(self, user_id: int, system_prompt: str, user_prompt: str, schema_cls, fallback_instance):
+        if schema_cls is CalibrationResult:
+            return CalibrationResult(inferred_goal="work")
+        return AnalystLLMOutput(
+            category="B", error_type="lexis", error_signature="calque_complete_idea",
+            evidence_span="complete my idea", suggested_alternative="finish my thought", confidence=0.95
+        )
+
+@pytest.mark.asyncio
+async def test_end_to_end_onboarding_to_analyzed_alex_handoff(tmp_path: Path):
+    container = LabContainer(db_path=tmp_path / "e2e.db", llm=E2EDummyLLM())
+    for _ in range(12):
+        msgs = await route_learner_turn(container, 501, "I want to improve my spoken English for work.")
+    assert any("Onboarding diagnosis complete" in m for m in msgs)
+
+    # Turn 13 automatically routes to Analyst + Alex (1st occurrence -> silent recast)
+    post_onboarding_1 = await route_learner_turn(container, 501, "Wait, let me complete my idea.")
+    assert len(post_onboarding_1) == 1
+    # Turn 14 (2nd occurrence -> Alex reply + explicit correction & retry)
+    post_onboarding_2 = await route_learner_turn(container, 501, "Let me complete my idea first.")
+    assert len(post_onboarding_2) == 2
+    assert "finish my thought" in post_onboarding_2[1]

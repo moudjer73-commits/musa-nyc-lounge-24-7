@@ -1,9 +1,8 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from src.db.profile_repo import ProfileRepository
+from src.bot.analyst_handlers import handle_analyzed_conversation_turn
 from src.llm.gemini_client import QuotaExceededError
 from src.models.profile import LearnerProfile
-from src.onboarding.diagnosis import OnboardingDiagnosisEngine
 
 
 def format_profile_summary(profile: LearnerProfile) -> str:
@@ -25,39 +24,22 @@ def format_profile_summary(profile: LearnerProfile) -> str:
     )
 
 
-def register_onboarding(app: Application, repo: ProfileRepository, engine: OnboardingDiagnosisEngine) -> None:
-    async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message:
-            return
-        profile = repo.get_or_create_profile(update.effective_user.id)
-        await update.message.reply_text(
-            f"Hey! I'm Alex. Welcome to Spoken English Lab (Session {profile.onboarding_session}/3).\n"
-            "No tests here—just tell me a bit about what you've been working on or into lately."
-        )
-
-    async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message:
-            return
-        profile = repo.get_or_create_profile(update.effective_user.id)
-        await update.message.reply_text(format_profile_summary(profile))
-
-    async def delete_data_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message:
-            return
-        deleted = repo.delete_user_data(update.effective_user.id)
-        msg = "All your profile data and logs have been permanently deleted." if deleted else "No stored data found."
-        await update.message.reply_text(msg)
-
-    async def text_turn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message or not update.message.text:
-            return
-        try:
-            reply, _ = await engine.process_turn(update.effective_user.id, update.message.text)
-            await update.message.reply_text(reply)
-        except QuotaExceededError as exc:
-            await update.message.reply_text(str(exc))
-
-    app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("profile", profile_cmd))
-    app.add_handler(CommandHandler("delete_my_data", delete_data_cmd))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_turn_handler))
+async def route_learner_turn(container, user_id: int, learner_text: str) -> list[str]:
+    """Routes to 3-session onboarding first, then seamlessly hands off to Analyst + Alex."""
+    profile = container.profile_repo.get_or_create_profile(user_id)
+    if not profile.onboarding_completed:
+        reply, updated = await container.onboarding_engine.process_turn(user_id, learner_text)
+        msgs = [reply]
+        if updated.onboarding_completed:
+            msgs.append("Onboarding diagnosis complete! Use /profile to view your initial calibration.")
+        return msgs
+    session_id = f"session_{user_id}_active"
+    return await handle_analyzed_conversation_turn(
+        user_id=user_id,
+        session_id=session_id,
+        learner_text=learner_text,
+        profile_repo=container.profile_repo,
+        scene_repo=container.scene_repo,
+        analyst=container.analyst,
+        responder=container.responder,
+    )
