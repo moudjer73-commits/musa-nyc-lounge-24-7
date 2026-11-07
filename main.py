@@ -1,6 +1,7 @@
 import logging
 from telegram.ext import ApplicationBuilder
 from src.bot.app import LabContainer, register_all_modules
+from src.bot.live_telegram import register_live_telegram_handlers
 from src.bot.telegram_setup import sync_telegram_bot_profile
 from src.config import resolve_telegram_token
 
@@ -17,7 +18,8 @@ def main() -> None:
     container = LabContainer()
     app = ApplicationBuilder().token(bot_token).build()
     register_all_modules(app, container)
-    logging.info("Spoken English Lab v1.0 is live and polling...")
+    register_live_telegram_handlers(app, container)
+    logging.info("Spoken English Lab v1.0 (Live Chat + Voice TTS) is polling...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":

@@ -89,3 +89,12 @@ def test_interactive_ui_keyboards_build_cleanly():
     assert len(main_menu_keyboard().inline_keyboard) == 5
     assert len(rooms_keyboard().inline_keyboard) == 7
     assert len(switch_keyboard().inline_keyboard) == 3
+
+
+def test_live_telegram_handlers_and_tts_clean():
+    from src.bot.live_telegram import _clean_for_tts, get_user_state, main_menu_kb
+    st = get_user_state(999)
+    assert st.auto_voice is True
+    assert len(main_menu_kb(st).inline_keyboard) == 5
+    cleaned = _clean_for_tts("Hey there!\n💡 Natural Upgrade: try this")
+    assert "Natural Upgrade" not in cleaned
