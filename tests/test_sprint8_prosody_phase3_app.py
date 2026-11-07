@@ -82,3 +82,10 @@ async def test_end_to_end_onboarding_to_analyzed_alex_handoff(tmp_path: Path):
     post_onboarding_2 = await route_learner_turn(container, 501, "Let me complete my idea first.")
     assert len(post_onboarding_2) == 2
     assert "finish my thought" in post_onboarding_2[1]
+
+
+def test_interactive_ui_keyboards_build_cleanly():
+    from src.bot.ui_buttons import main_menu_keyboard, rooms_keyboard, switch_keyboard
+    assert len(main_menu_keyboard().inline_keyboard) == 5
+    assert len(rooms_keyboard().inline_keyboard) == 7
+    assert len(switch_keyboard().inline_keyboard) == 3

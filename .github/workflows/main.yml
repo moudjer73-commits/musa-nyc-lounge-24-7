@@ -68,7 +68,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/state_snapshot.enc || true
-          git diff --staged --quiet || (git commit -m "chore(state): update encrypted snapshot" && git push origin main)
+          git diff --staged --quiet || (git commit -m "chore(state): update encrypted snapshot" && git pull --rebase -X theirs origin main && git push origin main)
 
       - name: Relay Next Runner
         if: always() && fromJSON(steps.bot_step.outputs.uptime_s || '0') >= 300

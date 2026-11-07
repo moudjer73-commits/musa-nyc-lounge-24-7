@@ -1,3 +1,4 @@
+from src.bot.ui_buttons import register_interactive_ui
 from pathlib import Path
 from telegram.ext import Application
 from src.alex.responder import AlexResponder
@@ -94,6 +95,7 @@ def register_all_modules(app: Application, container: LabContainer) -> None:
     register_podcast_handlers(app, container.podcast_repo, container.podcast_pipeline, container.listening_ladder)
     register_interaction_and_reentry_handlers(app, container.interaction_engine, container.reentry_mgr)
     register_phase3_handlers(app, container.profile_repo, container.prosody_lab, container.phase3_engine)
+    register_interactive_ui(app, container)
     register_core_turn_and_privacy_handlers(app, container)
 
 
