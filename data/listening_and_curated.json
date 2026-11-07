@@ -1,0 +1,58 @@
+{
+  "curated_links": [
+    {
+      "link_id": "cur_01",
+      "title": "This American Life \u2014 Everyday Spoken Storytelling",
+      "url": "https://www.thisamericanlife.org",
+      "register": "social",
+      "level": "L2",
+      "notes": "Human-curated link only; no audio downloading or copying."
+    },
+    {
+      "link_id": "cur_02",
+      "title": "EconTalk \u2014 Unscripted Intellectual & Policy Debates",
+      "url": "https://www.econtalk.org",
+      "register": "intellectual",
+      "level": "L3",
+      "notes": "Human-curated link only; no audio downloading or copying."
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "l1_recon_01",
+      "level": "L1",
+      "task_type": "reconstruct_full_form",
+      "spoken_clip_text": "I'm gonna hafta pass on that meeting.",
+      "intonation_cue": "falling, matter-of-fact",
+      "expected_answer": "I am going to have to pass on that meeting.",
+      "target_register": "professional"
+    },
+    {
+      "task_id": "l2_recon_01",
+      "level": "L2",
+      "task_type": "reconstruct_full_form",
+      "spoken_clip_text": "Jeet yet, or d'you wanna grab something quick?",
+      "intonation_cue": "rising, casual invitation",
+      "expected_answer": "Did you eat yet, or do you want to grab something quick?",
+      "target_register": "casual"
+    },
+    {
+      "task_id": "l3_stance_01",
+      "level": "L3",
+      "task_type": "stance_from_intonation",
+      "spoken_clip_text": "Yeah, sure... we could technically try that approach.",
+      "intonation_cue": "elongated 'sure' with flat low pitch and hesitation pause",
+      "expected_answer": "skeptical and reluctant",
+      "target_register": "professional"
+    },
+    {
+      "task_id": "l4_reform_01",
+      "level": "L4",
+      "task_type": "reformulate_in_register",
+      "spoken_clip_text": "Look, the numbers are total mess\u2014Wait, I mean Q3 projections don't line up.",
+      "intonation_cue": "fast self-repair under time pressure",
+      "expected_answer": "The third-quarter projections currently show discrepancies that we need to reconcile.",
+      "target_register": "intellectual"
+    }
+  ]
+}
