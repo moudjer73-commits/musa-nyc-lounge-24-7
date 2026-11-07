@@ -3,7 +3,7 @@ from typing import Type, TypeVar
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
-from src.config import FALLBACK_GEMINI_MODEL, PRIMARY_GEMINI_MODEL
+from src.config import FALLBACK_GEMINI_MODEL, PRIMARY_GEMINI_MODEL, resolve_gemini_keys
 from src.db.profile_repo import ProfileRepository
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,8 @@ class QuotaExceededError(RuntimeError):
 class GeminiService:
     def __init__(self, repo: ProfileRepository, api_key: str | None = None) -> None:
         self.repo = repo
-        resolved_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        keys = resolve_gemini_keys()
+        resolved_key = api_key or (keys[0] if keys else "")
         self.client = genai.Client(api_key=resolved_key) if resolved_key else None
 
     async def generate_text(

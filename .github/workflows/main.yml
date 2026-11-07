@@ -1,0 +1,78 @@
+name: Spoken English Lab 24-7 Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */5 * * *'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: spoken-english-lab-single-instance
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 310
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt edge-tts>=6.1.12
+
+      - name: Run Verification Suite (25 Unit Tests)
+        run: |
+          pytest -q
+
+      - name: Restore Encrypted State Snapshot
+        env:
+          SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+        run: |
+          python -c "from src.db.engine import restore_encrypted_snapshot; restore_encrypted_snapshot()"
+
+      - name: Run Spoken English Lab v1.0 (5 Hours)
+        id: bot_step
+        timeout-minutes: 290
+        continue-on-error: true
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
+          SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+        run: |
+          START_TS=$(date +%s)
+          timeout 17100s python app.py || true
+          END_TS=$(date +%s)
+          echo "uptime_s=$((END_TS - START_TS))" >> "$GITHUB_OUTPUT"
+
+      - name: Save Encrypted State Snapshot
+        if: always()
+        env:
+          SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+        run: |
+          python -c "from src.db.engine import export_encrypted_snapshot; export_encrypted_snapshot()"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/state_snapshot.enc || true
+          git diff --staged --quiet || (git commit -m "chore(state): update encrypted snapshot" && git push origin main)
+
+      - name: Relay Next Runner
+        if: always() && fromJSON(steps.bot_step.outputs.uptime_s || '0') >= 300
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run main.yml --ref main

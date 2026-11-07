@@ -56,3 +56,22 @@ def normalize_register_weights(raw_weights: dict[str, int]) -> dict[str, int]:
         target_key = max(REGISTER_KEYS, key=lambda k: normalized[k])
         normalized[target_key] += diff
     return normalized
+
+
+def resolve_telegram_token() -> str:
+    for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN", "BOT_TOKEN", "TG_TOKEN"):
+        val = os.getenv(k, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def resolve_gemini_keys() -> list[str]:
+    keys: list[str] = []
+    for k in ("GEMINI_API_KEY", "GEMINI_KEYS", "GOOGLE_API_KEY"):
+        raw = os.getenv(k, "").strip()
+        for part in raw.replace("\n", ",").split(","):
+            clean = part.strip()
+            if clean and clean not in keys:
+                keys.append(clean)
+    return keys
