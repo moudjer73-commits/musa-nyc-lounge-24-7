@@ -3,18 +3,12 @@ from pydantic import BaseModel, Field
 
 DialectRegion = Literal["Maghrebi", "Egyptian", "Levantine", "Gulf", "unspecified"]
 ProsodyTargetCode = Literal[
-    "p_vs_b",
-    "american_r",
-    "word_stress_and_vowel_reduction",
-    "sentence_intonation",
-    "french_uvular_r_and_final_stress_transfer",
-    "epenthetic_vowel_clusters",
-    "creaky_voice",
-    "wide_pitch_excursions",
+    "p_vs_b", "american_r", "word_stress_and_vowel_reduction", "sentence_intonation",
+    "french_uvular_r_and_final_stress_transfer", "epenthetic_vowel_clusters",
+    "creaky_voice", "wide_pitch_excursions",
 ]
 LearnerAmbition = Literal["intelligibility_and_presence", "near_native_polish"]
 EvidenceStrength = Literal["well_supported_core", "thin_evidence_hypothesis"]
-
 
 class ProsodyDrillItem(BaseModel):
     target_code: ProsodyTargetCode
@@ -25,7 +19,6 @@ class ProsodyDrillItem(BaseModel):
     evidence_strength: EvidenceStrength = "well_supported_core"
     minimal_pair_or_prompt: str
     recheck_in_free_talk_weekly: bool = True
-
 
 class ProsodySessionBlock(BaseModel):
     user_id: int
@@ -38,14 +31,12 @@ class ProsodySessionBlock(BaseModel):
         "Goal: intelligibility and presence."
     )
 
-
 class HumorExercise(BaseModel):
     exercise_id: str
     mode: Literal["recognition", "production"]
     register_setting: str
     prompt_text: str
     explanation: str
-
 
 class AggregateGroupMilestone(BaseModel):
     milestone_name: str
@@ -54,7 +45,6 @@ class AggregateGroupMilestone(BaseModel):
     total_active_learners: int = 0
     collective_sessions_completed: int = 0
     collective_e3_targets_reached: int = 0
-
 
 class PilotMetricsSummary(BaseModel):
     user_id: int
