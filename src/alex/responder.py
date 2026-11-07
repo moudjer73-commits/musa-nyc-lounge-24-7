@@ -12,7 +12,9 @@ class AlexResponder:
         self.llm = llm
         self.guard = guard or QualityGuard()
 
-    def _build_system_prompt(self, scene: SceneConfig, force_statement: bool) -> str:
+    def _build_system_prompt(
+        self, scene: SceneConfig, force_statement: bool, recast_phrase: str | None = None
+    ) -> str:
         persona = (PROMPTS_DIR / "alex_persona.md").read_text(encoding="utf-8")
         scene_tpl = (PROMPTS_DIR / "register_scenes.md").read_text(encoding="utf-8")
         cadence_directive = (
@@ -30,7 +32,13 @@ class AlexResponder:
             topic=scene.topic,
             cadence_directive=cadence_directive,
         )
-        return f"{persona}\n\n{scene_block}"
+        prompt = f"{persona}\n\n{scene_block}"
+        if recast_phrase:
+            prompt += (
+                f"\n\nSILENT RECAST DIRECTIVE: Naturally weave the exact phrase \"{recast_phrase}\" "
+                "into your response without pointing out the learner's mistake or sounding pedantic."
+            )
+        return prompt
 
     def _sanitize_fallback(self, text: str, force_statement: bool) -> str:
         cleaned = text.strip()
@@ -53,13 +61,15 @@ class AlexResponder:
             cleaned = cleaned[:-1].rstrip() + "."
         return cleaned
 
-    async def reply(self, user_id: int, learner_text: str) -> tuple[str, SceneConfig, QualityAuditResult]:
+    async def reply(
+        self, user_id: int, learner_text: str, recast_phrase: str | None = None
+    ) -> tuple[str, SceneConfig, QualityAuditResult]:
         scene = self.scene_repo.get_active_scene(user_id)
         self.scene_repo.log_turn(user_id, scene.room_id, "learner", learner_text)
 
         recent_alex = self.scene_repo.get_recent_turns(user_id, role="alex", limit=5)
         force_statement = bool(recent_alex and recent_alex[-1].strip().endswith("?"))
-        sys_prompt = self._build_system_prompt(scene, force_statement=force_statement)
+        sys_prompt = self._build_system_prompt(scene, force_statement=force_statement, recast_phrase=recast_phrase)
 
         draft = await self.llm.generate_text(
             user_id=user_id,
