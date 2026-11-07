@@ -64,7 +64,10 @@ def restore_encrypted_snapshot(
         return False
     salt, token = payload[:16], payload[16:]
     fernet = Fernet(_derive_fernet_key(passphrase, salt))
-    decrypted = fernet.decrypt(token)
+    try:
+        decrypted = fernet.decrypt(token)
+    except Exception:
+        return False
     db_path.parent.mkdir(parents=True, exist_ok=True)
     db_path.write_bytes(decrypted)
     return True
