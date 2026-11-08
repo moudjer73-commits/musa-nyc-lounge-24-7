@@ -188,3 +188,62 @@ async def test_podcast_audio_real_speech_or_none(tmp_path: Path):
     bad_ep = SimpleNamespace(audio_path=str(tmp_path / "ep2.mp3"), episode_id="ep2",
                              script=SimpleNamespace(turns=[]), voice_settings={})
     assert await ensure_episode_audio(SimpleNamespace(tts=_TTS(".wav")), bad_ep) is None  # beep fallback never sent
+
+
+async def test_gemini_four_keys_one_old_project_still_serves_legacy_model(tmp_path):
+    def behaviour_new_user(model):
+        raise RuntimeError("404 NOT_FOUND This model is no longer available to new users")
+
+    def behaviour_old_project(model):
+        if model.startswith("gemini-2.5"):
+            return _Resp("works")
+        raise RuntimeError("404 NOT_FOUND")
+
+    svc = _svc(tmp_path, [behaviour_new_user] * 3 + [behaviour_old_project])
+    assert await svc.generate_text(1, "sys", "prompt") == "works"
+    # known-dead pairs are skipped on the next call instead of being retried
+    before = sum(len(c.models.calls) for c in svc.clients)
+    assert await svc.generate_text(1, "sys", "prompt") == "works"
+    assert sum(len(c.models.calls) for c in svc.clients) - before == 1
+
+
+def test_default_model_chain_starts_with_current_models(monkeypatch):
+    monkeypatch.delenv("GEMINI_MODEL_CHAIN", raising=False)
+    from src.config import gemini_model_chain
+
+    chain = gemini_model_chain()
+    assert chain[:2] == ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+
+
+def test_profile_sync_sets_commands_first_and_survives_timeouts(monkeypatch):
+    from src.bot import telegram_setup
+
+    calls = []
+
+    def fake_post(url, json=None, timeout=None):
+        method = url.rsplit("/", 1)[1]
+        calls.append(method)
+        if method == "setMyName":
+            raise TimeoutError("ReadTimeout")
+        return SimpleNamespace(json=lambda: {"ok": True})
+
+    monkeypatch.setattr(telegram_setup.requests, "post", fake_post)
+    results = telegram_setup.sync_telegram_bot_profile("123:abc")
+    assert calls.index("setMyCommands") < calls.index("setMyName")
+    assert "setMyDescription" in calls and results["cmd_default_def"] is True
+
+
+async def test_start_clears_chat_scope_commands_once(monkeypatch):
+    from src.bot import telegram_setup
+
+    deleted = []
+
+    class Bot:
+        async def delete_my_commands(self, scope=None, language_code=None):
+            deleted.append(language_code)
+
+    telegram_setup._CLEARED_CHATS.clear()
+    await telegram_setup.clear_stale_chat_commands(Bot(), 42)
+    first = len(deleted)
+    await telegram_setup.clear_stale_chat_commands(Bot(), 42)
+    assert first >= 1 and len(deleted) == first

@@ -14,8 +14,8 @@ DB_PATH = Path(os.getenv("SEL_DB_PATH", str(DATA_DIR / "spoken_english_lab.db"))
 SNAPSHOT_PATH = Path(os.getenv("SEL_SNAPSHOT_PATH", str(DATA_DIR / "state_snapshot.enc")))
 SNAPSHOT_PASSPHRASE = os.getenv("SNAPSHOT_PASSPHRASE", "")
 
-PRIMARY_GEMINI_MODEL = os.getenv("GEMINI_PRIMARY_MODEL", "gemini-2.5-flash")
-FALLBACK_GEMINI_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+PRIMARY_GEMINI_MODEL = os.getenv("GEMINI_PRIMARY_MODEL", "gemini-3.8-flash")
+FALLBACK_GEMINI_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 DEFAULT_DAILY_USER_LLM_BUDGET = int(os.getenv("DAILY_USER_LLM_BUDGET", "80"))
 
 RECALIBRATION_INTERVAL_DAYS = 28
@@ -83,7 +83,8 @@ def gemini_model_chain() -> list[str]:
     raw = os.getenv("GEMINI_MODEL_CHAIN", "")
     names = [p.strip() for p in raw.split(",") if p.strip()]
     if not names:
-        names = [PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL]
+        # Legacy 2.5 models stay as a last resort: Google still serves them to older API projects.
+        names = [PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL, "gemini-2.5-flash", "gemini-2.5-flash-lite"]
     chain: list[str] = []
     for n in names:
         if n not in chain:

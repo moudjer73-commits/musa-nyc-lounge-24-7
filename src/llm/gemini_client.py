@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Any, Type, TypeVar
 
 from google import genai
@@ -12,7 +13,8 @@ from src.db.profile_repo import ProfileRepository
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
-MAX_ATTEMPTS_PER_CALL = 6  # hard cap on (key, model) tries so a user never waits minutes
+MAX_ATTEMPTS_PER_CALL = 6  # minimum cap; raised automatically to len(keys) x len(models)
+DEAD_PAIR_TTL_S = 1800  # a (key, model) pair that answered 404 is skipped for 30 minutes
 
 
 class QuotaExceededError(RuntimeError):
@@ -51,6 +53,7 @@ class GeminiService:
         keys = [api_key] if api_key else resolve_gemini_keys()
         self.clients = [genai.Client(api_key=k) for k in keys if k]
         self.client = self.clients[0] if self.clients else None  # backwards-compatible alias
+        self._dead_pairs: dict[tuple[int, str], float] = {}
         self._cursor = 0  # round-robin start so friends' traffic spreads over all keys
 
     @property
@@ -64,15 +67,18 @@ class GeminiService:
         models = gemini_model_chain()
         start = self._cursor % len(self.clients)
         self._cursor += 1
-        dead_models: set[str] = set()
         dead_keys: set[int] = set()
         attempts = 0
+        max_attempts = max(MAX_ATTEMPTS_PER_CALL, len(self.clients) * len(models))
+        now = time.monotonic()
         last_reason = ""
 
         for model_name in models:
             for offset in range(len(self.clients)):
                 idx = (start + offset) % len(self.clients)
-                if idx in dead_keys or model_name in dead_models or attempts >= MAX_ATTEMPTS_PER_CALL:
+                if idx in dead_keys or attempts >= max_attempts:
+                    continue
+                if now - self._dead_pairs.get((idx, model_name), -DEAD_PAIR_TTL_S) < DEAD_PAIR_TTL_S:
                     continue
                 attempts += 1
                 try:
@@ -90,7 +96,8 @@ class GeminiService:
                     last_reason = f"{kind}: {exc}"
                     logger.warning("Gemini %s failure on %s (key #%d): %s", kind, model_name, idx, exc)
                     if kind == "model":
-                        dead_models.add(model_name)
+                        # "no longer available to new users" can differ per key/project, so only this pair is blocked
+                        self._dead_pairs[(idx, model_name)] = time.monotonic()
                     elif kind == "auth":
                         dead_keys.add(idx)
                     elif kind in ("transient", "other"):

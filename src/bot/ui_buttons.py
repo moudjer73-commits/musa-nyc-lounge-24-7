@@ -1,4 +1,5 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
+from src.bot.telegram_setup import clear_stale_chat_commands
 from telegram.ext import Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes
 
 ROOM_CHOICES: list[tuple[str, str]] = [
@@ -146,6 +147,8 @@ def register_interactive_ui(app: Application, container) -> None:
     async def start_ui_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
             return
+        if update.effective_chat:
+            await clear_stale_chat_commands(context.bot, update.effective_chat.id)
         p = container.profile_repo.get_or_create_profile(update.effective_user.id)
         mode = "Active Practice" if p.onboarding_completed else f"Onboarding Session {p.onboarding_session}/3"
         await update.message.reply_text(

@@ -1,4 +1,5 @@
-import os, requests
+import logging
+import requests
 from src.config import resolve_telegram_token
 
 BOT_NAME = "Spoken English Lab"
@@ -35,33 +36,62 @@ COMMANDS = [
     {"command": "delete_everything", "description": "Permanently clear your history and profile"},
 ]
 
+logger = logging.getLogger(__name__)
+
+# Languages whose command list must be overwritten too (Telegram shows the list of the user's app language first).
+COMMAND_LANGS = ("", "en", "ar", "fr", "es", "de", "tr")
+COMMAND_SCOPES = ({"type": "default"}, {"type": "all_private_chats"}, {"type": "all_group_chats"})
+_CLEARED_CHATS: set[int] = set()
+
+
+def _post(base_url: str, method: str, payload: dict, timeout: int = 20) -> bool:
+    """One isolated Bot API call with a single retry; never raises."""
+    for attempt in (1, 2):
+        try:
+            r = requests.post(f"{base_url}/{method}", json=payload, timeout=timeout)
+            return bool(r.json().get("ok"))
+        except Exception as exc:  # noqa: BLE001 - timeouts must not abort the rest of the sync
+            logger.warning("Telegram %s failed (attempt %d): %s", method, attempt, exc)
+    return False
+
+
 def sync_telegram_bot_profile(token: str | None = None) -> dict[str, bool]:
     resolved = (token or resolve_telegram_token()).strip()
     if not resolved:
         raise RuntimeError("Telegram token is required.")
     base_url = f"https://api.telegram.org/bot{resolved}"
-    results = {}
+    results: dict[str, bool] = {}
 
+    # 1) Commands first: this is what users see in the Menu button, so it must not be blocked by slower calls.
+    for scope in COMMAND_SCOPES:
+        for lang in COMMAND_LANGS:
+            payload = {"commands": COMMANDS, "scope": scope, **({"language_code": lang} if lang else {})}
+            results[f"cmd_{scope['type']}_{lang or 'def'}"] = _post(base_url, "setMyCommands", payload)
+    results["menu_button"] = _post(base_url, "setChatMenuButton", {"menu_button": {"type": "commands"}})
+
+    # 2) Cosmetic profile texts last, each call isolated.
     for lang in ("", "en", "ar"):
         lang_payload = {"language_code": lang} if lang else {}
-        requests.post(f"{base_url}/setMyName", json={"name": BOT_NAME, **lang_payload}, timeout=10)
-        requests.post(f"{base_url}/setMyShortDescription", json={"short_description": SHORT_DESCRIPTION, **lang_payload}, timeout=10)
-        r = requests.post(f"{base_url}/setMyDescription", json={"description": FULL_DESCRIPTION, **lang_payload}, timeout=10)
-        results[f"desc_{lang or 'default'}"] = bool(r.json().get("ok"))
-
-    scopes = [
-        {"type": "default"},
-        {"type": "all_private_chats"},
-        {"type": "all_group_chats"},
-    ]
-    for scope in scopes:
-        for lang in ("", "en", "ar"):
-            del_payload = {"scope": scope, **({"language_code": lang} if lang else {})}
-            requests.post(f"{base_url}/deleteMyCommands", json=del_payload, timeout=10)
-            set_payload = {"commands": COMMANDS, "scope": scope, **({"language_code": lang} if lang else {})}
-            rc = requests.post(f"{base_url}/setMyCommands", json=set_payload, timeout=10)
-            results[f"cmd_{scope['type']}_{lang or 'def'}"] = bool(rc.json().get("ok"))
-
-    rm = requests.post(f"{base_url}/setChatMenuButton", json={"menu_button": {"type": "commands"}}, timeout=10)
-    results["menu_button"] = bool(rm.json().get("ok"))
+        _post(base_url, "setMyName", {"name": BOT_NAME, **lang_payload})
+        _post(base_url, "setMyShortDescription", {"short_description": SHORT_DESCRIPTION, **lang_payload})
+        results[f"desc_{lang or 'default'}"] = _post(base_url, "setMyDescription", {"description": FULL_DESCRIPTION, **lang_payload})
     return results
+
+
+async def clear_stale_chat_commands(bot, chat_id: int) -> None:
+    """Remove old per-chat command lists (BotCommandScopeChat) so the current default list shows in this chat.
+
+    Runs at most once per chat per process; every call is isolated and failures are only logged.
+    """
+    if chat_id in _CLEARED_CHATS:
+        return
+    _CLEARED_CHATS.add(chat_id)
+    try:
+        from telegram import BotCommandScopeChat
+    except ImportError:
+        return
+    for lang in COMMAND_LANGS:
+        try:
+            await bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=chat_id), language_code=lang or None)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Clearing chat-scope commands failed (lang=%r): %s", lang, exc)
