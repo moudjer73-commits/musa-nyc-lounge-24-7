@@ -78,6 +78,7 @@ class LearnerProfile(BaseModel):
     completed_sessions_count: int = 0
     last_calibrated_at: Optional[str] = None
     retain_raw_audio: bool = False
+    voice_replies: bool = True  # Alex answers with a voice note after each reply (toggle: /voice)
     mvp_dimensions: MVPProfileDimensions = Field(default_factory=MVPProfileDimensions)
     full_dimensions: FullProfileDimensions = Field(default_factory=FullProfileDimensions)
 

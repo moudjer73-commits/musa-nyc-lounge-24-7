@@ -1,6 +1,9 @@
-from src.bot.ui_buttons import register_interactive_ui
+import logging
 from pathlib import Path
-from telegram.ext import Application
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from src.bot.ui_buttons import register_interactive_ui
 from src.alex.responder import AlexResponder
 from src.analyst.engine import AnalystEngine
 from src.bot.alex_handlers import register_alex_handlers
@@ -20,7 +23,7 @@ from src.db.profile_repo import ProfileRepository
 from src.db.scene_repo import SceneRepository
 from src.interaction.track import InteractionTrackEngine
 from src.listening.ladder import ListeningLadderEngine
-from src.llm.gemini_client import GeminiService
+from src.llm.gemini_client import GeminiService, LLMUnavailableError, QuotaExceededError
 from src.onboarding.diagnosis import OnboardingDiagnosisEngine
 from src.phase3.engine import Phase3Engine
 from src.podcast.pipeline import PodcastPipeline
@@ -31,6 +34,13 @@ from src.register.engine import RegisterEngine
 from src.session.daily_manager import DailySessionManager
 from src.session.reentry import ReEntrySessionManager
 from src.tracking.progress import ProgressTracker
+from src.bot.onboarding_handlers import format_profile_summary, route_learner_turn
+from src.bot.voice_io import send_alex_voice
+
+logger = logging.getLogger(__name__)
+
+GENERIC_ERROR = "Something went wrong on my side — please send that again in a moment."
+VOICE_FALLBACK = "I couldn't process that voice note right now — please send that turn as text so we keep going."
 
 
 class LabContainer:
@@ -86,24 +96,62 @@ class LabContainer:
         return self.profile_repo.delete_user_data(user_id)
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global safety net: any handler that raises still gives the learner a visible answer."""
+    err = context.error
+    logger.error("Unhandled error while processing update", exc_info=err)
+    if not isinstance(update, Update):
+        return
+    msg = update.effective_message
+    if not msg:
+        return
+    text = str(err) if isinstance(err, (QuotaExceededError, LLMUnavailableError)) else GENERIC_ERROR
+    try:
+        await msg.reply_text(text)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not deliver error notice to the learner")
+
+
 def register_all_modules(app: Application, container: LabContainer) -> None:
     """Single clean registration call wiring all 8 sprints into Telegram Application."""
     register_alex_handlers(app, container.scene_repo, container.responder, container.reg_engine, container.guard)
     register_analyst_handlers(app, container.profile_repo, container.analyst)
     register_session_handlers(app, container.chunk_repo, container.chunk_bank, container.session_mgr)
     register_pressure_and_tracking_handlers(app, container.profile_repo, container.pressure_engine, container.tracker)
-    register_podcast_handlers(app, container.podcast_repo, container.podcast_pipeline, container.listening_ladder)
+    register_podcast_handlers(
+        app, container.podcast_repo, container.podcast_pipeline, container.listening_ladder, profile_repo=container.profile_repo
+    )
     register_interaction_and_reentry_handlers(app, container.interaction_engine, container.reentry_mgr)
     register_phase3_handlers(app, container.profile_repo, container.prosody_lab, container.phase3_engine)
     register_interactive_ui(app, container)
     register_core_turn_and_privacy_handlers(app, container)
+    app.add_error_handler(on_error)
+
+
+PRIVACY_TEXT = (
+    "🔒 Your privacy in Spoken English Lab\n"
+    "• Stored: your learning profile, practice history, expression progress and ratings — tied only to your Telegram ID.\n"
+    "• Voice notes are processed in memory and are not kept; Alex's voice replies are generated on the fly.\n"
+    "• Your text/voice is sent to Google's Gemini API to generate replies and analysis.\n"
+    "• Nobody in the group can see your records; there is no leaderboard.\n"
+    "• You can erase everything at any time with /delete_everything (asks for confirmation)."
+)
 
 
 def register_core_turn_and_privacy_handlers(app: Application, container: LabContainer) -> None:
-    from telegram import Update
-    from telegram.ext import CommandHandler, ContextTypes, MessageHandler, filters
-    from src.bot.onboarding_handlers import format_profile_summary, route_learner_turn
-    from src.llm.gemini_client import QuotaExceededError
+    async def _typing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if update.effective_chat:
+                await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _deliver(update: Update, uid: int, replies: list[str]) -> None:
+        for r in replies:
+            await update.message.reply_text(r)
+        profile = container.profile_repo.get_or_create_profile(uid)
+        if profile.voice_replies and replies:
+            await send_alex_voice(update.message, replies[0])
 
     async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
@@ -120,43 +168,102 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
         p = container.profile_repo.get_or_create_profile(update.effective_user.id)
         await update.message.reply_text(format_profile_summary(p))
 
-    async def delete_data_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def voice_toggle_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
             return
-        deleted = container.purge_all_user_data(update.effective_user.id)
-        msg = "All your records across all tables have been permanently wiped." if deleted else "No stored data found."
-        await update.message.reply_text(msg)
+        p = container.profile_repo.get_or_create_profile(update.effective_user.id)
+        arg = (context.args[0].lower() if context.args else "")
+        p.voice_replies = (arg == "on") if arg in ("on", "off") else (not p.voice_replies)
+        container.profile_repo.save_profile(p)
+        await update.message.reply_text(
+            "🔊 Alex will now answer with voice notes." if p.voice_replies
+            else "🔇 Voice replies are off. Alex will reply with text only (use /voice to turn them back on)."
+        )
+
+    async def privacy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.message:
+            return
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Delete everything", callback_data="priv:ask")]])
+        await update.message.reply_text(PRIVACY_TEXT, reply_markup=kb)
+
+    async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.message:
+            return
+        await _ask_delete_confirmation(update.message)
+
+    async def _ask_delete_confirmation(message) -> None:
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Yes, erase everything", callback_data="priv:confirm"),
+            InlineKeyboardButton("↩️ Cancel", callback_data="priv:cancel"),
+        ]])
+        await message.reply_text(
+            "This permanently deletes your profile, history, progress and ratings. It cannot be undone. Are you sure?",
+            reply_markup=kb,
+        )
+
+    async def privacy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not query or not query.data or not update.effective_user:
+            return
+        await query.answer()
+        action = query.data.split(":", 1)[1] if ":" in query.data else ""
+        if action == "ask":
+            await _ask_delete_confirmation(query.message)
+        elif action == "confirm":
+            deleted = container.purge_all_user_data(update.effective_user.id)
+            await query.message.reply_text(
+                "All your records have been permanently erased." if deleted else "No stored data was found for you."
+            )
+        else:
+            await query.message.reply_text("Cancelled — nothing was deleted.")
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.text:
             return
+        uid = update.effective_user.id
+        await _typing(update, context)
         try:
-            replies = await route_learner_turn(container, update.effective_user.id, update.message.text)
-            for r in replies:
-                await update.message.reply_text(r)
-        except QuotaExceededError as exc:
+            replies = await route_learner_turn(container, uid, update.message.text)
+            await _deliver(update, uid, replies)
+        except (QuotaExceededError, LLMUnavailableError) as exc:
             await update.message.reply_text(str(exc))
+        except Exception:  # noqa: BLE001 - never leave the learner without an answer
+            logger.exception("Text turn failed for user %s", uid)
+            await update.message.reply_text(GENERIC_ERROR)
 
     async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.voice:
             return
         uid = update.effective_user.id
+        await _typing(update, context)
         try:
             tg_file = await update.message.voice.get_file()
-            raw_bytes = bytes(await tg_file.download_as_bytearray())  # Memory-only: never saved to disk
-            transcript = await container.llm.transcribe_voice(uid, raw_bytes)
-            replies = await route_learner_turn(container, uid, transcript)
-            for r in replies:
-                await update.message.reply_text(r)
+            raw_bytes = bytes(await tg_file.download_as_bytearray())  # memory-only: never saved to disk
+            transcript = await container.llm.transcribe_voice(
+                uid, raw_bytes, update.message.voice.mime_type or "audio/ogg"
+            )
         except QuotaExceededError as exc:
             await update.message.reply_text(str(exc))
-        except Exception:
-            await update.message.reply_text(
-                "Voice processing hit a temporary limit—please send that turn as text so we keep the conversation going."
-            )
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception("Voice transcription failed for user %s", uid)
+            await update.message.reply_text(VOICE_FALLBACK)
+            return
+        try:
+            await update.message.reply_text(f"🎙️ You said: {transcript}")
+            replies = await route_learner_turn(container, uid, transcript)
+            await _deliver(update, uid, replies)
+        except (QuotaExceededError, LLMUnavailableError) as exc:
+            await update.message.reply_text(str(exc))
+        except Exception:  # noqa: BLE001
+            logger.exception("Voice turn failed for user %s", uid)
+            await update.message.reply_text(GENERIC_ERROR)
 
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("profile", profile_cmd))
-    app.add_handler(CommandHandler("delete_my_data", delete_data_cmd))
+    app.add_handler(CommandHandler("voice", voice_toggle_cmd))
+    app.add_handler(CommandHandler("privacy", privacy_cmd))
+    app.add_handler(CommandHandler(["delete_my_data", "delete_everything"], delete_cmd))
+    app.add_handler(CallbackQueryHandler(privacy_callback, pattern=r"^priv:"))
     app.add_handler(MessageHandler(filters.VOICE, voice_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))

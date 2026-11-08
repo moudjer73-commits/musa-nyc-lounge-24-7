@@ -135,6 +135,9 @@ def register_interactive_ui(app: Application, container) -> None:
     async def run_delegated(cmd_name: str, update: Update, context: ContextTypes.DEFAULT_TYPE, markup=None) -> bool:
         cb = _find_command_callback(app, cmd_name)
         if not cb:
+            target = update.effective_message
+            if target:
+                await target.reply_text(f"Sorry, /{cmd_name} isn't available right now.")
             return False
         proxy = _UpdateProxy(update, default_markup=markup)
         await cb(proxy, context)
@@ -195,6 +198,8 @@ def register_interactive_ui(app: Application, container) -> None:
             return
         await query.answer()
         parts = query.data.split(":")
+        if len(parts) < 3:
+            return
 
         if parts[1] == "menu" and parts[2] == "room":
             await query.message.reply_text("Choose a conversation room:", reply_markup=rooms_keyboard())

@@ -75,3 +75,17 @@ def resolve_gemini_keys() -> list[str]:
             if clean and clean not in keys:
                 keys.append(clean)
     return keys
+
+
+def gemini_model_chain() -> list[str]:
+    """Ordered model fallback chain. Override with GEMINI_MODEL_CHAIN="m1,m2,m3" (no code change needed
+    when Google retires a model)."""
+    raw = os.getenv("GEMINI_MODEL_CHAIN", "")
+    names = [p.strip() for p in raw.split(",") if p.strip()]
+    if not names:
+        names = [PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL]
+    chain: list[str] = []
+    for n in names:
+        if n not in chain:
+            chain.append(n)
+    return chain

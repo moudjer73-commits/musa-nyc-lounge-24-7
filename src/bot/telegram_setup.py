@@ -30,7 +30,9 @@ COMMANDS = [
     {"command": "summary", "description": "See your top takeaways from today"},
     {"command": "hint", "description": "Get a clue when looking for a word"},
     {"command": "reentry", "description": "Warm-up session after taking a break"},
-    {"command": "delete_my_data", "description": "Permanently clear your history and profile"},
+    {"command": "voice", "description": "Turn Alex's voice replies on or off"},
+    {"command": "privacy", "description": "What is stored, and how to erase it"},
+    {"command": "delete_everything", "description": "Permanently clear your history and profile"},
 ]
 
 def sync_telegram_bot_profile(token: str | None = None) -> dict[str, bool]:

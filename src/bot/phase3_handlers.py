@@ -74,7 +74,10 @@ def register_phase3_handlers(
             return
         uid = update.effective_user.id
         args = context.args or []
-        rating = int(args[0]) if (args and args[0].isdigit()) else 5
+        if not (args and args[0].isdigit() and 1 <= int(args[0]) <= 5):
+            await update.message.reply_text("Please rate from 1 to 5, e.g. /rate_correction 4")
+            return
+        rating = int(args[0])
         phase3_engine.record_correction_rating(uid, rating)
         metrics = phase3_engine.get_pilot_metrics(uid)
         await update.message.reply_text(
