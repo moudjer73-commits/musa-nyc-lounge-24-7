@@ -10,6 +10,15 @@ DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "naturalness
 
 ROOM_TO_PROFILE: dict[str, str] = {
     "casual_friends": "friend_text",
+    "friend_text": "friend_text",
+    "friend_voice": "friend_voice",
+    "work_peer": "work_peer",
+    "work_up": "work_up",
+    "academic_seminar": "academic_seminar",
+    "office_hours": "office_hours",
+    "service_counter": "service_counter",
+    "phone_call": "phone_call",
+    "conference_networking": "conference_networking",
     "casual_roommate": "friend_text",
     "social_networking": "conference_networking",
     "pro_peer_brainstorm": "work_peer",
