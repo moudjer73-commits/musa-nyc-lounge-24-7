@@ -1,46 +1,37 @@
+import json
+import logging
 import random
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes
 from src.bot.telegram_setup import clear_stale_chat_commands
-from src.models.register_scene import SceneConfig
 from src.naturalness import LearnerLabTools
 
-# المواقف الـ 9 الجديدة من منظومة العفوية (مع إبقاء 7 في ROOM_CHOICES لتوافق الاختبارات وإضافة البقية في اللوحة)
+logger = logging.getLogger(__name__)
+
+# المواقف الأساسية + الإضافية (مرتبة في 7 صفوف داخل rooms_keyboard لتوافق الاختبارات)
 ROOM_CHOICES: list[tuple[str, str]] = [
-    ("friend_text", "💬 Close Friend — Texting (Sam)"),
-    ("friend_voice", "🎙️ Close Friend — Voice Catch-Up (Sam)"),
-    ("work_peer", "💻 Work — Peer / Standup (Sam)"),
-    ("work_up", "👔 Work — Manager / Client (Dana)"),
-    ("academic_seminar", "🎓 Academic — Seminar Debate (Prof. Ruiz)"),
-    ("office_hours", "📚 Academic — Advisor Office Hours (Prof. Ruiz)"),
-    ("conference_networking", "🤝 Conference — Coffee Break (Prof. Ruiz)"),
+    ("casual_friends", "💬 Close Friend — Texting (Sam)"),
+    ("casual_roommate", "🎙️ Close Friend — Voice Catch-Up (Sam)"),
+    ("pro_peer_brainstorm", "💻 Work — Peer / Standup (Sam)"),
+    ("pro_executive", "👔 Work — Manager / Client (Dana)"),
+    ("intellectual_seminar", "🎓 Academic — Seminar Debate (Prof. Ruiz)"),
+    ("intellectual_professor", "📚 Office Hours (Prof. Ruiz)"),
+    ("social_networking", "🤝 Conference Mixer (Prof. Ruiz)"),
 ]
 
-EXTRA_ROOMS: list[tuple[str, str]] = [
-    ("service_counter", "☕ Everyday — Coffee Shop / Service (Barista)"),
-    ("phone_call", "📞 Everyday — Quick Phone Call (Marcus)"),
-]
-
-SCENE_PRESETS: dict[str, dict[str, str]] = {
-    "friend_text": {"setting": "casual", "relationship": "close", "function": "social_chat", "directness": "direct", "flavor": "warm_casual", "topic": "everyday life and quick plans"},
-    "friend_voice": {"setting": "casual", "relationship": "close", "function": "storytelling", "directness": "direct", "flavor": "warm_spoken", "topic": "catching up on the week"},
-    "work_peer": {"setting": "professional", "relationship": "equal", "function": "problem_solving", "directness": "balanced", "flavor": "collaborative", "topic": "project blockers and deadlines"},
-    "work_up": {"setting": "professional", "relationship": "hierarchical", "function": "status_update", "directness": "diplomatic", "flavor": "concise_executive", "topic": "Q3 rollout trade-offs"},
-    "academic_seminar": {"setting": "intellectual", "relationship": "equal", "function": "debate_pushback", "directness": "hedged", "flavor": "analytical", "topic": "smart participatory local governance"},
-    "office_hours": {"setting": "intellectual", "relationship": "hierarchical", "function": "scoping_advice", "directness": "diplomatic", "flavor": "mentorship", "topic": "narrowing dissertation case studies"},
-    "conference_networking": {"setting": "social", "relationship": "distant", "function": "networking", "directness": "balanced", "flavor": "collegial", "topic": "comparative municipal research"},
-    "service_counter": {"setting": "casual", "relationship": "distant", "function": "transactional", "directness": "balanced", "flavor": "friendly_brief", "topic": "ordering coffee and quick small talk"},
-    "phone_call": {"setting": "professional", "relationship": "equal", "function": "scheduling", "directness": "direct", "flavor": "phone_natural", "topic": "confirming tomorrow's schedule"},
+BASE_ROOM_FALLBACK: dict[str, str] = {
+    "service_counter": "casual_friends",
+    "phone_call": "pro_peer_brainstorm",
 }
 
 OPENING_LINES: dict[str, list[str]] = {
-    "friend_text": ["yo, how's your week going so far?", "hey! survived today or still recovering?"],
-    "friend_voice": ["Hey! Feels like it's been a minute—how've you been holding up this week?"],
-    "work_peer": ["Hey, got two minutes before standup? Wanted to sanity-check the timeline with you."],
-    "work_up": ["Hi—thanks for jumping on. Where do we stand on the rollout for Friday?"],
-    "academic_seminar": ["I'm glad you brought up municipal participation earlier—how do you see that working when local budgets are tight?"],
-    "office_hours": ["Come on in! So tell me, how's the comparative chapter shaping up this week?"],
-    "conference_networking": ["Great panel earlier—what part of the local governance puzzle are you working on right now?"],
+    "casual_friends": ["yo, how's your week going so far?", "hey! survived today or still recovering?"],
+    "casual_roommate": ["Hey! Feels like it's been a minute—how've you been holding up this week?"],
+    "pro_peer_brainstorm": ["Hey, got two minutes before standup? Wanted to sanity-check the timeline with you."],
+    "pro_executive": ["Hi—thanks for jumping on. Where do we stand on the rollout for Friday?"],
+    "intellectual_seminar": ["I'm glad you brought up municipal participation earlier—how do you see that working when local budgets are tight?"],
+    "intellectual_professor": ["Come on in! So tell me, how's the comparative chapter shaping up this week?"],
+    "social_networking": ["Great panel earlier—what part of the local governance puzzle are you working on right now?"],
     "service_counter": ["Hey there! What can I get started for you today?"],
     "phone_call": ["Hey, it's Marcus—glad I caught you. Got a quick second?"],
 }
@@ -78,7 +69,7 @@ class _UpdateProxy:
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
-    """100% New Naturalness System Dashboard (5 clean rows, zero legacy Sprint 1-8 textbook dumps)."""
+    """5-row Naturalness Lab Dashboard (zero legacy Sprint 1-8 textbook dumps)."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🎭 Situation & Partner", callback_data="ui:menu:room"),
@@ -136,8 +127,8 @@ def rooms_keyboard() -> InlineKeyboardMarkup:
         for room_id, label in ROOM_CHOICES[:5]
     ]
     rows.append([
-        InlineKeyboardButton("📚 Office Hours (Prof. Ruiz)", callback_data="ui:setroom:office_hours"),
-        InlineKeyboardButton("🤝 Conference (Prof. Ruiz)", callback_data="ui:setroom:conference_networking"),
+        InlineKeyboardButton("📚 Office Hours (Prof. Ruiz)", callback_data="ui:setroom:intellectual_professor"),
+        InlineKeyboardButton("🤝 Conference (Prof. Ruiz)", callback_data="ui:setroom:social_networking"),
     ])
     rows.append([
         InlineKeyboardButton("☕ Coffee Shop (Barista)", callback_data="ui:setroom:service_counter"),
@@ -162,6 +153,30 @@ def pressure_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("🎲 Roll Topic 🔄", callback_data="ui:menu:topic")]])
 
 
+def remind_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🕗 08:00", callback_data="ui:cmd:remind:08:00"),
+        InlineKeyboardButton("🕑 14:00", callback_data="ui:cmd:remind:14:00"),
+        InlineKeyboardButton("🕖 19:00", callback_data="ui:cmd:remind:19:00"),
+        InlineKeyboardButton("🕘 21:00", callback_data="ui:cmd:remind:21:00"),
+    ]])
+
+
+def hint_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("💡 push back", callback_data="ui:cmd:hint:push_back"),
+        InlineKeyboardButton("💡 elaborate", callback_data="ui:cmd:hint:elaborate"),
+        InlineKeyboardButton("💡 compromise", callback_data="ui:cmd:hint:compromise"),
+    ]])
+
+
+def rating_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"{i} ⭐", callback_data=f"ui:cmd:rate_correction:{i}")
+        for i in range(1, 6)
+    ]])
+
+
 def _dashboard_card_text(container, uid: int) -> str:
     p = container.profile_repo.get_or_create_profile(uid)
     if not p.onboarding_completed and getattr(container.llm, "configured", False):
@@ -169,13 +184,17 @@ def _dashboard_card_text(container, uid: int) -> str:
         container.profile_repo.save_profile(p)
     scene = container.scene_repo.get_active_scene(uid)
     bundle = container.responder.nat_router.route(user_id=uid, turn_no=1, user_text="", room=scene.room_id)
+    cast_name = getattr(bundle, "cast_name", "Sam")
+    cast_dict = getattr(bundle, "cast", {}) or {}
+    role_label = cast_dict.get("role", "Conversation Partner") if isinstance(cast_dict, dict) else "Conversation Partner"
+    sit_name = getattr(bundle, "situation_name", scene.room_id)
     voice_state = "ON 🔊" if p.voice_replies else "OFF 🔇 (Fast Text)"
     return (
         f"🎙️ Spoken English Lab — Natural Conversation\n"
-        f"• Partner: {bundle.cast_name} ({bundle.cast.get('role', 'Partner')})\n"
-        f"• Situation: {bundle.profile_id} ({bundle.profile.get('tenor', 'casual')} | {bundle.profile.get('mode', 'spoken')})\n"
+        f"• Partner: {cast_name} ({role_label})\n"
+        f"• Situation: {sit_name} ({scene.setting} | {scene.relationship})\n"
         f"• Voice Replies: {voice_state}\n\n"
-        f"Just type or send a voice note below to talk with {bundle.cast_name}, or pick a tool:"
+        f"Send a voice note or text message anytime to talk with {cast_name}, or pick a tool below:"
     )
 
 
@@ -185,7 +204,10 @@ def register_interactive_ui(app: Application, container) -> None:
             return
         uid = update.effective_user.id
         if update.effective_chat:
-            await clear_stale_chat_commands(context.bot, update.effective_chat.id)
+            try:
+                await clear_stale_chat_commands(context.bot, update.effective_chat.id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("clear_stale_chat_commands warning: %s", exc)
         await update.message.reply_text(
             _dashboard_card_text(container, uid),
             reply_markup=main_menu_keyboard(),
@@ -194,7 +216,10 @@ def register_interactive_ui(app: Application, container) -> None:
 
     async def room_ui_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not context.args and update.message:
-            await update.message.reply_text("🎭 Choose a real-life situation & conversation partner:", reply_markup=rooms_keyboard())
+            await update.message.reply_text(
+                "🎭 Choose a real-life situation & conversation partner:",
+                reply_markup=rooms_keyboard(),
+            )
             raise ApplicationHandlerStop
 
     async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -206,26 +231,41 @@ def register_interactive_ui(app: Application, container) -> None:
         data = query.data
 
         if data == "ui:menu:room":
-            await query.message.reply_text("🎭 Choose a real-life situation & partner:", reply_markup=rooms_keyboard())
+            await query.message.reply_text(
+                "🎭 Choose a real-life situation & partner:",
+                reply_markup=rooms_keyboard(),
+            )
             return
 
-        if data.startswith("ui:setroom:"):
-            room_id = data.split("ui:setroom:", 1)[1]
-            preset = SCENE_PRESETS.get(room_id, SCENE_PRESETS["friend_text"])
-            scene = SceneConfig(room_id=room_id, **preset)
+        if data.startswith("ui:setroom:") or data.startswith("ui:cmd:room:"):
+            room_id = data.split(":")[-1]
+            base_id = BASE_ROOM_FALLBACK.get(room_id, room_id)
+            try:
+                scene = container.reg_engine.create_room_scene(room_id=base_id)
+                scene.room_id = room_id
+            except Exception:
+                scene = container.scene_repo.get_active_scene(uid)
+                scene.room_id = room_id
             container.scene_repo.save_active_scene(uid, scene)
             bundle = container.responder.nat_router.route(user_id=uid, turn_no=1, user_text="", room=room_id)
+            cast_name = getattr(bundle, "cast_name", "Sam")
+            cast_dict = getattr(bundle, "cast", {}) or {}
+            role_label = cast_dict.get("role", "Partner") if isinstance(cast_dict, dict) else "Partner"
+            sit_name = getattr(bundle, "situation_name", room_id)
             opener = random.choice(OPENING_LINES.get(room_id, ["Hey! How's it going?"]))
             container.scene_repo.log_turn(uid, room_id, "alex", opener)
             await query.message.reply_text(
-                f"✅ Situation: {room_id} with {bundle.cast_name} ({bundle.cast.get('role')})\n\n"
-                f"{bundle.cast_name}: {opener}",
+                f"✅ Situation: {sit_name} with {cast_name} ({role_label})\n\n"
+                f"{cast_name}: {opener}",
                 reply_markup=turn_action_keyboard(f"{uid}:opener"),
             )
             return
 
         if data == "ui:menu:flip":
-            await query.message.reply_text("🔄 Hear the last reply in which situation?", reply_markup=flip_choices_keyboard())
+            await query.message.reply_text(
+                "🔄 Hear the last reply in which situation?",
+                reply_markup=flip_choices_keyboard(),
+            )
             return
 
         if data.startswith("ui:flip:"):
@@ -259,10 +299,11 @@ def register_interactive_ui(app: Application, container) -> None:
         if data == "ui:menu:topic":
             scene = container.scene_repo.get_active_scene(uid)
             bundle = container.responder.nat_router.route(user_id=uid, turn_no=1, user_text="", room=scene.room_id)
+            cast_name = getattr(bundle, "cast_name", "Sam")
             topic_line = random.choice(SPONTANEOUS_TOPICS)
             container.scene_repo.log_turn(uid, scene.room_id, "alex", topic_line)
             await query.message.reply_text(
-                f"🎲 {bundle.cast_name}: {topic_line}",
+                f"🎲 {cast_name}: {topic_line}",
                 reply_markup=turn_action_keyboard(f"{uid}:topic"),
             )
             return
@@ -277,7 +318,6 @@ def register_interactive_ui(app: Application, container) -> None:
             nb_path = container.responder.nat_gauge.notebook_path
             entries = []
             if nb_path.exists():
-                import json
                 for line in nb_path.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         row = json.loads(line)
@@ -291,7 +331,7 @@ def register_interactive_ui(app: Application, container) -> None:
                     "and your partners will naturally weave it into future chats!"
                 )
             else:
-                items = "\n".join(f"• \"{p}\"" for p in entries[-10:])
+                items = "\n".join(f'• "{p}"' for p in entries[-10:])
                 await query.message.reply_text(f"👂 Your Real-Life Notebook (latest phrases):\n{items}")
             return
 
