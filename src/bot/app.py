@@ -147,11 +147,15 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
             pass
 
     async def _deliver(update: Update, uid: int, replies: list[str]) -> None:
-        for r in replies:
-            await update.message.reply_text(r)
+        from src.bot.ui_buttons import turn_action_keyboard
+        turn_no = container.responder._user_turn_counts.get(uid, 1)
+        for idx, r in enumerate(replies):
+            is_last = (idx == len(replies) - 1)
+            kb = turn_action_keyboard(f"{uid}:{turn_no}") if is_last else None
+            await update.message.reply_text(r, reply_markup=kb)
         profile = container.profile_repo.get_or_create_profile(uid)
         if profile.voice_replies and replies:
-            await send_alex_voice(update.message, replies[0])
+            await send_alex_voice(update.message, " ".join(replies))
 
     async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:

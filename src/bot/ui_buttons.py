@@ -3,13 +3,13 @@ from src.bot.telegram_setup import clear_stale_chat_commands
 from telegram.ext import Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes
 
 ROOM_CHOICES: list[tuple[str, str]] = [
-    ("casual_friends", "☕ Casual — Friends Catch-Up"),
-    ("casual_roommate", "🏠 Casual — Roommate Chat"),
-    ("social_networking", "🤝 Social — Networking Mixer"),
-    ("pro_peer_brainstorm", "💡 Work — Team Brainstorm"),
-    ("pro_executive", "💼 Work — Executive Briefing"),
-    ("intellectual_seminar", "🎓 Study — Seminar Debate"),
-    ("intellectual_professor", "📚 Study — Office Hours"),
+    ("casual_friends", "☕ Casual — Friends Catch-Up (Sam)"),
+    ("casual_roommate", "🏠 Casual — Evening Chat (Maya)"),
+    ("social_networking", "🤝 Conference — Networking Mixer (Prof. Ruiz)"),
+    ("pro_peer_brainstorm", "💡 Work — Team Brainstorm (Sam)"),
+    ("pro_executive", "💼 Work — Executive Briefing (Dana)"),
+    ("intellectual_seminar", "🎓 Study — Seminar Debate (Prof. Ruiz)"),
+    ("intellectual_professor", "📚 Study — Office Hours (Prof. Ruiz)"),
 ]
 
 
@@ -39,24 +39,46 @@ class _UpdateProxy:
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
+            InlineKeyboardButton("🚪 Scene & Partner", callback_data="ui:menu:room"),
+            InlineKeyboardButton("🔄 Flip Register", callback_data="ui:menu:flip"),
+        ],
+        [
             InlineKeyboardButton("🎙️ 10-Min Session", callback_data="ui:cmd:session"),
-            InlineKeyboardButton("🚪 Change Room", callback_data="ui:menu:room"),
-        ],
-        [
-            InlineKeyboardButton("🔄 Switch Tone", callback_data="ui:menu:switch"),
-            InlineKeyboardButton("🔄 Review Expressions", callback_data="ui:cmd:review"),
-        ],
-        [
-            InlineKeyboardButton("🎧 Dialogue Podcast", callback_data="ui:cmd:podcast"),
-            InlineKeyboardButton("📻 Real Podcasts", callback_data="ui:cmd:curated"),
+            InlineKeyboardButton("🎧 Daily Podcast", callback_data="ui:cmd:podcast"),
         ],
         [
             InlineKeyboardButton("🗣️ Prosody Lab", callback_data="ui:cmd:prosody"),
             InlineKeyboardButton("⏱️ 90s Challenge", callback_data="ui:cmd:pressure"),
         ],
         [
-            InlineKeyboardButton("📊 My Progress", callback_data="ui:cmd:progress"),
-            InlineKeyboardButton("👤 My Profile", callback_data="ui:cmd:profile"),
+            InlineKeyboardButton("🔄 Switch Tone", callback_data="ui:menu:switch"),
+            InlineKeyboardButton("📚 Expressions", callback_data="ui:cmd:review"),
+        ],
+        [
+            InlineKeyboardButton("🔊 Voice ON/OFF", callback_data="ui:cmd:voice"),
+            InlineKeyboardButton("📊 Stats & Profile", callback_data="ui:cmd:progress"),
+        ],
+    ])
+
+
+def turn_action_keyboard(msg_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Flip Register", callback_data="ui:menu:flip"),
+            InlineKeyboardButton("🎭 Feels Artificial", callback_data=f"nat:flag:{msg_id}"),
+        ]
+    ])
+
+
+def flip_choices_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("☕ Close Friend", callback_data="ui:flip:friend_text"),
+            InlineKeyboardButton("💼 Work Peer", callback_data="ui:flip:work_peer"),
+        ],
+        [
+            InlineKeyboardButton("👔 Boss / Client", callback_data="ui:flip:work_up"),
+            InlineKeyboardButton("🎓 Academic Seminar", callback_data="ui:flip:academic_seminar"),
         ],
     ])
 
