@@ -1,6 +1,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
-from src.bot.telegram_setup import clear_stale_chat_commands
 from telegram.ext import Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes
+from src.bot.telegram_setup import clear_stale_chat_commands
+from src.naturalness import LearnerLabTools
 
 ROOM_CHOICES: list[tuple[str, str]] = [
     ("casual_friends", "☕ Casual — Friends Catch-Up (Sam)"),
@@ -140,7 +141,8 @@ def hint_keyboard() -> InlineKeyboardMarkup:
 
 def rating_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"{i} ⭐", callback_data=f"ui:cmd:rate_correction:{i}") for i in range(1, 6)
+        InlineKeyboardButton(f"{i} ⭐", callback_data=f"ui:cmd:rate_correction:{i}")
+        for i in range(1, 6)
     ]])
 
 
@@ -169,18 +171,25 @@ def register_interactive_ui(app: Application, container) -> None:
     async def start_ui_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
             return
+        uid = update.effective_user.id
         if update.effective_chat:
             await clear_stale_chat_commands(context.bot, update.effective_chat.id)
-        p = container.profile_repo.get_or_create_profile(update.effective_user.id)
+        p = container.profile_repo.get_or_create_profile(uid)
         if not p.onboarding_completed and getattr(container.llm, "configured", False):
             p.onboarding_completed = True
             container.profile_repo.save_profile(p)
+        scene = container.scene_repo.get_active_scene(uid)
+        bundle = container.responder.nat_router.route(user_id=uid, turn_no=1, user_text="", room=scene.room_id)
         mode = "Active Practice" if p.onboarding_completed else f"Onboarding Session {p.onboarding_session}/3"
-        await update.message.reply_text(
-            f"Hey! I'm Alex ({mode}). Send a voice note or text message anytime, or use the quick menu below:",
-            reply_markup=ReplyKeyboardRemove(),
+        voice_state = "ON 🔊" if p.voice_replies else "OFF 🔇"
+        dashboard_text = (
+            f"🎙️ Spoken English Lab — {mode}\n"
+            f"• Partner: {bundle.cast_name} ({bundle.cast.get('role', 'Partner')})\n"
+            f"• Scene: {scene.room_id} ({scene.setting} | {scene.relationship})\n"
+            f"• Voice Replies: {voice_state}\n\n"
+            f"Send a voice note or text message anytime to talk naturally, or use the dashboard below:"
         )
-        await update.message.reply_text("Quick Actions:", reply_markup=main_menu_keyboard())
+        await update.message.reply_text(dashboard_text, reply_markup=main_menu_keyboard())
         raise ApplicationHandlerStop
 
     async def room_ui_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -225,17 +234,31 @@ def register_interactive_ui(app: Application, container) -> None:
         if not query or not query.data or not update.effective_user:
             return
         await query.answer()
+        uid = update.effective_user.id
         parts = query.data.split(":")
         if len(parts) < 3:
             return
-
         if parts[1] == "menu" and parts[2] == "room":
-            await query.message.reply_text("Choose a conversation room:", reply_markup=rooms_keyboard())
+            await query.message.reply_text("🚪 Choose a conversation scene & partner:", reply_markup=rooms_keyboard())
             return
         if parts[1] == "menu" and parts[2] == "switch":
-            await query.message.reply_text("Choose a tone and situation to switch into:", reply_markup=switch_keyboard())
+            await query.message.reply_text("🔄 Choose a tone and situation to switch into:", reply_markup=switch_keyboard())
             return
-
+        if parts[1] == "menu" and parts[2] == "flip":
+            await query.message.reply_text("🔄 Hear the last reply in which situation?", reply_markup=flip_choices_keyboard())
+            return
+        if parts[1] == "flip":
+            target_prof = parts[2]
+            recent = container.scene_repo.get_recent_turns(uid, role="alex", limit=1)
+            last_line = recent[-1] if recent else "Hey, I can't make it tonight, rain check?"
+            prompt = LearnerLabTools.build_flip_situation_prompt(last_line, target_prof)
+            out = await container.llm.generate_text(
+                user_id=uid,
+                system_prompt="You are a concise American English pragmatics coach.",
+                user_prompt=prompt,
+            )
+            await query.message.reply_text(f"🔄 [{target_prof}]: {out}")
+            return
         if parts[1] == "cmd":
             cmd_name = parts[2]
             context.args = parts[3:] if len(parts) > 3 else []
