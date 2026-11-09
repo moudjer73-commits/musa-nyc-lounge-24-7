@@ -25,14 +25,19 @@ def format_profile_summary(profile: LearnerProfile) -> str:
 
 
 async def route_learner_turn(container, user_id: int, learner_text: str) -> list[str]:
-    """Routes to 3-session onboarding first, then seamlessly hands off to Analyst + Alex."""
+    """In live Telegram (llm.configured=True), skip 3-turn onboarding lock and go straight to natural chat."""
     profile = container.profile_repo.get_or_create_profile(user_id)
+    if not profile.onboarding_completed and getattr(container.llm, "configured", False):
+        profile.onboarding_completed = True
+        container.profile_repo.save_profile(profile)
+
     if not profile.onboarding_completed:
         reply, updated = await container.onboarding_engine.process_turn(user_id, learner_text)
         msgs = [reply]
         if updated.onboarding_completed:
             msgs.append("Onboarding diagnosis complete! Use /profile to view your initial calibration.")
         return msgs
+
     session_id = f"session_{user_id}_active"
     return await handle_analyzed_conversation_turn(
         user_id=user_id,

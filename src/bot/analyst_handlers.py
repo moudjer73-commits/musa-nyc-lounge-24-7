@@ -15,6 +15,10 @@ async def handle_analyzed_conversation_turn(
     analyst: AnalystEngine,
     responder: AlexResponder,
 ) -> list[str]:
+    if getattr(responder.llm, "configured", False):
+        alex_reply, _, _ = await responder.reply(user_id=user_id, learner_text=learner_text)
+        segments = getattr(responder, "last_segments", {}).get(user_id) or [alex_reply]
+        return list(segments)
     """Coordinates Analyst + Alex per turn without ever exposing raw Analyst JSON."""
     profile = profile_repo.get_or_create_profile(user_id)
     scene = scene_repo.get_active_scene(user_id)

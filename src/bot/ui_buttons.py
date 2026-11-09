@@ -150,6 +150,9 @@ def register_interactive_ui(app: Application, container) -> None:
         if update.effective_chat:
             await clear_stale_chat_commands(context.bot, update.effective_chat.id)
         p = container.profile_repo.get_or_create_profile(update.effective_user.id)
+        if not p.onboarding_completed and getattr(container.llm, "configured", False):
+            p.onboarding_completed = True
+            container.profile_repo.save_profile(p)
         mode = "Active Practice" if p.onboarding_completed else f"Onboarding Session {p.onboarding_session}/3"
         await update.message.reply_text(
             f"Hey! I'm Alex ({mode}). Send a voice note or text message anytime, or use the quick menu below:",
