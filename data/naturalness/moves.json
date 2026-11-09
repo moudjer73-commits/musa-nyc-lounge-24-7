@@ -1,0 +1,1237 @@
+[
+  {
+    "id": "greeting_how_is_it_going",
+    "category": "social",
+    "keywords": [
+      "hey",
+      "hi",
+      "hello",
+      "morning",
+      "how's it going",
+      "how are you",
+      "what's up",
+      "sup"
+    ],
+    "shape": "quick greeting -> short status (not a medical report) -> optional bounce-back",
+    "variants": {
+      "close_friend/text": [
+        "hey! not much, just surviving monday. you?",
+        "yo, pretty good. what's going on?"
+      ],
+      "close_friend/voice": [
+        "Hey! Doing alright, just grabbing coffee. How's your week going?"
+      ],
+      "coworker": [
+        "Hey, morning! Pretty good so far, just catching up on email. How about you?"
+      ],
+      "boss_or_client": [
+        "Good morning! Doing well, thanks. How are things on your end?"
+      ]
+    },
+    "use": {
+      "items": [
+        "not much",
+        "pretty good",
+        "can't complain",
+        "hanging in there"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "same old, same old",
+      "living the dream"
+    ],
+    "avoid": [
+      "I am fine, thank you, and you?",
+      "Everything is going according to plan."
+    ],
+    "account_rule": "'How's it going?' is usually a greeting, not a deep question. Keep the answer under 8 words unless asked twice.",
+    "l1_traps": [
+      "Giving a long literal health/family update to a casual 'How's it going?'",
+      "Using textbook 'Fine, thank you'"
+    ]
+  },
+  {
+    "id": "decline_invitation",
+    "category": "social",
+    "keywords": [
+      "want to come",
+      "wanna hang",
+      "join us",
+      "dinner tonight",
+      "grab coffee",
+      "free tonight",
+      "come over"
+    ],
+    "shape": "delay -> thanks/regret -> refusal (often implied) -> short account -> repair",
+    "variants": {
+      "close_friend/text": [
+        "ahh i can't tonight, got a thing",
+        "rain check?"
+      ],
+      "close_friend/voice": [
+        "Oh man, I wish I could.",
+        "I've got this thing tonight.",
+        "Next time, though?"
+      ],
+      "coworker": [
+        "Thanks for the invite!",
+        "I'm swamped this week, so I'll have to pass.",
+        "Have fun, though."
+      ],
+      "boss_or_client": [
+        "I appreciate the invitation.",
+        "Unfortunately I've got a conflict that evening.",
+        "I hope it goes well."
+      ]
+    },
+    "use": {
+      "items": [
+        "I can't make it",
+        "I wish I could",
+        "rain check?",
+        "maybe next time"
+      ],
+      "ev": "B"
+    },
+    "recognize": [
+      "I'll pass.",
+      "Count me out.",
+      "I'm gonna sit this one out."
+    ],
+    "avoid": [
+      "I refuse.",
+      "I cannot come, sorry.",
+      "I am not able to attend."
+    ],
+    "account_rule": "A short, vague reason is normal ('got a thing', 'swamped'). A long detailed excuse sounds defensive.",
+    "l1_traps": [
+      "Over-explaining the reason",
+      "'Inshallah' / 'Hopefully' used as a soft no is heard by Americans as a genuine yes/maybe"
+    ]
+  },
+  {
+    "id": "accept_invitation",
+    "category": "social",
+    "keywords": [
+      "are you down",
+      "wanna grab",
+      "let's meet",
+      "free on friday",
+      "coffee tomorrow"
+    ],
+    "shape": "immediate uptake -> confirm logistics (time/place)",
+    "variants": {
+      "close_friend/text": [
+        "yeah i'm down",
+        "what time?"
+      ],
+      "close_friend/voice": [
+        "Yeah, I'd love to. Seven works for me."
+      ],
+      "coworker": [
+        "Yeah, sounds great. Let's do Thursday after lunch?"
+      ],
+      "boss_or_client": [
+        "That sounds great, thank you. Thursday at two works well for me."
+      ]
+    },
+    "use": {
+      "items": [
+        "I'm down",
+        "sounds good",
+        "count me in",
+        "works for me"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "I'm game",
+      "twist my arm"
+    ],
+    "avoid": [
+      "I accept your invitation.",
+      "Yes, I will attend."
+    ],
+    "account_rule": "Match enthusiasm without sounding formal; lock in one concrete detail (time or place).",
+    "l1_traps": [
+      "Sounding overly formal ('I would be honored to join you') with peers"
+    ]
+  },
+  {
+    "id": "disagree_soft",
+    "category": "social",
+    "keywords": [
+      "think",
+      "opinion",
+      "better than",
+      "should",
+      "agree",
+      "wrong",
+      "best way"
+    ],
+    "shape": "pause word -> partial concession or softener -> personal framing -> short reason",
+    "variants": {
+      "close_friend/text": [
+        "hmm see i dunno",
+        "i kinda feel like it's the opposite"
+      ],
+      "close_friend/voice": [
+        "Yeah, I see what you mean, though honestly I kind of lean the other way."
+      ],
+      "coworker": [
+        "I see where you're coming from, but my concern is the timeline."
+      ],
+      "boss_or_client": [
+        "That makes sense on cost. One risk I see, though, is onboarding time."
+      ]
+    },
+    "use": {
+      "items": [
+        "I dunno, I kinda think...",
+        "I see it a bit differently",
+        "fair, though...",
+        "my only thing is..."
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "I'm not sold on that",
+      "hard disagree"
+    ],
+    "avoid": [
+      "You are mistaken.",
+      "I completely disagree with your point.",
+      "That is incorrect."
+    ],
+    "account_rule": "Direct unhedged 'No, you're wrong' reads as hostile unless joking with a very close friend.",
+    "l1_traps": [
+      "Translating Arabic rhetorical emphasis ('Never!' / 'Impossible!') literally into English conversation"
+    ]
+  },
+  {
+    "id": "schedule_arrange",
+    "category": "social",
+    "keywords": [
+      "when",
+      "time",
+      "schedule",
+      "tuesday",
+      "tomorrow",
+      "push it",
+      "reschedule",
+      "late"
+    ],
+    "shape": "propose slot -> hedge availability -> confirm",
+    "variants": {
+      "close_friend/text": [
+        "can we push it to 7:30? running a little behind"
+      ],
+      "close_friend/voice": [
+        "Hey, any chance we could do tomorrow instead? Today got crazy."
+      ],
+      "coworker": [
+        "Does 3:00 still work on your end, or should we move it to tomorrow?"
+      ],
+      "boss_or_client": [
+        "Would it be alright if we shifted our call by fifteen minutes?"
+      ]
+    },
+    "use": {
+      "items": [
+        "push it back",
+        "running behind",
+        "does X still work?",
+        "play it by ear"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "pencil it in",
+      "hard stop at 4"
+    ],
+    "avoid": [
+      "Postpone the appointment",
+      "Delay the meeting"
+    ],
+    "account_rule": "Use 'push it to [later time]' or 'move it up to [earlier time]', never 'postpone' with friends.",
+    "l1_traps": [
+      "Using 'postpone' or 'cancel our appointment' for casual coffee with a friend"
+    ]
+  },
+  {
+    "id": "ask_favor",
+    "category": "social",
+    "keywords": [
+      "favor",
+      "help me",
+      "can you",
+      "could you",
+      "borrow",
+      "cover for me"
+    ],
+    "shape": "pre-request check -> minimized ask -> easy out for the listener",
+    "variants": {
+      "close_friend/text": [
+        "hey huge favor, any chance you could drop me at the station? totally fine if not"
+      ],
+      "close_friend/voice": [
+        "Hey, random question, do you have a charger I could borrow for like an hour?"
+      ],
+      "coworker": [
+        "Hey, do you have five minutes to sanity-check this slide? No rush if you're heads-down."
+      ],
+      "boss_or_client": [
+        "Whenever you have a moment, could you let me know which priority comes first?"
+      ]
+    },
+    "use": {
+      "items": [
+        "any chance you could...",
+        "totally fine if not",
+        "no rush",
+        "do me a quick favor"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "bail me out",
+      "sanity-check"
+    ],
+    "avoid": [
+      "I need you to do this for me.",
+      "Please execute this task."
+    ],
+    "account_rule": "Giving the other person an easy out ('totally fine if not', 'no worries if you're busy') is standard American politeness.",
+    "l1_traps": [
+      "Using bare imperatives + 'please' ('Send me the file please') which can sound like a command"
+    ]
+  },
+  {
+    "id": "complain_commiserate",
+    "category": "social",
+    "keywords": [
+      "tired",
+      "exhausted",
+      "traffic",
+      "annoying",
+      "rough day",
+      "sick of",
+      "headache",
+      "broken"
+    ],
+    "shape": "validate feeling first (do NOT fix immediately) -> brief shared reaction -> small question",
+    "variants": {
+      "close_friend/text": [
+        "ugh that's the worst",
+        "did they at least fix it?"
+      ],
+      "close_friend/voice": [
+        "Oh man, that's brutal. You must be wiped."
+      ],
+      "coworker": [
+        "Ugh, yeah, that system has been acting up all week. So frustrating."
+      ],
+      "boss_or_client": [
+        "I'm sorry you had to deal with that, thanks for flagging it early."
+      ]
+    },
+    "use": {
+      "items": [
+        "that's rough",
+        "that's the worst",
+        "you must be wiped",
+        "ugh, no way"
+      ],
+      "ev": "B"
+    },
+    "recognize": [
+      "tell me about it",
+      "been there"
+    ],
+    "avoid": [
+      "You should sleep early.",
+      "Why didn't you take another road?"
+    ],
+    "account_rule": "Americans expect empathy ('that sucks / that's rough') before unsolicited advice.",
+    "l1_traps": [
+      "Jumping straight to practical advice ('You must drink water and sleep') instead of commiserating first"
+    ]
+  },
+  {
+    "id": "apologize_casual",
+    "category": "social",
+    "keywords": [
+      "sorry",
+      "my bad",
+      "forgot",
+      "missed your call",
+      "late reply"
+    ],
+    "shape": "quick ownership -> brief reason -> move forward",
+    "variants": {
+      "close_friend/text": [
+        "ah my bad, totally missed this!"
+      ],
+      "close_friend/voice": [
+        "Oh shoot, I'm so sorry, my phone was on silent."
+      ],
+      "coworker": [
+        "Sorry for the delay on this, yesterday got away from me. Here's the draft."
+      ],
+      "boss_or_client": [
+        "Apologies for the slow turnaround, I wanted to double-check the numbers first."
+      ]
+    },
+    "use": {
+      "items": [
+        "my bad",
+        "totally slipped my mind",
+        "got away from me",
+        "all good / no worries"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "dropped the ball",
+      "brain fart"
+    ],
+    "avoid": [
+      "I deeply regret my tardiness.",
+      "Please forgive my mistake."
+    ],
+    "account_rule": "Match the weight of the apology to the mistake; over-apologizing for a late text feels awkward.",
+    "l1_traps": [
+      "Using heavy formal apologies ('I apologize profusely') for minor everyday slips"
+    ]
+  },
+  {
+    "id": "repair_wait_what",
+    "category": "communicative",
+    "keywords": [
+      "what do you mean",
+      "didn't catch",
+      "confused",
+      "wait what",
+      "huh",
+      "say that again"
+    ],
+    "shape": "quick signal -> pin the unclear part -> paraphrase check",
+    "variants": {
+      "close_friend/text": [
+        "wait what?",
+        "like they canceled the whole thing?"
+      ],
+      "close_friend/voice": [
+        "Wait, hold on, do you mean this Friday or next Friday?"
+      ],
+      "coworker": [
+        "Sorry, just to make sure I'm following, are we cutting scope or moving the date?"
+      ],
+      "boss_or_client": [
+        "Just to make sure we're on the same page, are we prioritizing the pilot first?"
+      ]
+    },
+    "use": {
+      "items": [
+        "wait, what?",
+        "just to make sure I'm following",
+        "do you mean X or Y?",
+        "you lost me at..."
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "run that by me again",
+      "on the same page"
+    ],
+    "avoid": [
+      "I do not understand your sentence.",
+      "Repeat please."
+    ],
+    "account_rule": "Blame the connection or frame it as checking your own understanding ('just to make sure I'm following').",
+    "l1_traps": [
+      "Saying blunt 'What?' or 'Repeat' without a softener"
+    ]
+  },
+  {
+    "id": "leave_taking",
+    "category": "social",
+    "keywords": [
+      "gotta go",
+      "heading out",
+      "sleep",
+      "talk later",
+      "bye",
+      "see ya",
+      "run"
+    ],
+    "shape": "pre-closing signal ('Anyway...') -> light reason -> warm sign-off",
+    "variants": {
+      "close_friend/text": [
+        "anyway i gotta run, talk soon!"
+      ],
+      "close_friend/voice": [
+        "Alright, I should probably get going, I've got an early morning. Catch you later!"
+      ],
+      "coworker": [
+        "Alright, I'll let you get back to it. Talk to you tomorrow!"
+      ],
+      "boss_or_client": [
+        "Thanks again for the time today, I'll send over the notes this afternoon."
+      ]
+    },
+    "use": {
+      "items": [
+        "I gotta run",
+        "I'll let you get back to it",
+        "catch you later",
+        "talk soon"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "bounce",
+      "head out",
+      "call it a night"
+    ],
+    "avoid": [
+      "Goodbye now.",
+      "I will terminate the conversation."
+    ],
+    "account_rule": "'I'll let you get back to it' is the classic American polite exit.",
+    "l1_traps": [
+      "Ending abruptly without a pre-closing bridge like 'Anyway, I should probably...'"
+    ]
+  },
+  {
+    "id": "seminar_question_pushback",
+    "category": "academic",
+    "keywords": [
+      "paper",
+      "study",
+      "methodology",
+      "governance",
+      "policy",
+      "data",
+      "argument",
+      "sample",
+      "case study"
+    ],
+    "shape": "appreciate contribution -> locate specific tension -> hedged question",
+    "variants": {
+      "close_friend/text": [
+        "wait does that actually work outside big cities though?"
+      ],
+      "close_friend/voice": [
+        "That makes sense on paper, but how does it hold up in smaller municipalities?"
+      ],
+      "coworker": [
+        "Interesting finding, how did they control for local budget differences?"
+      ],
+      "boss_or_client": [
+        "Thanks, that was really interesting. I'd push back a little on the generalizability, how does that model hold up when local institutional capacity is low?"
+      ]
+    },
+    "use": {
+      "items": [
+        "I'd push back a little on...",
+        "I was wondering how you account for...",
+        "that's a fair point, though...",
+        "how does that hold up when..."
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "unpack that",
+      "tease apart",
+      "on the ground"
+    ],
+    "avoid": [
+      "Your methodology is flawed.",
+      "You forgot to mention..."
+    ],
+    "account_rule": "In American seminars, sharp critiques are wrapped in collaborative hedges ('I was wondering...', 'I'd push back a little on...').",
+    "l1_traps": [
+      "Framing an academic question as a long speech before getting to the question"
+    ]
+  },
+  {
+    "id": "service_order_request",
+    "category": "situational",
+    "keywords": [
+      "coffee",
+      "order",
+      "menu",
+      "check",
+      "latte",
+      "sandwich",
+      "to go",
+      "for here"
+    ],
+    "shape": "greeting -> 'Can I get...' -> size/modifier -> 'for here / to go'",
+    "variants": {
+      "close_friend/text": [
+        "grabbing coffee, want anything?"
+      ],
+      "close_friend/voice": [
+        "Hi, can I get a medium drip coffee, please? To go."
+      ],
+      "coworker": [
+        "I'm doing a coffee run, anyone want anything?"
+      ],
+      "boss_or_client": [
+        "Could we get the check whenever you get a chance? Thank you."
+      ]
+    },
+    "use": {
+      "items": [
+        "Can I get...",
+        "I'll do the...",
+        "for here / to go",
+        "whenever you get a chance"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "on the side",
+      "you're all set"
+    ],
+    "avoid": [
+      "Give me one coffee.",
+      "I want a sandwich."
+    ],
+    "account_rule": "'Can I get...' or 'I'll do the...' is much more natural at a counter than 'I want...'.",
+    "l1_traps": [
+      "Translating 'Give me...' literally, which sounds demanding in English"
+    ]
+  },
+  {
+    "id": "thank_and_respond",
+    "category": "social",
+    "keywords": [
+      "thanks",
+      "thank you",
+      "appreciate",
+      "lifesaver",
+      "owe you"
+    ],
+    "shape": "warm acknowledgment -> downplay effort ('no problem' / 'anytime')",
+    "variants": {
+      "close_friend/text": [
+        "of course! anytime",
+        "no worries at all"
+      ],
+      "close_friend/voice": [
+        "Yeah, of course! Happy to help."
+      ],
+      "coworker": [
+        "No problem at all, glad it worked out!"
+      ],
+      "boss_or_client": [
+        "Happy to help, glad we could get that sorted out."
+      ]
+    },
+    "use": {
+      "items": [
+        "of course",
+        "anytime",
+        "no worries",
+        "happy to help"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "don't mention it",
+      "you got it"
+    ],
+    "avoid": [
+      "Not at all.",
+      "It is my duty."
+    ],
+    "account_rule": "Americans frequently reply to 'Thank you' with 'Of course!' or 'No problem!' rather than textbook 'You're welcome'.",
+    "l1_traps": [
+      "Translating 'It is my duty' (هذا واجبي) literally, which sounds overly stiff"
+    ]
+  },
+  {
+    "id": "compliment_and_respond",
+    "category": "social",
+    "keywords": [
+      "nice shirt",
+      "great job",
+      "love your",
+      "killed it",
+      "looks great",
+      "good point"
+    ],
+    "shape": "accept simply ('thanks!') -> tiny credit or detail",
+    "variants": {
+      "close_friend/text": [
+        "aw thanks! got it on sale last week"
+      ],
+      "close_friend/voice": [
+        "Oh, thanks! I wasn't sure how it'd turn out."
+      ],
+      "coworker": [
+        "Thanks, I appreciate that! Maya helped a ton with the data side."
+      ],
+      "boss_or_client": [
+        "Thank you, I really appreciate the feedback."
+      ]
+    },
+    "use": {
+      "items": [
+        "thanks, I appreciate that",
+        "oh thanks!",
+        "glad you liked it"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "you're too kind",
+      "flattery will get you everywhere"
+    ],
+    "avoid": [
+      "No, my work is actually bad.",
+      "Take it, it is yours."
+    ],
+    "account_rule": "Accept compliments with a quick 'Thanks!'—strong self-deprecation makes Americans feel they have to reassure you.",
+    "l1_traps": [
+      "Offering the item ('It's yours / مقدم') or rejecting the praise completely out of modesty"
+    ]
+  },
+  {
+    "id": "tell_story_and_react",
+    "category": "social",
+    "keywords": [
+      "guess what",
+      "you won't believe",
+      "funny thing",
+      "happened today",
+      "crazy story"
+    ],
+    "shape": "hook ('Wait, tell me' / 'No way') -> 2-3 short bursts -> listener backchannel",
+    "variants": {
+      "close_friend/text": [
+        "wait what happened??",
+        "no way, and then what?"
+      ],
+      "close_friend/voice": [
+        "Shut up, really? What did he say after that?"
+      ],
+      "coworker": [
+        "No kidding—how did that end up playing out?"
+      ],
+      "boss_or_client": [
+        "Oh wow, how did the team handle that?"
+      ]
+    },
+    "use": {
+      "items": [
+        "no way",
+        "wait, seriously?",
+        "and then what?",
+        "no kidding"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "get out of here",
+      "you can't make this up"
+    ],
+    "avoid": [
+      "Please narrate the full incident.",
+      "That is an amusing anecdote."
+    ],
+    "account_rule": "Good spoken stories come in short bursts leaving room for the listener to react ('Wait, really?').",
+    "l1_traps": [
+      "Delivering a 200-word monologue without pausing for backchannels"
+    ]
+  },
+  {
+    "id": "tease_and_banter",
+    "category": "social",
+    "keywords": [
+      "again",
+      "obsessed",
+      "late as usual",
+      "coffee addict",
+      "nerd",
+      "fancy"
+    ],
+    "shape": "playful exaggeration -> immediate warm signal so it stays kind",
+    "variants": {
+      "close_friend/text": [
+        "wow look at you being a functional adult",
+        "who even are you rn"
+      ],
+      "close_friend/voice": [
+        "Hold on, you went to the gym BEFORE work? Who are you?"
+      ],
+      "coworker": [
+        "Careful, if you finish early they're gonna give us more work."
+      ],
+      "boss_or_client": [
+        "Sounds like you've got it down to a science."
+      ]
+    },
+    "use": {
+      "items": [
+        "look at you",
+        "who even are you",
+        "bold move",
+        "living dangerously"
+      ],
+      "ev": "B"
+    },
+    "recognize": [
+      "weird flex",
+      "overachiever"
+    ],
+    "avoid": [
+      "You are lazy.",
+      "Why do you always fail?"
+    ],
+    "account_rule": "Teasing among Americans targets harmless habits (coffee, sleep, overworking), never real insecurities.",
+    "l1_traps": [
+      "Teasing that sounds like genuine criticism without a playful marker"
+    ]
+  },
+  {
+    "id": "check_understanding",
+    "category": "communicative",
+    "keywords": [
+      "mean that",
+      "following",
+      "make sense",
+      "so basically",
+      "right?",
+      "get what i mean"
+    ],
+    "shape": "paraphrase in plain words -> light check ('does that track?')",
+    "variants": {
+      "close_friend/text": [
+        "wait so you're saying they knew the whole time?"
+      ],
+      "close_friend/voice": [
+        "So basically you're keeping the old setup for now, right?"
+      ],
+      "coworker": [
+        "Just to make sure I've got this right, we're holding off until Q3?"
+      ],
+      "boss_or_client": [
+        "If I'm hearing you right, the top priority is reliability over speed?"
+      ]
+    },
+    "use": {
+      "items": [
+        "so basically...",
+        "if I'm hearing you right",
+        "just to make sure I've got this right",
+        "does that make sense?"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "sanity check",
+      "reading between the lines"
+    ],
+    "avoid": [
+      "Did you understand my words?",
+      "Confirm your comprehension."
+    ],
+    "account_rule": "Ask 'Does that make sense?' instead of 'Do you understand?'—it puts the burden of clarity on the speaker, not the listener.",
+    "l1_traps": [
+      "Asking 'Do you understand me?' which often sounds condescending in American English"
+    ]
+  },
+  {
+    "id": "polite_interruption",
+    "category": "communicative",
+    "keywords": [
+      "hold on",
+      "before we move on",
+      "quick thing",
+      "jump in",
+      "sorry to interrupt"
+    ],
+    "shape": "light signal ('Sorry to jump in') -> tie to current point -> brief comment",
+    "variants": {
+      "close_friend/text": [
+        "wait pause, go back to the part about the landlord"
+      ],
+      "close_friend/voice": [
+        "Oh, sorry, real quick before I forget—did you hear back from Sam?"
+      ],
+      "coworker": [
+        "Sorry to jump in, just one quick thing on the timeline before we move on."
+      ],
+      "boss_or_client": [
+        "If I could jump in for just a second on that budget point."
+      ]
+    },
+    "use": {
+      "items": [
+        "sorry to jump in",
+        "real quick before we move on",
+        "wait, hold that thought"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "piggyback on that",
+      "two cents"
+    ],
+    "avoid": [
+      "Stop talking, I have a point.",
+      "Listen to me now."
+    ],
+    "account_rule": "'Jump in' is much warmer than 'interrupt' in meetings and seminars.",
+    "l1_traps": [
+      "Starting to speak over someone without a verbal turn-entry softener"
+    ]
+  },
+  {
+    "id": "change_topic",
+    "category": "communicative",
+    "keywords": [
+      "by the way",
+      "random",
+      "speaking of",
+      "off topic",
+      "totally unrelated"
+    ],
+    "shape": "bridge marker ('random, but...' / 'oh, speaking of...') -> new topic",
+    "variants": {
+      "close_friend/text": [
+        "random but did you ever watch that show?"
+      ],
+      "close_friend/voice": [
+        "Oh, totally random, but that reminds me—how did your exam go?"
+      ],
+      "coworker": [
+        "On a separate note, did we ever get the login for the staging server?"
+      ],
+      "boss_or_client": [
+        "Shifting gears for a minute, how are we looking on the Q4 budget?"
+      ]
+    },
+    "use": {
+      "items": [
+        "random, but...",
+        "oh, speaking of...",
+        "shifting gears",
+        "on a separate note"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "sidebar",
+      "tangent"
+    ],
+    "avoid": [
+      "Let us change the subject now.",
+      "New topic:"
+    ],
+    "account_rule": "Acknowledge the jump ('Totally random, but...') so the listener's brain can switch tracks smoothly.",
+    "l1_traps": [
+      "Switching topics cold without a discourse bridge"
+    ]
+  },
+  {
+    "id": "honest_dont_know",
+    "category": "communicative",
+    "keywords": [
+      "do you know",
+      "any idea",
+      "how much",
+      "why did they",
+      "who's in charge"
+    ],
+    "shape": "direct admission -> optional best guess hedged clearly",
+    "variants": {
+      "close_friend/text": [
+        "no idea honestly",
+        "beats me"
+      ],
+      "close_friend/voice": [
+        "Honestly, I have no clue. If I had to guess, maybe around fifty bucks?"
+      ],
+      "coworker": [
+        "I'm not 100% sure off the top of my head, let me check and get back to you."
+      ],
+      "boss_or_client": [
+        "I don't have those exact numbers in front of me, but I can pull them right after this."
+      ]
+    },
+    "use": {
+      "items": [
+        "no idea, honestly",
+        "off the top of my head",
+        "beats me",
+        "I'm not 100% sure"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "your guess is as good as mine",
+      "ballpark"
+    ],
+    "avoid": [
+      "I possess no information.",
+      "I am ignorant of this matter."
+    ],
+    "account_rule": "At work, pair 'I'm not sure off the top of my head' with 'I'll check and follow up'.",
+    "l1_traps": [
+      "Guessing as if certain to avoid saying 'I don't know'"
+    ]
+  },
+  {
+    "id": "give_advice_soft",
+    "category": "communicative",
+    "keywords": [
+      "what should i do",
+      "advice",
+      "recommend",
+      "stuck",
+      "what would you do"
+    ],
+    "shape": "empathize first -> frame as personal experience or option ('Have you tried...' / 'If it were me...')",
+    "variants": {
+      "close_friend/text": [
+        "honestly i'd just text him directly and ask"
+      ],
+      "close_friend/voice": [
+        "I mean, if it were me, I'd probably sleep on it before sending that email."
+      ],
+      "coworker": [
+        "One thing that worked for us last time was splitting the rollout in two."
+      ],
+      "boss_or_client": [
+        "One option might be to test it with a smaller group first."
+      ]
+    },
+    "use": {
+      "items": [
+        "if it were me, I'd...",
+        "have you thought about...",
+        "one thing that helped me was...",
+        "you might wanna..."
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "sleep on it",
+      "two cents"
+    ],
+    "avoid": [
+      "You must do X.",
+      "It is obligatory that you..."
+    ],
+    "account_rule": "Unsolicited 'You must / You have to' sounds bossy; Americans soften advice into 'If it were me...' or 'You might wanna...'.",
+    "l1_traps": [
+      "Using 'you must' (يجب عليك) when giving friendly advice"
+    ]
+  },
+  {
+    "id": "phone_and_voicemail",
+    "category": "situational",
+    "keywords": [
+      "call",
+      "phone",
+      "voicemail",
+      "ring",
+      "missed call",
+      "call me back"
+    ],
+    "shape": "who + why in 10 seconds -> callback action -> light sign-off",
+    "variants": {
+      "close_friend/text": [
+        "hey missed your call, everything good?"
+      ],
+      "close_friend/voice": [
+        "Hey, it's Sam—nothing urgent, just had a quick question about Saturday. Call me when you get a chance."
+      ],
+      "coworker": [
+        "Hi Dana, this is Sam calling about the vendor quote. Shoot me a message when you're free."
+      ],
+      "boss_or_client": [
+        "Hello, this is Sam following up on the contract timeline. Please give me a call back at your convenience."
+      ]
+    },
+    "use": {
+      "items": [
+        "nothing urgent",
+        "when you get a chance",
+        "just following up on",
+        "missed your call"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "playing phone tag",
+      "bad signal",
+      "you're breaking up"
+    ],
+    "avoid": [
+      "I am telephoning you regarding...",
+      "Answer the telephone."
+    ],
+    "account_rule": "Saying 'nothing urgent' right away in a voicemail or text prevents unnecessary anxiety.",
+    "l1_traps": [
+      "Leaving a vague 'Call me' without saying whether it's an emergency"
+    ]
+  },
+  {
+    "id": "work_update_and_pushback",
+    "category": "situational",
+    "keywords": [
+      "deadline",
+      "bandwidth",
+      "overloaded",
+      "status",
+      "update",
+      "realistic",
+      "blocker"
+    ],
+    "shape": "1-sentence status -> concrete blocker -> trade-off question",
+    "variants": {
+      "close_friend/text": [
+        "work is nuts rn, buried in deadlines"
+      ],
+      "close_friend/voice": [
+        "They're asking for three reports by Friday and I just don't have the bandwidth."
+      ],
+      "coworker": [
+        "Quick update: the API part is done, but we're blocked on design. Can we push the demo to Wednesday?"
+      ],
+      "boss_or_client": [
+        "I'd love to get this out by Friday. To hit that date, which of the current tasks should I deprioritize?"
+      ]
+    },
+    "use": {
+      "items": [
+        "don't have the bandwidth",
+        "blocked on",
+        "which should we deprioritize?",
+        "realistic timeline"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "under water",
+      "move the goalposts",
+      "scope creep"
+    ],
+    "avoid": [
+      "I refuse this task.",
+      "Yes I will do everything (when impossible)."
+    ],
+    "account_rule": "When overloaded, ask the manager to choose the trade-off ('Which task should I deprioritize to fit this in?').",
+    "l1_traps": [
+      "Saying 'Yes' out of politeness and missing the deadline silently"
+    ]
+  },
+  {
+    "id": "give_feedback_work",
+    "category": "situational",
+    "keywords": [
+      "feedback",
+      "review",
+      "draft",
+      "slide",
+      "section",
+      "unclear",
+      "revise"
+    ],
+    "shape": "name what works -> specific friction point -> concrete suggestion",
+    "variants": {
+      "close_friend/text": [
+        "honestly the intro is super clean, just trim the last part"
+      ],
+      "close_friend/voice": [
+        "The main argument hits hard. The only part where I got a little lost was page three."
+      ],
+      "coworker": [
+        "Overall this flows really well. One small thing: could we tighten the second section so the takeaway pops earlier?"
+      ],
+      "boss_or_client": [
+        "Strong start on the analysis. Let's sharpen the executive summary so the recommendation is clear in the first paragraph."
+      ]
+    },
+    "use": {
+      "items": [
+        "flows really well",
+        "one small thing",
+        "tighten up",
+        "got a little lost at..."
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "nitpick",
+      "high-level",
+      "flesh out"
+    ],
+    "avoid": [
+      "This draft is weak.",
+      "Rewrite this completely."
+    ],
+    "account_rule": "Frame reader confusion as your own reaction ('I got a little lost at X') rather than attacking the writer ('You wrote X badly').",
+    "l1_traps": [
+      "Being either too blunt or so vague that the person doesn't know what to fix"
+    ]
+  },
+  {
+    "id": "conference_and_office_hours",
+    "category": "academic",
+    "keywords": [
+      "dissertation",
+      "advisor",
+      "panel",
+      "conference",
+      "chapter",
+      "fieldwork",
+      "municipal",
+      "literature"
+    ],
+    "shape": "connect over shared question -> 2-sentence elevator pitch -> open question",
+    "variants": {
+      "close_friend/text": [
+        "survived my advisor meeting, only two pages of edits lol"
+      ],
+      "close_friend/voice": [
+        "Office hours actually went great, she helped me narrow down the case studies."
+      ],
+      "coworker": [
+        "I really liked your point on the panel earlier. How are you measuring local participation in your dataset?"
+      ],
+      "boss_or_client": [
+        "Thanks for making time today, Professor. I'm trying to narrow my comparative chapter—would it make sense to focus on fiscal capacity as the main variable?"
+      ]
+    },
+    "use": {
+      "items": [
+        "narrow it down",
+        "how are you measuring...",
+        "what are you working on?",
+        "build on that"
+      ],
+      "ev": "A"
+    },
+    "recognize": [
+      "elevator pitch",
+      "lit review",
+      "scope of the project"
+    ],
+    "avoid": [
+      "Allow me to recite my entire CV.",
+      "My thesis is the first in history to..."
+    ],
+    "account_rule": "At conferences, summarize your research in two conversational sentences and let the other person ask follow-ups.",
+    "l1_traps": [
+      "Over-claiming ('No researcher has ever studied this') instead of situating your work modestly"
+    ]
+  }
+]

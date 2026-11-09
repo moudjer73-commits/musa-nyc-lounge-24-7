@@ -114,10 +114,13 @@ class GeminiService:
         self, user_id: int, system_prompt: str, user_prompt: str, temperature: float = 0.7
     ) -> str:
         self._charge(user_id)
-        return await self._call(
-            user_prompt,
-            types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature),
-        )
+        cfg_kwargs: dict[str, Any] = {"system_instruction": system_prompt, "temperature": temperature}
+        if hasattr(types, "ThinkingConfig"):
+            try:
+                cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+            except Exception:
+                pass
+        return await self._call(user_prompt, types.GenerateContentConfig(**cfg_kwargs))
 
     async def generate_structured(
         self,

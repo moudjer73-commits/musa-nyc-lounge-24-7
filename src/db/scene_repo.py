@@ -94,3 +94,9 @@ class SceneRepository:
             conn.execute("DELETE FROM conversation_turns WHERE user_id = ?", (user_id,))
             conn.commit()
         self._sync()
+
+    def get_recent_dialogue(self, user_id: int, limit: int = 12) -> list[dict[str, str]]:
+        query = "SELECT role, content FROM conversation_turns WHERE user_id = ? ORDER BY id DESC LIMIT ?"
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(query, (user_id, limit)).fetchall()
+        return [{"role": r["role"], "text": r["content"]} for r in reversed(rows)]

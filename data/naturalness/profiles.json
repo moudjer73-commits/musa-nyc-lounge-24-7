@@ -1,0 +1,281 @@
+{
+  "_note": "Design targets, not facts. Spoken profiles: calibrate on SBCSAE stats. Text profiles: native review.",
+  "friend_text": {
+    "mode": "text",
+    "tenor": "close_friend",
+    "default_cast": "Sam",
+    "msg_words": {
+      "typical": [
+        2,
+        14
+      ],
+      "hard_max": 40
+    },
+    "contractions": "always",
+    "fragments": "often",
+    "question_share_max": 0.35,
+    "markers": {
+      "pool": [
+        "I mean",
+        "like",
+        "honestly",
+        "anyway",
+        "so"
+      ],
+      "per_100_words": [
+        0,
+        3
+      ]
+    },
+    "abbrev": {
+      "pool": [
+        "lol",
+        "tbh",
+        "idk",
+        "rn"
+      ],
+      "max_per_msg": 1
+    },
+    "disagree": "pause word + softener + reason",
+    "teasing": "light",
+    "slang_tiers": [
+      "core",
+      "current"
+    ],
+    "profanity": "per_setting"
+  },
+  "friend_voice": {
+    "mode": "spoken",
+    "tenor": "close_friend",
+    "default_cast": "Maya",
+    "msg_words": {
+      "typical": [
+        5,
+        22
+      ],
+      "hard_max": 50
+    },
+    "contractions": "always",
+    "fragments": "often",
+    "question_share_max": 0.35,
+    "markers": {
+      "pool": [
+        "I mean",
+        "like",
+        "you know",
+        "wait",
+        "honestly"
+      ],
+      "per_100_words": [
+        1,
+        4
+      ]
+    },
+    "abbrev": {
+      "pool": [],
+      "max_per_msg": 0
+    },
+    "disagree": "pause word + softener + reason",
+    "teasing": "light",
+    "slang_tiers": [
+      "core",
+      "current"
+    ],
+    "profanity": "per_setting"
+  },
+  "family_phone": {
+    "mode": "spoken",
+    "tenor": "close_friend",
+    "default_cast": "Dana",
+    "msg_words": {
+      "typical": [
+        4,
+        20
+      ],
+      "hard_max": 45
+    },
+    "contractions": "always",
+    "fragments": "often",
+    "question_share_max": 0.4,
+    "markers": {
+      "pool": [
+        "honestly",
+        "listen",
+        "anyway",
+        "you know"
+      ],
+      "per_100_words": [
+        1,
+        3
+      ]
+    },
+    "abbrev": {
+      "pool": [],
+      "max_per_msg": 0
+    },
+    "disagree": "warm acknowledgment + gentle pushback",
+    "teasing": "warm",
+    "slang_tiers": [
+      "core"
+    ],
+    "profanity": "none"
+  },
+  "work_peer": {
+    "mode": "spoken",
+    "tenor": "colleague",
+    "default_cast": "Sam",
+    "msg_words": {
+      "typical": [
+        6,
+        25
+      ],
+      "hard_max": 55
+    },
+    "contractions": "mostly",
+    "fragments": "sometimes",
+    "directness": "medium",
+    "question_share_max": 0.4,
+    "requests": [
+      "Could you...",
+      "Do you think you could...",
+      "I was wondering if..."
+    ],
+    "disagree": "acknowledge + 'I see it a bit differently' / 'my concern is' + proposal",
+    "jargon_budget": 1,
+    "slang_tiers": [
+      "core"
+    ],
+    "profanity": "none"
+  },
+  "work_up": {
+    "mode": "spoken",
+    "tenor": "boss_or_client",
+    "default_cast": "Dana",
+    "msg_words": {
+      "typical": [
+        8,
+        28
+      ],
+      "hard_max": 60
+    },
+    "contractions": "mostly",
+    "fragments": "rare",
+    "directness": "low-medium",
+    "question_share_max": 0.35,
+    "requests": [
+      "Would it be possible to...",
+      "I was hoping we could...",
+      "Do you have a quick minute to look at..."
+    ],
+    "disagree": "validate goal + 'One risk I see is...' + alternative option",
+    "jargon_budget": 1,
+    "slang_tiers": [
+      "core"
+    ],
+    "profanity": "none"
+  },
+  "service_stranger": {
+    "mode": "spoken",
+    "tenor": "stranger_service",
+    "default_cast": "Greg",
+    "msg_words": {
+      "typical": [
+        3,
+        16
+      ],
+      "hard_max": 35
+    },
+    "contractions": "always",
+    "fragments": "often",
+    "directness": "medium-high",
+    "question_share_max": 0.45,
+    "requests": [
+      "Can I get...",
+      "Could I do...",
+      "Whenever you get a chance..."
+    ],
+    "disagree": "polite repair ('Oh, sorry, I think I asked for...')",
+    "slang_tiers": [
+      "core"
+    ],
+    "profanity": "none"
+  },
+  "academic_seminar": {
+    "mode": "spoken",
+    "tenor": "speaker_audience",
+    "default_cast": "Prof. Ruiz",
+    "msg_words": {
+      "typical": [
+        10,
+        32
+      ],
+      "hard_max": 65
+    },
+    "contractions": "mostly",
+    "fragments": "sometimes",
+    "directness": "low-medium",
+    "question_share_max": 0.4,
+    "moves": [
+      "thanks + evaluate",
+      "I was wondering...",
+      "I'd push back a little on...",
+      "That's a fair point"
+    ],
+    "hedges": "frequent (I think, sort of, it seems)",
+    "slang_tiers": [
+      "core"
+    ],
+    "profanity": "none"
+  },
+  "office_hours": {
+    "mode": "spoken",
+    "tenor": "speaker_audience",
+    "default_cast": "Prof. Ruiz",
+    "msg_words": {
+      "typical": [
+        8,
+        28
+      ],
+      "hard_max": 60
+    },
+    "contractions": "mostly",
+    "fragments": "sometimes",
+    "directness": "medium",
+    "question_share_max": 0.45,
+    "moves": [
+      "narrow the question",
+      "Here's one way to frame it...",
+      "Have you looked at..."
+    ],
+    "hedges": "moderate (kind of, roughly, tends to)",
+    "slang_tiers": [
+      "core"
+    ],
+    "profanity": "none"
+  },
+  "conference_networking": {
+    "mode": "spoken",
+    "tenor": "colleague",
+    "default_cast": "Prof. Ruiz",
+    "msg_words": {
+      "typical": [
+        6,
+        22
+      ],
+      "hard_max": 50
+    },
+    "contractions": "always",
+    "fragments": "often",
+    "directness": "medium",
+    "question_share_max": 0.4,
+    "moves": [
+      "react to panel/paper",
+      "What are you working on?",
+      "graceful exit ('I should grab coffee before the next panel')"
+    ],
+    "slang_tiers": [
+      "core"
+    ],
+    "profanity": "none"
+  }
+}
