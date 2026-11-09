@@ -203,15 +203,17 @@ def register_interactive_ui(app: Application, container) -> None:
         if not update.effective_user or not update.message:
             return
         uid = update.effective_user.id
+        # 1) أرسل بطاقة التحكم فوراً للمستخدم دون أي تأخير
+        await update.message.reply_text(
+            _dashboard_card_text(container, uid),
+            reply_markup=main_menu_keyboard(),
+        )
+        # 2) حدّث قائمة Menu الزرقاء بعد ظهور البطاقة
         if update.effective_chat:
             try:
                 await clear_stale_chat_commands(context.bot, update.effective_chat.id)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("clear_stale_chat_commands warning: %s", exc)
-        await update.message.reply_text(
-            _dashboard_card_text(container, uid),
-            reply_markup=main_menu_keyboard(),
-        )
         raise ApplicationHandlerStop
 
     async def room_ui_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -382,4 +384,4 @@ def register_interactive_ui(app: Application, container) -> None:
 
     app.add_handler(CommandHandler("start", start_ui_cmd), group=-1)
     app.add_handler(CommandHandler("room", room_ui_cmd), group=-1)
-    app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^ui:"))
+    app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^ui:"), group=-1)

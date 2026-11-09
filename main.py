@@ -18,7 +18,7 @@ def main() -> None:
     app = ApplicationBuilder().token(bot_token).build()
     register_all_modules(app, container)
     logging.info("Spoken English Lab v1.1 (engine-backed chat + Alex voice + podcast audio) is polling...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=False)
 
 if __name__ == "__main__":
     main()

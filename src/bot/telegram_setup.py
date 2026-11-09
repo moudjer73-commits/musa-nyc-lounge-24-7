@@ -30,7 +30,7 @@ COMMANDS = [
 
 logger = logging.getLogger(__name__)
 
-COMMAND_LANGS = ("", "en", "ar", "fr", "es", "de", "tr")
+COMMAND_LANGS = ("", "en", "ar")
 COMMAND_SCOPES = ({"type": "default"}, {"type": "all_private_chats"}, {"type": "all_group_chats"})
 _CLEARED_CHATS: set[int] = set()
 
