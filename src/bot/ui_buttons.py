@@ -8,7 +8,6 @@ from src.naturalness import LearnerLabTools
 
 logger = logging.getLogger(__name__)
 
-# المواقف الأساسية + الإضافية (مرتبة في 7 صفوف داخل rooms_keyboard لتوافق الاختبارات)
 ROOM_CHOICES: list[tuple[str, str]] = [
     ("casual_friends", "💬 Close Friend — Texting (Sam)"),
     ("casual_roommate", "🎙️ Close Friend — Voice Catch-Up (Sam)"),
@@ -69,7 +68,6 @@ class _UpdateProxy:
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
-    """5-row Naturalness Lab Dashboard (zero legacy Sprint 1-8 textbook dumps)."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🎭 Situation & Partner", callback_data="ui:menu:room"),
@@ -203,12 +201,10 @@ def register_interactive_ui(app: Application, container) -> None:
         if not update.effective_user or not update.message:
             return
         uid = update.effective_user.id
-        # 1) أرسل بطاقة التحكم فوراً للمستخدم دون أي تأخير
         await update.message.reply_text(
             _dashboard_card_text(container, uid),
             reply_markup=main_menu_keyboard(),
         )
-        # 2) حدّث قائمة Menu الزرقاء بعد ظهور البطاقة
         if update.effective_chat:
             try:
                 await clear_stale_chat_commands(context.bot, update.effective_chat.id)
@@ -223,6 +219,55 @@ def register_interactive_ui(app: Application, container) -> None:
                 reply_markup=rooms_keyboard(),
             )
             raise ApplicationHandlerStop
+
+    async def flip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message:
+            return
+        uid = update.effective_user.id
+        target = context.args[0] if context.args else "work_peer"
+        recent = container.scene_repo.get_recent_turns(uid, role="alex", limit=1)
+        last_line = recent[-1] if recent else "Hey, I can't make it tonight, rain check?"
+        prompt = LearnerLabTools.build_flip_situation_prompt(last_line, target)
+        out = await container.llm.generate_text(uid, "You are a concise American English pragmatics coach.", prompt)
+        await update.message.reply_text(f"🔄 [{target}]\n{out}")
+
+    async def ladder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message:
+            return
+        uid = update.effective_user.id
+        intent = " ".join(context.args).strip() if context.args else ""
+        if not intent:
+            recent_user = container.scene_repo.get_recent_turns(uid, role="learner", limit=1)
+            intent = recent_user[-1] if recent_user else "I can't make it to the meeting today, can we reschedule?"
+        prompt = LearnerLabTools.build_register_ladder_prompt(intent)
+        out = await container.llm.generate_text(uid, "You are a concise American English pragmatics coach.", prompt)
+        await update.message.reply_text(f'🪜 Register Ladder for: "{intent}"\n\n{out}')
+
+    async def heard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message:
+            return
+        uid = update.effective_user.id
+        phrase = " ".join(context.args).strip().strip('"')
+        if not phrase:
+            await update.message.reply_text('Usage: /heard "phrase you heard"')
+            return
+        scene = container.scene_repo.get_active_scene(uid)
+        container.responder.nat_gauge.add_to_notebook(uid, phrase, scene.room_id)
+        await update.message.reply_text(f'👂 Saved to your Real-Life Notebook: "{phrase}"')
+
+    async def stats_nat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.message:
+            return
+        rep = container.responder.nat_gauge.weekly_report()
+        await update.message.reply_text(f"📈 Naturalness Gauge: {json.dumps(rep, indent=2)}")
+
+    async def nat_flag_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not query or not query.data:
+            return
+        msg_id = query.data.split("nat:flag:", 1)[1]
+        container.responder.nat_gauge.flag_artificial(msg_id)
+        await query.answer("Logged as artificial 🎭 — adjusting naturalness!")
 
     async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -384,4 +429,9 @@ def register_interactive_ui(app: Application, container) -> None:
 
     app.add_handler(CommandHandler("start", start_ui_cmd), group=-1)
     app.add_handler(CommandHandler("room", room_ui_cmd), group=-1)
+    app.add_handler(CommandHandler("flip", flip_cmd), group=-1)
+    app.add_handler(CommandHandler("ladder", ladder_cmd), group=-1)
+    app.add_handler(CommandHandler("heard", heard_cmd), group=-1)
+    app.add_handler(CommandHandler("stats_naturalness", stats_nat_cmd), group=-1)
+    app.add_handler(CallbackQueryHandler(nat_flag_cb, pattern=r"^nat:flag:"), group=-1)
     app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^ui:"), group=-1)

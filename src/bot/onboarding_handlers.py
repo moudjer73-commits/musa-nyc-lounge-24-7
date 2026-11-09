@@ -1,8 +1,12 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from src.bot.analyst_handlers import handle_analyzed_conversation_turn
-from src.llm.gemini_client import QuotaExceededError
+from src.llm.gemini_client import GeminiService, QuotaExceededError
 from src.models.profile import LearnerProfile
+
+
+def _is_live_gemini(llm) -> bool:
+    return isinstance(llm, GeminiService) and bool(getattr(llm, "clients", None))
 
 
 def format_profile_summary(profile: LearnerProfile) -> str:
@@ -25,9 +29,8 @@ def format_profile_summary(profile: LearnerProfile) -> str:
 
 
 async def route_learner_turn(container, user_id: int, learner_text: str) -> list[str]:
-    """In live Telegram (llm.configured=True), skip 3-turn onboarding lock and go straight to natural chat."""
     profile = container.profile_repo.get_or_create_profile(user_id)
-    if not profile.onboarding_completed and getattr(container.llm, "configured", False):
+    if not profile.onboarding_completed and _is_live_gemini(container.llm):
         profile.onboarding_completed = True
         container.profile_repo.save_profile(profile)
 
