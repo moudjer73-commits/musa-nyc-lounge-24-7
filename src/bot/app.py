@@ -1,25 +1,25 @@
+import asyncio
 import logging
+from collections import defaultdict
 from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from src.bot.ui_buttons import register_interactive_ui
 from src.alex.responder import AlexResponder
 from src.analyst.engine import AnalystEngine
 from src.bot.alex_handlers import register_alex_handlers
 from src.bot.analyst_handlers import register_analyst_handlers
 from src.bot.interaction_reentry_handlers import register_interaction_and_reentry_handlers
-from src.bot.onboarding_handlers import format_profile_summary, route_learner_turn
 from src.bot.phase3_handlers import register_phase3_handlers
 from src.bot.podcast_handlers import register_podcast_handlers
 from src.bot.pressure_tracking_handlers import register_pressure_and_tracking_handlers
 from src.bot.session_handlers import register_session_handlers
-from src.bot.ui_buttons import register_interactive_ui
-from src.bot.voice_io import send_alex_voice
 from src.chunks.scheduler import AcquisitionScheduler, ChunkBank
-from src.config import DB_PATH, SNAPSHOT_PASSPHRASE, SNAPSHOT_PATH
+from src.config import DB_PATH, SNAPSHOT_PASSPHRASE, SNAPSHOT_PATH, admin_user_ids
 from src.db.analyst_repo import AnalystRepository
 from src.db.chunk_repo import ChunkRepository
-from src.db.engine import get_connection, restore_encrypted_snapshot
+from src.db.engine import flush_pending_snapshots, get_connection, restore_encrypted_snapshot, set_snapshot_min_interval
 from src.db.podcast_repo import PodcastRepository
 from src.db.profile_repo import ProfileRepository
 from src.db.scene_repo import SceneRepository
@@ -31,11 +31,15 @@ from src.phase3.engine import Phase3Engine
 from src.podcast.pipeline import PodcastPipeline
 from src.pressure.engine import PressureTestEngine
 from src.prosody.lab import ProsodyLabEngine
+from src.naturalness import NaturalnessGauge
 from src.quality.guard import QualityGuard
 from src.register.engine import RegisterEngine
 from src.session.daily_manager import DailySessionManager
 from src.session.reentry import ReEntrySessionManager
 from src.tracking.progress import ProgressTracker
+from src.bot.onboarding_handlers import format_profile_summary, route_learner_turn
+from src.bot import voice_io
+from src.bot.voice_io import deliver_prepared_voice, send_alex_voice
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +62,9 @@ class LabContainer:
             restore_encrypted_snapshot(snapshot_path, db_path, passphrase)
 
         self.profile_repo = ProfileRepository(db_path, snapshot_path, passphrase)
+        # encrypting the whole DB on every tiny write made each reply slower; coalesce to one export per 30 s
+        if passphrase:
+            set_snapshot_min_interval(30.0)
         self.scene_repo = SceneRepository(db_path, snapshot_path, passphrase)
         self.analyst_repo = AnalystRepository(db_path, snapshot_path, passphrase)
         self.chunk_repo = ChunkRepository(db_path, snapshot_path, passphrase)
@@ -68,9 +75,10 @@ class LabContainer:
         self.reg_engine = RegisterEngine()
         self.chunk_bank = ChunkBank()
         self.scheduler = AcquisitionScheduler()
-
         self.onboarding_engine = OnboardingDiagnosisEngine(self.profile_repo, self.llm)
-        self.responder = AlexResponder(self.scene_repo, self.llm, self.guard)
+        self.responder = AlexResponder(
+            self.scene_repo, self.llm, self.guard, nat_gauge=NaturalnessGauge(db_path=db_path)
+        )
         self.analyst = AnalystEngine(self.analyst_repo, self.llm)
         self.session_mgr = DailySessionManager(self.chunk_repo, self.chunk_bank, self.scheduler, self.analyst)
         self.pressure_engine = PressureTestEngine(self.reg_engine)
@@ -82,7 +90,15 @@ class LabContainer:
         self.prosody_lab = ProsodyLabEngine()
         self.phase3_engine = Phase3Engine(self.profile_repo, self.chunk_repo, self.tracker, db_path, snapshot_path, passphrase)
 
+    def flush(self) -> None:
+        """Write any coalesced state to the encrypted snapshot (background loop and shutdown)."""
+        try:
+            flush_pending_snapshots()
+        except Exception:  # noqa: BLE001
+            logger.exception("snapshot flush failed")
+
     def purge_all_user_data(self, user_id: int) -> bool:
+        """Complete per-user privacy wipe across every table in Spoken English Lab."""
         self.scene_repo.delete_user_scenes(user_id)
         self.analyst_repo.delete_user_analyst_data(user_id)
         self.chunk_repo.delete_user_chunk_data(user_id)
@@ -92,12 +108,26 @@ class LabContainer:
             conn.execute("DELETE FROM podcast_learner_states WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM personal_podcast_budget WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM correction_ratings WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM nat_turn_log WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM nat_heard WHERE user_id = ?", (user_id,))
             conn.commit()
         return self.profile_repo.delete_user_data(user_id)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global safety net: any handler that raises still gives the learner a visible answer."""
     err = context.error
+    try:
+        from telegram.error import Conflict, NetworkError, TimedOut
+
+        if isinstance(err, Conflict):
+            logger.error("Telegram Conflict: another instance is polling this bot token (overlapping runner?)")
+            return
+        if isinstance(err, (NetworkError, TimedOut)) and not isinstance(update, Update):
+            logger.warning("Transient Telegram network error: %s", err)
+            return
+    except ImportError:
+        pass
     logger.error("Unhandled error while processing update", exc_info=err)
     if not isinstance(update, Update):
         return
@@ -112,6 +142,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def register_all_modules(app: Application, container: LabContainer) -> None:
+    """Single clean registration call wiring all 8 sprints into Telegram Application."""
     register_alex_handlers(app, container.scene_repo, container.responder, container.reg_engine, container.guard)
     register_analyst_handlers(app, container.profile_repo, container.analyst)
     register_session_handlers(app, container.chunk_repo, container.chunk_bank, container.session_mgr)
@@ -146,16 +177,23 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
 
     async def _deliver(update: Update, uid: int, replies: list[str]) -> None:
         from src.bot.ui_buttons import turn_action_keyboard
-        turn_counts = getattr(container.responder, "_user_turn_counts", {}) or {}
-        turn_no = turn_counts.get(uid, 1) if isinstance(turn_counts, dict) else 1
-        clean_replies = [str(r).strip() for r in replies if r and str(r).strip()]
-        for idx, r in enumerate(clean_replies):
-            is_last = (idx == len(clean_replies) - 1)
-            kb = turn_action_keyboard(f"{uid}:{turn_no}") if is_last else None
-            await update.message.reply_text(r, reply_markup=kb)
+        turn_no = container.responder._user_turn_counts.get(uid, 1)
         profile = container.profile_repo.get_or_create_profile(uid)
-        if profile.voice_replies and clean_replies:
-            await send_alex_voice(update.message, " ".join(clean_replies))
+        audio_task = None
+        if profile.voice_replies and replies:
+            # start synthesizing now so the voice note is ready by the time the text has been sent
+            audio_task = asyncio.create_task(voice_io.synthesize_mp3_bytes(" ".join(replies)))
+        try:
+            for idx, r in enumerate(replies):
+                is_last = (idx == len(replies) - 1)
+                kb = turn_action_keyboard(f"{uid}:{turn_no}") if is_last else None
+                await update.message.reply_text(r, reply_markup=kb)
+        except BaseException:
+            if audio_task:
+                audio_task.cancel()
+            raise
+        if audio_task:
+            await deliver_prepared_voice(update.message, audio_task)
 
     async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
@@ -180,8 +218,7 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
         p.voice_replies = (arg == "on") if arg in ("on", "off") else (not p.voice_replies)
         container.profile_repo.save_profile(p)
         await update.message.reply_text(
-            "🔊 Alex will now answer with voice notes."
-            if p.voice_replies
+            "🔊 Alex will now answer with voice notes." if p.voice_replies
             else "🔇 Voice replies are off. Alex will reply with text only (use /voice to turn them back on)."
         )
 
@@ -232,7 +269,7 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
             await _deliver(update, uid, replies)
         except (QuotaExceededError, LLMUnavailableError) as exc:
             await update.message.reply_text(str(exc))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - never leave the learner without an answer
             logger.exception("Text turn failed for user %s", uid)
             await update.message.reply_text(GENERIC_ERROR)
 
@@ -243,7 +280,7 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
         await _typing(update, context)
         try:
             tg_file = await update.message.voice.get_file()
-            raw_bytes = bytes(await tg_file.download_as_bytearray())
+            raw_bytes = bytes(await tg_file.download_as_bytearray())  # memory-only: never saved to disk
             transcript = await container.llm.transcribe_voice(
                 uid, raw_bytes, update.message.voice.mime_type or "audio/ogg"
             )
@@ -256,7 +293,7 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
             return
         try:
             await update.message.reply_text(f"🎙️ You said: {transcript}")
-            replies = await route_learner_turn(container, uid, transcript)
+            replies = await route_learner_turn(container, uid, transcript, voice_mode=True)
             await _deliver(update, uid, replies)
         except (QuotaExceededError, LLMUnavailableError) as exc:
             await update.message.reply_text(str(exc))
@@ -272,3 +309,4 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
     app.add_handler(CallbackQueryHandler(privacy_callback, pattern=r"^priv:"))
     app.add_handler(MessageHandler(filters.VOICE, voice_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+

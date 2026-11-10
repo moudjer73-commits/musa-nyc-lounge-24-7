@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import random
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,16 @@ ROOM_TO_PROFILE: dict[str, str] = {
 }
 
 
+def _kw_hit(keyword: str, low_text: str) -> bool:
+    """Word-aware keyword match: 'hi' must not fire inside 'this'; 'thank' still matches 'thanks'."""
+    kw = keyword.lower().strip()
+    if not kw:
+        return False
+    if len(kw) <= 3:
+        return re.search(r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])", low_text) is not None
+    return re.search(r"(?<![a-z0-9])" + re.escape(kw), low_text) is not None
+
+
 @dataclass
 class RouteBundle:
     profile_id: str
@@ -50,6 +61,13 @@ class RouteBundle:
     anchors: list[dict[str, Any]]
     dice: dict[str, Any]
     window_directives: list[str] = field(default_factory=list)
+
+    @property
+    def situation_name(self) -> str:
+        """Human label for the dashboard (never the raw room id)."""
+        return str(
+            self.profile.get("label") or self.profile.get("name") or self.profile_id.replace("_", " ").title()
+        )
 
 
 class NaturalnessRouter:
@@ -69,7 +87,7 @@ class NaturalnessRouter:
         low = user_text.lower()
         scored: list[tuple[int, dict[str, Any]]] = []
         for card in self.moves:
-            hits = sum(1 for kw in card.get("keywords", []) if kw in low)
+            hits = sum(1 for kw in card.get("keywords", []) if _kw_hit(kw, low))
             if tenor == "speaker_audience" and card.get("category") == "academic":
                 hits += 1
             if hits > 0:
@@ -77,7 +95,10 @@ class NaturalnessRouter:
         scored.sort(key=lambda x: x[0], reverse=True)
         if scored:
             return [c for _, c in scored[:max_cards]]
-        return [self.moves[0]]
+        general = [c for c in self.moves if c.get("category") in ("general", "react", "smalltalk")]
+        pool = general or self.moves
+        # rotate by text length so "no keyword" turns do not always get the very same card
+        return [pool[len(low) % len(pool)]]
 
     def select_anchors(
         self, tenor: str, mode: str, last_fn: str | None = None, count: int = 3, seed: int = 0
@@ -96,6 +117,7 @@ class NaturalnessRouter:
         turn_no: int,
         recent_dice_ids: list[str] | None = None,
         window_overrides: dict[str, Any] | None = None,
+        salt: str = "",
     ) -> tuple[dict[str, Any], list[str]]:
         recent = set((recent_dice_ids or [])[-3:])
         overrides = window_overrides or {}
@@ -116,7 +138,7 @@ class NaturalnessRouter:
         if overrides.get("avoid_opener"):
             directives.append(f"Do NOT start your reply with '{overrides['avoid_opener']}'.")
 
-        rng = random.Random(f"{user_id}:{turn_no}")
+        rng = random.Random(f"{user_id}:{turn_no}:{salt}")
         weights = [int(i.get("w", 1)) for i in candidates]
         chosen = rng.choices(candidates, weights=weights, k=1)[0]
         return chosen, directives
@@ -131,6 +153,7 @@ class NaturalnessRouter:
         recent_dice_ids: list[str] | None = None,
         last_fn: str | None = None,
         window_overrides: dict[str, Any] | None = None,
+        salt: str = "",
     ) -> RouteBundle:
         profile_id = ROOM_TO_PROFILE.get(room, "friend_text")
         if voice_mode and profile_id == "friend_text":
@@ -142,8 +165,8 @@ class NaturalnessRouter:
         mode = "spoken" if voice_mode else profile.get("mode", "text")
 
         moves = self.select_moves(user_text, tenor=tenor)
-        anchors = self.select_anchors(tenor=tenor, mode=mode, last_fn=last_fn, count=3, seed=user_id + turn_no)
-        dice, directives = self.roll_dice(user_id, turn_no, recent_dice_ids, window_overrides)
+        anchors = self.select_anchors(tenor=tenor, mode=mode, last_fn=last_fn, count=3, seed=hash((user_id, turn_no, salt)) & 0xFFFFFFFF)
+        dice, directives = self.roll_dice(user_id, turn_no, recent_dice_ids, window_overrides, salt)
         return RouteBundle(
             profile_id=profile_id,
             profile=profile,
@@ -154,3 +177,4 @@ class NaturalnessRouter:
             dice=dice,
             window_directives=directives,
         )
+

@@ -8,7 +8,7 @@ from src.config import (
     SNAPSHOT_PASSPHRASE,
     SNAPSHOT_PATH,
 )
-from src.db.engine import export_encrypted_snapshot, get_connection
+from src.db.engine import export_encrypted_snapshot, flush_pending_snapshots, get_connection
 from src.models.profile import LearnerProfile
 
 
@@ -28,6 +28,9 @@ class ProfileRepository:
     def _sync_snapshot(self) -> None:
         if self.passphrase:
             export_encrypted_snapshot(self.db_path, self.snapshot_path, self.passphrase)
+
+    def flush_snapshot(self) -> None:
+        flush_pending_snapshots()
 
     def get_or_create_profile(self, user_id: int) -> LearnerProfile:
         with get_connection(self.db_path) as conn:
@@ -110,6 +113,16 @@ class ProfileRepository:
             conn.commit()
             return True, new_count
 
+    def refund_quota(self, user_id: int) -> None:
+        """Give back one call (used when the LLM failed and the learner got nothing)."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        with get_connection(self.db_path) as conn:
+            conn.execute(
+                "UPDATE daily_usage SET llm_calls = MAX(llm_calls - 1, 0) WHERE user_id = ? AND usage_date = ?",
+                (user_id, today),
+            )
+            conn.commit()
+
     def delete_user_data(self, user_id: int) -> bool:
         with get_connection(self.db_path) as conn:
             c1 = conn.execute("DELETE FROM learner_profiles WHERE user_id = ?", (user_id,)).rowcount
@@ -118,3 +131,4 @@ class ProfileRepository:
             conn.commit()
         self._sync_snapshot()
         return (c1 + c2 + c3) > 0
+

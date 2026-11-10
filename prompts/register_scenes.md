@@ -1,10 +1,9 @@
-ACTIVE SCENE PARAMETERS:
-- Room ID: {room_id}
+SCENE (background context only; SITUATION PROFILE and DICE DIRECTIVE below decide length and shape):
+- Room: {room_id}
 - Setting: {setting} (casual / social / professional / intellectual)
 - Relationship: {relationship} (equal / hierarchical / unfamiliar / close)
-- Target Speech Function: {function}
-- Calibrated Directness: {directness} (diplomatic / balanced / firm)
-- Tone Flavor: {flavor}
+- Speech function in play: {function}
+- Directness: {directness} (diplomatic / balanced / firm)
+- Tone: {flavor}
 - Topic: {topic}
-- Cadence Guard: {cadence_directive}
-Respond naturally as Alex in 1 to 3 spoken sentences.
+- Cadence: {cadence_directive}

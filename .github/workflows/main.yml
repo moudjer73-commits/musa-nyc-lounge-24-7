@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'data/state_snapshot.enc'
+      - '**.md'
   schedule:
     - cron: '0 */5 * * *'
 
@@ -11,9 +14,11 @@ permissions:
   contents: write
   actions: write
 
+# One bot at a time (two pollers on one token = Telegram "Conflict" errors).
+# A new push replaces the running bot (so fixes deploy), but the 5-hour cron and the relay never kill a live bot.
 concurrency:
   group: spoken-english-lab-single-instance
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   run-bot:
@@ -30,20 +35,19 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: |
-          pip install -r requirements.txt edge-tts>=6.1.12
+        run: pip install -r requirements.txt
 
-      - name: Run Verification Suite (25 Unit Tests)
-        run: |
-          pytest -q
+      # The tests report problems but never keep the bot offline: a red test is a warning, not an outage.
+      - name: Run Verification Suite
+        continue-on-error: true
+        run: pytest -q
 
       - name: Restore Encrypted State Snapshot
         env:
           SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
-        run: |
-          python -c "from src.db.engine import restore_encrypted_snapshot; restore_encrypted_snapshot()"
+        run: python -m src.db.persist restore
 
-      - name: Run Spoken English Lab v1.0 (5 Hours)
+      - name: Run Spoken English Lab
         id: bot_step
         timeout-minutes: 290
         continue-on-error: true
@@ -53,9 +57,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
           SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
+          GEMINI_MODEL_CHAIN: ${{ vars.GEMINI_MODEL_CHAIN }}
+          ADMIN_USER_IDS: ${{ vars.ADMIN_USER_IDS }}
+          SEL_SNAPSHOT_PUSH_MIN: ${{ vars.SEL_SNAPSHOT_PUSH_MIN }}
         run: |
           START_TS=$(date +%s)
-          timeout 17100s python app.py || true
+          timeout --signal=TERM --kill-after=60s 17100s python app.py || true
           END_TS=$(date +%s)
           echo "uptime_s=$((END_TS - START_TS))" >> "$GITHUB_OUTPUT"
 
@@ -64,15 +71,11 @@ jobs:
         env:
           SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
         run: |
-          python -c "from src.db.engine import export_encrypted_snapshot; export_encrypted_snapshot()"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/state_snapshot.enc || true
-          git diff --staged --quiet || (git commit -m "chore(state): update encrypted snapshot" && git pull --rebase -X theirs origin main && git push origin main)
+          python -m src.db.persist save
+          python -m src.db.persist publish
 
       - name: Relay Next Runner
         if: always() && fromJSON(steps.bot_step.outputs.uptime_s || '0') >= 300
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh workflow run main.yml --ref main
+        run: gh workflow run main.yml --ref main

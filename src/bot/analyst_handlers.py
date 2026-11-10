@@ -14,12 +14,16 @@ async def handle_analyzed_conversation_turn(
     scene_repo: SceneRepository,
     analyst: AnalystEngine,
     responder: AlexResponder,
+    voice_mode: bool = False,
 ) -> list[str]:
+    """Coordinates Analyst + Alex per turn without ever exposing raw Analyst JSON.
+
+    voice_mode=True (the learner sent a voice note) routes to the spoken 'friend_voice' profile.
+    """
     if getattr(responder.llm, "configured", False):
-        alex_reply, _, _ = await responder.reply(user_id=user_id, learner_text=learner_text)
+        alex_reply, _, _ = await responder.reply(user_id=user_id, learner_text=learner_text, voice_mode=voice_mode)
         segments = getattr(responder, "last_segments", {}).get(user_id) or [alex_reply]
         return list(segments)
-    """Coordinates Analyst + Alex per turn without ever exposing raw Analyst JSON."""
     profile = profile_repo.get_or_create_profile(user_id)
     scene = scene_repo.get_active_scene(user_id)
     decision = await analyst.analyze_turn(profile, scene, session_id, learner_text)
@@ -35,6 +39,7 @@ async def handle_analyzed_conversation_turn(
         user_id=user_id,
         learner_text=learner_text,
         recast_phrase=decision.recast_phrase_for_alex,
+        voice_mode=voice_mode,
     )
     messages.append(alex_reply)
 
@@ -75,3 +80,4 @@ def register_analyst_handlers(
 
     app.add_handler(CommandHandler("hint", hint_cmd))
     app.add_handler(CommandHandler("summary", summary_cmd))
+

@@ -124,9 +124,11 @@ def register_alex_handlers(
     async def stats_nat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
             return
-        rep = responder.nat_gauge.weekly_report()
+        uid = update.effective_user.id
+        from src.config import admin_user_ids
+        rep = responder.nat_gauge.weekly_report(user_id=None if uid in admin_user_ids() else uid)
         if rep.get("total_messages", 0) == 0:
-            await update.message.reply_text("No naturalness logs recorded in this run yet.")
+            await update.message.reply_text("No naturalness logs recorded this week yet.")
             return
         await update.message.reply_text(
             f"📊 Naturalness Gauge Report\n"
@@ -145,8 +147,11 @@ def register_alex_handlers(
         uid = update.effective_user.id
         msg_id = (query.data or "").replace("nat:flag:", "", 1)
         ctx_turns = scene_repo.get_recent_turns(uid, limit=4)
-        responder.nat_gauge.flag_artificial(msg_id, context_turns=ctx_turns)
-        await query.answer("🎭 Logged as artificial (with 4 turns of context).")
+        ok = responder.nat_gauge.flag_artificial(msg_id, context_turns=ctx_turns, user_id=uid)
+        try:
+            await query.answer("🎭 Logged as artificial (with 4 turns of context)." if ok else "Already logged or too old.")
+        except Exception:  # noqa: BLE001 - stale button
+            pass
 
     app.add_handler(CommandHandler("room", room_cmd))
     app.add_handler(CommandHandler("switch", switch_cmd))
@@ -156,3 +161,4 @@ def register_alex_handlers(
     app.add_handler(CommandHandler("flip", flip_cmd))
     app.add_handler(CommandHandler("stats_naturalness", stats_nat_cmd))
     app.add_handler(CallbackQueryHandler(flag_artificial_cb, pattern=r"^nat:flag:"))
+

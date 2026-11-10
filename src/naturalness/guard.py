@@ -56,7 +56,8 @@ class NaturalnessGuard:
             first_low = sentences[0].lower()
             for opener in self.hard_openers:
                 op_low = opener.lower()
-                if first_low.startswith(op_low):
+                # an AI-ism opener is "Certainly!" / "Absolutely," ... not "Absolutely not, I can't."
+                if re.match(r"^" + re.escape(op_low) + r"(?:\s*[!.,:;]|\s*$)", first_low):
                     hits.append(f"hard_opener:{opener}")
                     if len(sentences) > 1:
                         sentences = sentences[1:]
@@ -183,5 +184,7 @@ class NaturalnessGuard:
         s = re.sub(r"\brn\b", "right now", s, flags=re.I)
         s = re.sub(r"\blol\b", "", s, flags=re.I)
         for k, v in num_map.items():
-            s = re.sub(r"\b" + k + r"\b", v, s)
+            # only bare standalone digits: leave 3:30, 2.5, $5, 10%, 1,000 and 2024 alone
+            s = re.sub(r"(?<![\w.:$,/-])" + k + r"(?![\w.:%,/-])", v, s)
         return re.sub(r"\s{2,}", " ", s).strip()
+

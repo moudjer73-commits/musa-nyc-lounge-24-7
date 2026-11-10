@@ -1,4 +1,4 @@
-import json
+import asyncio
 import logging
 import random
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -8,6 +8,7 @@ from src.naturalness import LearnerLabTools
 
 logger = logging.getLogger(__name__)
 
+# المواقف الأساسية + الإضافية (مرتبة في 7 صفوف داخل rooms_keyboard لتوافق الاختبارات)
 ROOM_CHOICES: list[tuple[str, str]] = [
     ("casual_friends", "💬 Close Friend — Texting (Sam)"),
     ("casual_roommate", "🎙️ Close Friend — Voice Catch-Up (Sam)"),
@@ -68,6 +69,7 @@ class _UpdateProxy:
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
+    """5-row Naturalness Lab Dashboard (zero legacy Sprint 1-8 textbook dumps)."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🎭 Situation & Partner", callback_data="ui:menu:room"),
@@ -201,15 +203,19 @@ def register_interactive_ui(app: Application, container) -> None:
         if not update.effective_user or not update.message:
             return
         uid = update.effective_user.id
+        if update.effective_chat:
+            # ~10 sequential Telegram API calls: do them in the background so the dashboard appears immediately
+            async def _clear(chat_id: int) -> None:
+                try:
+                    await clear_stale_chat_commands(context.bot, chat_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("clear_stale_chat_commands warning: %s", exc)
+
+            asyncio.create_task(_clear(update.effective_chat.id))
         await update.message.reply_text(
             _dashboard_card_text(container, uid),
             reply_markup=main_menu_keyboard(),
         )
-        if update.effective_chat:
-            try:
-                await clear_stale_chat_commands(context.bot, update.effective_chat.id)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("clear_stale_chat_commands warning: %s", exc)
         raise ApplicationHandlerStop
 
     async def room_ui_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -220,60 +226,14 @@ def register_interactive_ui(app: Application, container) -> None:
             )
             raise ApplicationHandlerStop
 
-    async def flip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message:
-            return
-        uid = update.effective_user.id
-        target = context.args[0] if context.args else "work_peer"
-        recent = container.scene_repo.get_recent_turns(uid, role="alex", limit=1)
-        last_line = recent[-1] if recent else "Hey, I can't make it tonight, rain check?"
-        prompt = LearnerLabTools.build_flip_situation_prompt(last_line, target)
-        out = await container.llm.generate_text(uid, "You are a concise American English pragmatics coach.", prompt)
-        await update.message.reply_text(f"🔄 [{target}]\n{out}")
-
-    async def ladder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message:
-            return
-        uid = update.effective_user.id
-        intent = " ".join(context.args).strip() if context.args else ""
-        if not intent:
-            recent_user = container.scene_repo.get_recent_turns(uid, role="learner", limit=1)
-            intent = recent_user[-1] if recent_user else "I can't make it to the meeting today, can we reschedule?"
-        prompt = LearnerLabTools.build_register_ladder_prompt(intent)
-        out = await container.llm.generate_text(uid, "You are a concise American English pragmatics coach.", prompt)
-        await update.message.reply_text(f'🪜 Register Ladder for: "{intent}"\n\n{out}')
-
-    async def heard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message:
-            return
-        uid = update.effective_user.id
-        phrase = " ".join(context.args).strip().strip('"')
-        if not phrase:
-            await update.message.reply_text('Usage: /heard "phrase you heard"')
-            return
-        scene = container.scene_repo.get_active_scene(uid)
-        container.responder.nat_gauge.add_to_notebook(uid, phrase, scene.room_id)
-        await update.message.reply_text(f'👂 Saved to your Real-Life Notebook: "{phrase}"')
-
-    async def stats_nat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.message:
-            return
-        rep = container.responder.nat_gauge.weekly_report()
-        await update.message.reply_text(f"📈 Naturalness Gauge: {json.dumps(rep, indent=2)}")
-
-    async def nat_flag_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        query = update.callback_query
-        if not query or not query.data:
-            return
-        msg_id = query.data.split("nat:flag:", 1)[1]
-        container.responder.nat_gauge.flag_artificial(msg_id)
-        await query.answer("Logged as artificial 🎭 — adjusting naturalness!")
-
     async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if not query or not query.data or not update.effective_user or not query.message:
             return
-        await query.answer()
+        try:
+            await query.answer()  # clears the button spinner; raises for buttons older than ~48 h
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("query.answer failed (stale button?): %s", exc)
         uid = update.effective_user.id
         data = query.data
 
@@ -357,19 +317,20 @@ def register_interactive_ui(app: Application, container) -> None:
 
         if data == "ui:menu:podcast":
             await query.message.reply_text("🎧 Generating Maya & Jordan dialogue podcast... (takes ~12s)")
-            ep = await container.podcast_pipeline.generate_daily_episode(uid)
+            try:
+                ep = await container.podcast_pipeline.generate_daily_episode(uid)
+            except Exception as exc:  # noqa: BLE001 - LLM down / quota: say so instead of a generic error
+                logger.warning("Podcast generation failed for %s: %s", uid, exc)
+                await query.message.reply_text(
+                    str(exc) if exc.__class__.__name__ in ("QuotaExceededError", "LLMUnavailableError")
+                    else "I couldn't build the episode right now. Try again in a minute."
+                )
+                return
             await query.message.reply_text(f"🎧 {ep.title}\n\n{ep.transcript[:3500]}")
             return
 
         if data == "ui:menu:notebook":
-            nb_path = container.responder.nat_gauge.notebook_path
-            entries = []
-            if nb_path.exists():
-                for line in nb_path.read_text(encoding="utf-8").splitlines():
-                    if line.strip():
-                        row = json.loads(line)
-                        if row.get("user_id") == uid:
-                            entries.append(row.get("phrase", ""))
+            entries = container.responder.nat_gauge.heard_for(uid, limit=10)
             if not entries:
                 await query.message.reply_text(
                     "👂 Your Real-Life Notebook is empty so far.\n\n"
@@ -393,10 +354,10 @@ def register_interactive_ui(app: Application, container) -> None:
             return
 
         if data == "ui:menu:gauge":
-            rep = container.responder.nat_gauge.weekly_report()
+            rep = container.responder.nat_gauge.weekly_report(user_id=uid)
             if rep.get("total_messages", 0) == 0:
                 await query.message.reply_text(
-                    "📈 Naturalness Gauge\nNo conversation turns logged in this session yet—send a message first!"
+                    "📈 Naturalness Gauge\nNo conversation turns logged this week yet—send a message first!"
                 )
                 return
             await query.message.reply_text(
@@ -429,9 +390,5 @@ def register_interactive_ui(app: Application, container) -> None:
 
     app.add_handler(CommandHandler("start", start_ui_cmd), group=-1)
     app.add_handler(CommandHandler("room", room_ui_cmd), group=-1)
-    app.add_handler(CommandHandler("flip", flip_cmd), group=-1)
-    app.add_handler(CommandHandler("ladder", ladder_cmd), group=-1)
-    app.add_handler(CommandHandler("heard", heard_cmd), group=-1)
-    app.add_handler(CommandHandler("stats_naturalness", stats_nat_cmd), group=-1)
-    app.add_handler(CallbackQueryHandler(nat_flag_cb, pattern=r"^nat:flag:"), group=-1)
-    app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^ui:"), group=-1)
+    app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^ui:"))
+

@@ -10,13 +10,36 @@ PROMPTS_DIR = BASE_DIR / "prompts"
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-DB_PATH = Path(os.getenv("SEL_DB_PATH", str(DATA_DIR / "spoken_english_lab.db")))
-SNAPSHOT_PATH = Path(os.getenv("SEL_SNAPSHOT_PATH", str(DATA_DIR / "state_snapshot.enc")))
+DB_PATH = Path(os.getenv("SEL_DB_PATH") or str(DATA_DIR / "spoken_english_lab.db"))
+SNAPSHOT_PATH = Path(os.getenv("SEL_SNAPSHOT_PATH") or str(DATA_DIR / "state_snapshot.enc"))
 SNAPSHOT_PASSPHRASE = os.getenv("SNAPSHOT_PASSPHRASE", "")
 
-PRIMARY_GEMINI_MODEL = os.getenv("GEMINI_PRIMARY_MODEL", "gemini-3.8-flash")
-FALLBACK_GEMINI_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
-DEFAULT_DAILY_USER_LLM_BUDGET = int(os.getenv("DAILY_USER_LLM_BUDGET", "80"))
+
+def _env(name: str, default: str) -> str:
+    """os.getenv that treats an EMPTY value as unset (GitHub Actions passes unset vars as "")."""
+    return (os.getenv(name) or "").strip() or default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(_env(name, str(default)))
+    except ValueError:
+        return default
+
+
+PRIMARY_GEMINI_MODEL = _env("GEMINI_PRIMARY_MODEL", "gemini-3.8-flash")
+FALLBACK_GEMINI_MODEL = _env("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
+DEFAULT_DAILY_USER_LLM_BUDGET = _env_int("DAILY_USER_LLM_BUDGET", 80)
+SNAPSHOT_PUSH_MINUTES = _env_int("SEL_SNAPSHOT_PUSH_MIN", 60)  # 0 disables the in-run git publish
+
+
+def admin_user_ids() -> set[int]:
+    ids: set[int] = set()
+    for part in _env("ADMIN_USER_IDS", "").replace(";", ",").split(","):
+        if part.strip().isdigit():
+            ids.add(int(part.strip()))
+    return ids
+
 
 RECALIBRATION_INTERVAL_DAYS = 28
 ONBOARDING_TURNS_PER_SESSION = 4
@@ -90,3 +113,4 @@ def gemini_model_chain() -> list[str]:
         if n not in chain:
             chain.append(n)
     return chain
+
