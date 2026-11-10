@@ -35,7 +35,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt && pip install -U edge-tts
 
       # The tests report problems but never keep the bot offline: a red test is a warning, not an outage.
       - name: Run Verification Suite
@@ -56,8 +56,9 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
+          GEMINI_MODEL_CHAIN: "${{ vars.GEMINI_MODEL_CHAIN || 'gemini-3.5-flash-lite,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-3.8-flash' }}"
           SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
-          GEMINI_MODEL_CHAIN: ${{ vars.GEMINI_MODEL_CHAIN }}
+          GEMINI_MODEL_CHAIN: "${{ vars.GEMINI_MODEL_CHAIN || 'gemini-3.5-flash-lite,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-3.8-flash' }}"
           ADMIN_USER_IDS: ${{ vars.ADMIN_USER_IDS }}
           SEL_SNAPSHOT_PUSH_MIN: ${{ vars.SEL_SNAPSHOT_PUSH_MIN }}
         run: |

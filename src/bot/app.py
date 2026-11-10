@@ -175,11 +175,39 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
         except Exception:  # noqa: BLE001
             pass
 
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _typing_pulse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await _typing(update, context)
+        stop = asyncio.Event()
+
+        async def _beat() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=4.0)
+                except asyncio.TimeoutError:
+                    await _typing(update, context)
+
+        beat_task = asyncio.create_task(_beat())
+        try:
+            yield
+        finally:
+            stop.set()
+            beat_task.cancel()
+            try:
+                await beat_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
     async def _deliver(update: Update, uid: int, replies: list[str]) -> None:
         from src.bot.ui_buttons import turn_action_keyboard
         turn_no = container.responder._user_turn_counts.get(uid, 1)
         profile = container.profile_repo.get_or_create_profile(uid)
         audio_task = None
+        replies = [r.strip() for r in replies if isinstance(r, str) and r.strip()]
+        if not replies:
+            replies = ["Got it, makes sense."]
         if profile.voice_replies and replies:
             # start synthesizing now so the voice note is ready by the time the text has been sent
             audio_task = asyncio.create_task(voice_io.synthesize_mp3_bytes(" ".join(replies)))
@@ -264,14 +292,22 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
             return
         uid = update.effective_user.id
         await _typing(update, context)
+        async def _keep_typing() -> None:
+            while True:
+                await asyncio.sleep(4.0)
+                await _typing(update, context)
+        typing_task = asyncio.create_task(_keep_typing())
         try:
             replies = await route_learner_turn(container, uid, update.message.text)
+            typing_task.cancel()
             await _deliver(update, uid, replies)
         except (QuotaExceededError, LLMUnavailableError) as exc:
             await update.message.reply_text(str(exc))
         except Exception:  # noqa: BLE001 - never leave the learner without an answer
             logger.exception("Text turn failed for user %s", uid)
             await update.message.reply_text(GENERIC_ERROR)
+        finally:
+            typing_task.cancel()
 
     async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.voice:

@@ -2,24 +2,24 @@ import asyncio
 import logging
 import time
 from typing import Any, Type, TypeVar
-
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
-
 from src.config import gemini_model_chain, resolve_gemini_keys
 from src.db.profile_repo import ProfileRepository
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
-MAX_ATTEMPTS_PER_CALL = 6  # minimum cap; raised automatically to len(keys) x len(models)
-DEAD_PAIR_TTL_S = 1800  # a (key, model) pair that answered 404 is skipped for 30 minutes
-RATE_MINUTE_COOLDOWN_S = 65  # per-minute 429: that pair is skipped for just over a minute
-RATE_DAY_COOLDOWN_S = 3600  # per-day 429: skip the pair for an hour (re-checked hourly, no hammering)
-CALL_TIMEOUT_S = 40.0  # one generate_content attempt (text); a hung socket must never freeze the chat
-AUDIO_TIMEOUT_S = 75.0  # voice transcription attempt
-HTTP_TIMEOUT_MS = 60_000  # SDK-level timeout, a second safety net below the asyncio one
+MAX_ATTEMPTS_PER_CALL = 6
+DEAD_PAIR_TTL_S = 1800
+RATE_MINUTE_COOLDOWN_S = 65
+RATE_DAY_COOLDOWN_S = 3600
+TRANSIENT_PAIR_COOLDOWN_S = 60
+MODEL_OVERLOAD_COOLDOWN_S = 180
+CALL_TIMEOUT_S = 12.0
+AUDIO_TIMEOUT_S = 60.0
+HTTP_TIMEOUT_MS = 14_000
 
 
 class QuotaExceededError(RuntimeError):
@@ -53,13 +53,6 @@ def _classify(exc: Exception) -> str:
 
 
 def _thinking_config_for(model: str):
-    """Per-model 'think less, answer fast' config. Returns None when the model family is unknown.
-
-    * gemini-2.5-flash / 2.5-flash-lite accept thinking_budget=0 (thinking off).
-    * gemini-3.x models use thinking_level; 'low' is accepted across the 3.x line.
-    * Anything else gets no thinking config at all (an unsupported field is a 400, not a speed-up).
-    VERIFY: names/levels against https://ai.google.dev/gemini-api/docs/thinking when Google changes models.
-    """
     if not hasattr(types, "ThinkingConfig"):
         return None
     name = model.lower()
@@ -68,13 +61,12 @@ def _thinking_config_for(model: str):
             return types.ThinkingConfig(thinking_budget=0)
         if name.startswith("gemini-3"):
             return types.ThinkingConfig(thinking_level="low")
-    except Exception:  # noqa: BLE001 - older SDK without the field
+    except Exception:  # noqa: BLE001
         return None
     return None
 
 
 def _rate_cooldown(exc: Exception) -> float:
-    """429 text mentions PerDay or PerMinute quota ids; day-limits cool down much longer."""
     text = str(exc).lower()
     if "perday" in text or "per day" in text or "daily" in text:
         return RATE_DAY_COOLDOWN_S
@@ -91,17 +83,18 @@ class GeminiService:
         self.repo = repo
         keys = [api_key] if api_key else resolve_gemini_keys()
         self.clients = [self._make_client(k) for k in keys if k]
-        self.client = self.clients[0] if self.clients else None  # backwards-compatible alias
+        self.client = self.clients[0] if self.clients else None
         self._dead_pairs: dict[tuple[int, str], float] = {}
         self._cooldown_until: dict[tuple[int, str], float] = {}
+        self._model_cooldown_until: dict[str, float] = {}
         self._no_thinking: set[tuple[int, str]] = set()
-        self._cursor = 0  # round-robin start so friends' traffic spreads over all keys
+        self._cursor = 0
 
     @staticmethod
     def _make_client(key: str):
         try:
             return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=HTTP_TIMEOUT_MS))
-        except Exception:  # noqa: BLE001 - older SDK: fall back to the default client
+        except Exception:  # noqa: BLE001
             return genai.Client(api_key=key)
 
     @property
@@ -111,7 +104,7 @@ class GeminiService:
     def _refund(self, user_id: int) -> None:
         try:
             self.repo.refund_quota(user_id)
-        except Exception:  # noqa: BLE001 - refund is best-effort
+        except Exception:  # noqa: BLE001
             logger.exception("quota refund failed")
 
     async def _call(
@@ -122,12 +115,6 @@ class GeminiService:
         thinking: bool = False,
         timeout_s: float | None = None,
     ) -> str:
-        """Try every (key, model) pair with failover. Never raises anything but LLMUnavailableError.
-
-        thinking=True adds a model-appropriate ThinkingConfig (see _thinking_config_for); on a 400 that mentions
-        'thinking' the same pair is retried once without it, so one wrong model/field combination cannot burn
-        the whole chain.
-        """
         if not self.clients:
             raise LLMUnavailableError("no GEMINI_API_KEY configured")
         timeout_s = CALL_TIMEOUT_S if timeout_s is None else timeout_s
@@ -139,7 +126,13 @@ class GeminiService:
         max_attempts = max(MAX_ATTEMPTS_PER_CALL, len(self.clients) * len(models))
         last_reason = ""
 
+        now_init = time.monotonic()
+        has_uncooled_model = any(now_init >= self._model_cooldown_until.get(m, 0.0) for m in models)
+
         for model_name in models:
+            if has_uncooled_model and time.monotonic() < self._model_cooldown_until.get(model_name, 0.0):
+                continue
+            consec_overload = 0
             for offset in range(len(self.clients)):
                 idx = (start + offset) % len(self.clients)
                 if idx in dead_keys or attempts >= max_attempts:
@@ -175,25 +168,35 @@ class GeminiService:
                     except asyncio.TimeoutError:
                         last_reason = f"timeout after {timeout_s:.0f}s on {model_name}"
                         logger.warning("Gemini timeout on %s (key #%d)", model_name, idx)
-                        break  # next key/model immediately: the user is already waiting
-                    except Exception as exc:  # noqa: BLE001 - classify and fail over
+                        consec_overload += 1
+                        if len(self.clients) > 1:
+                            self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_PAIR_COOLDOWN_S
+                        break
+                    except Exception as exc:  # noqa: BLE001
                         kind = _classify(exc)
                         last_reason = f"{kind}: {exc}"
                         logger.warning("Gemini %s failure on %s (key #%d): %s", kind, model_name, idx, exc)
                         if use_thinking and _pass == 0 and _is_thinking_error(exc):
                             self._no_thinking.add((idx, model_name))
                             use_thinking = False
-                            continue  # same pair, once, without thinking config
+                            continue
                         if kind == "model":
-                            # "no longer available to new users" can differ per key/project: block only this pair
                             self._dead_pairs[(idx, model_name)] = time.monotonic()
                         elif kind == "auth":
                             dead_keys.add(idx)
                         elif kind == "rate":
                             self._cooldown_until[(idx, model_name)] = time.monotonic() + _rate_cooldown(exc)
                         elif kind == "transient":
-                            await asyncio.sleep(0.8)
+                            consec_overload += 1
+                            if len(self.clients) > 1:
+                                self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_PAIR_COOLDOWN_S
+                            await asyncio.sleep(0.3)
                         break
+                # If 2 keys failed with 503/504 on this model, the model itself is overloaded — jump to next model now
+                if consec_overload >= 2 and len(models) > 1:
+                    self._model_cooldown_until[model_name] = time.monotonic() + MODEL_OVERLOAD_COOLDOWN_S
+                    logger.warning("Cooling down overloaded model %s for %ds", model_name, MODEL_OVERLOAD_COOLDOWN_S)
+                    break
         raise LLMUnavailableError(last_reason)
 
     def _charge(self, user_id: int) -> None:
@@ -209,7 +212,7 @@ class GeminiService:
         try:
             return await self._call(user_prompt, cfg, thinking=True)
         except LLMUnavailableError:
-            self._refund(user_id)  # a failed call must not eat the learner's daily budget
+            self._refund(user_id)
             raise
 
     async def generate_structured(
@@ -230,7 +233,7 @@ class GeminiService:
             response_schema=schema_cls,
             temperature=0.2,
         )
-        for _ in range(2):  # second pass covers schema-validation failures
+        for _ in range(2):
             try:
                 raw = await self._call(user_prompt, config, thinking=True)
                 return schema_cls.model_validate_json(raw)
@@ -238,7 +241,7 @@ class GeminiService:
                 logger.warning("Structured call unavailable, using engine fallback: %s", exc.reason)
                 self._refund(user_id)
                 return fallback_instance
-            except Exception as exc:  # noqa: BLE001 - invalid JSON / schema mismatch
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Structured output failed validation: %s", exc)
         self._refund(user_id)
         return fallback_instance

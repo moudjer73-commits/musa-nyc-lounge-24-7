@@ -211,6 +211,9 @@ class AlexResponder:
             self._sanitize_fallback(seg, force_statement=force_statement) for seg in guard_res.segments if seg.strip()
         ]
         draft = "\n\n".join(cleaned_segments) if cleaned_segments else self._sanitize_fallback(guard_res.text, force_statement)
+        if not draft.strip():
+            draft = "Yeah, fair point."
+            cleaned_segments = [draft]
         self.last_segments[user_id] = cleaned_segments or [draft]
 
         audit = self.guard.audit_turns((recent_alex[-3:] + [draft]), scene)

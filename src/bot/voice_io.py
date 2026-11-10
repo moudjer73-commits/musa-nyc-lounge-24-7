@@ -87,3 +87,17 @@ async def deliver_prepared_voice(message, audio_task) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Sending Alex voice failed: %s", exc)
         return False
+
+import asyncio as _vio_asyncio
+_raw_synthesize_mp3_bytes = synthesize_mp3_bytes
+
+
+async def synthesize_mp3_bytes(text: str, voice: str = ALEX_VOICE, rate: str = "+0%") -> bytes | None:
+    cleaned = clean_for_tts(text) if text else ""
+    if not cleaned or not any(ch.isalnum() for ch in cleaned):
+        return None
+    try:
+        return await _vio_asyncio.wait_for(_raw_synthesize_mp3_bytes(text, voice=voice, rate=rate), timeout=12.0)
+    except Exception:  # noqa: BLE001
+        return None
+
