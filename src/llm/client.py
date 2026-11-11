@@ -237,6 +237,7 @@ class GeminiClient:
         fallback: T,
         *,
         deep_chat: bool = False,
+        temperature: float = 0.25,
     ) -> T:
         if not self.clients:
             return fallback
@@ -245,7 +246,7 @@ class GeminiClient:
             system_instruction=system_prompt,
             response_mime_type="application/json",
             response_schema=schema_cls,
-            temperature=0.25,
+            temperature=temperature,
         )
         for _ in range(2):
             try:

@@ -7,58 +7,69 @@ from src.config import ECHO_TWIN_ENABLED
 from src.db.repo import HABIT_LABELS, TwinRepository
 from src.llm.client import GeminiClient
 from src.twin.calques import detect_code_switch, is_repair_request, scan_transfers
+from src.twin.corpus_guard import (
+    REGISTER_CORPUS_RULES,
+    SPOKEN_US_DNA,
+    has_contrived_buzz,
+    scrub_contrived_english,
+)
 
 ANGLE_META = {
     "casual_sharp": {
         "name": "Malik",
         "short_btn": "⚡ Malik · Everyday",
         "badge": "⚡ Malik · Everyday US",
-        "opener": "Hey! Good timing—just taking a quick breather. How's your day going?",
+        "opener": "Hey, what's going on? How's your week going so far?",
         "voice_desc": (
-            "You are Malik, a warm, sharp, down-to-earth American friend from Chicago. "
-            "Natural spoken US English, contractions always, easy rapport, light dry wit—never mean, never long-winded."
+            "You are Malik, an observant, easygoing 32-year-old American friend. "
+            "Speak plain, relaxed everyday US English—natural contractions, common phrasal verbs (end up, figure out, "
+            "turn out, run into), understated human warmth. Zero forced slang, zero trying to sound hip or theatrical."
         ),
     },
     "exec_clock": {
         "name": "Claire",
         "short_btn": "💼 Claire · Work/Exec",
-        "badge": "💼 Claire · Strategy & Work",
-        "opener": "Hey—glad I caught you between calls. Walk me through what you're tackling right now.",
+        "badge": "💼 Claire · Workplace US",
+        "opener": "Hey—got a few minutes before my next meeting. What are you working on?",
         "voice_desc": (
-            "You are Claire, a crisp, supportive US strategy director in New York. "
-            "Collegial, practical, bottom-line-up-front spoken workplace English."
+            "You are Claire, a sharp, grounded American colleague and program lead talking 1-on-1. "
+            "Speak plain, direct, human workplace English—zero MBA buzzwords ('synergy', 'circle back', 'bandwidth', 'deliverables'). "
+            "Real senior US colleagues say 'What's the main holdup?', 'Let's hold off for now', 'My only worry is...'. "
+            "If the speaker mentions everyday life, respond like a normal human colleague without forcing work jargon onto it."
         ),
     },
     "seminar_skeptic": {
         "name": "Prof. Vance",
         "short_btn": "🎓 Prof. Vance · Seminar",
-        "badge": "🎓 Prof. Vance · Seminar & Ideas",
-        "opener": "Come on in—what's an argument or puzzle you've been turning over in your head lately?",
+        "badge": "🎓 Prof. Vance · Seminar US",
+        "opener": "Hey, come on in. What's an idea or question you've been thinking through lately?",
         "voice_desc": (
-            "You are Prof. Nolan Vance (Ann Arbor), an engaging US political-science scholar. "
-            "Spoken seminar English: contractions, thoughtful hedging, sharp constructive pushback."
+            "You are Nolan Vance, an American political-science professor talking in office hours or a seminar room. "
+            "Speak authentic SPOKEN academic US English: 90% plain everyday spoken grammar (contractions ALWAYS, "
+            "'I mean', 'the tricky part is', 'how does that play out when...', 'holds up', 'comes down to') paired with "
+            "clear conceptual thinking. NEVER talk like a stiff written journal article."
         ),
     },
 }
 
 SPARK_BANK = {
     "casual_sharp": [
-        "Quick gut check: a friend keeps canceling plans twenty minutes before meeting up, then texts 'my bad, crazy week.' Do you call them out or let it fade?",
-        "Settle a debate for me—does working from coffee shops actually help people focus, or are we just paying six bucks to feel busy?",
-        "What's one thing everybody around you seems hyped about lately that you're honestly skeptical of?",
-        "Say you've got a completely free Saturday and decent weather—what does a genuinely good day look like for you?",
+        "A friend keeps canceling twenty minutes before you're supposed to meet up, then texts 'my bad, crazy week.' Do you say something or just stop making plans?",
+        "Do you actually get more done working outside the house, or is it mostly just a change of scenery?",
+        "What's something everyone around you seems hyped about lately that you're still not sold on?",
+        "If you get a rare day with zero obligations, do you like having a plan or just winging it?",
     ],
     "exec_clock": [
-        "Leadership wants to launch a pilot in two weeks, and you know the operations side isn't ready. Give me your 20-second pushback.",
-        "A colleague keeps dropping 'urgent' favors on you right at the end of the day. How do you push back firmly without burning bridges?",
-        "You have sixty seconds with a mayor to pitch one reform that doesn't need a huge budget—what's your headline?",
-        "Two options: launch an 80%-ready tool Monday or delay a month to polish it. Which call do you make?",
+        "Your manager wants to roll something out in two weeks, and you already know it isn't ready. How do you push back without sounding defensive?",
+        "Someone on your team keeps dropping 'quick favors' on you right at the end of the day. How do you set a boundary without making things weird?",
+        "If you had two minutes to convince a city director to test one practical fix on a tight budget, how would you pitch it?",
+        "Would you rather launch something that's 80% ready on Monday or hold off a month to get the details right?",
     ],
     "seminar_skeptic": [
-        "Let's stress-test a classic claim: 'Digital participation platforms make local governments more accountable.' Where does that break down in practice?",
-        "Push back on me: I'd argue most public consultations just amplify the loudest 5% of residents rather than real local needs. Am I wrong?",
-        "When a governance model works in Barcelona or Tallinn, what's usually the first institutional bottleneck when another country imports it?",
-        "A reviewer says: 'Compelling theory, but what's the concrete causal mechanism on the ground?' Give me your three-sentence answer.",
+        "People love claiming digital platforms make local government more accountable, but where does that usually break down on the ground?",
+        "Here's a pushback I hear a lot: public consultations mostly amplify the loudest five percent of residents. How do you get around that?",
+        "When a city policy works well in places like Barcelona or Tallinn, what usually trips it up when someone tries copying it elsewhere?",
+        "If a skeptical reviewer asks what your actual causal mechanism is—not just the broad theory—how do you explain it in three plain sentences?",
     ],
 }
 
@@ -90,6 +101,32 @@ class GhostTwinAnalysis(BaseModel):
     take2_prompt: str = ""
 
 
+class RegisterBreakdown(BaseModel):
+    is_register_neutral: bool = False
+    casual_us: str = ""
+    work_us: str = ""
+    seminar_us: str = ""
+    pragmatic_note: str = ""
+
+
+class ShiftTurnOutput(BaseModel):
+    reframed_user_point: str = ""
+    same_across_registers: bool = False
+    partner_reply: str = ""
+    key_chunk: str = ""
+
+
+@dataclass
+class ShiftOutcome:
+    angle: str
+    badge: str
+    partner_name: str
+    partner_reply: str
+    reframed_point: str = ""
+    same_across_registers: bool = False
+    key_chunk: str = ""
+
+
 @dataclass
 class TurnOutcome:
     segments: list[str]
@@ -109,6 +146,7 @@ def clean_partner_reply(raw: str) -> list[str]:
         s = re.sub(r"\*\*(.*?)\*\*", r"\1", p.strip())
         s = re.sub(r"(?m)^\s*[-*•#]+\s+", "", s)
         s = re.sub(r"\s{2,}", " ", AI_OPENERS_RE.sub("", s).strip())
+        s = scrub_contrived_english(s)
         if s:
             cleaned.append(s)
     return cleaned or ["Sorry, lost my train of thought—say that one more time?"]
@@ -128,8 +166,7 @@ def infer_habit_key(learner_text: str, fix_summary: str, rhythm_tip: str, raw_ha
         return "irregular_past"
     if re.search(r"\bmany\s+(?:fruit|fruits|information|advice|furniture|equipment|work|research)\b|\b(?:informations|advices|researches)\b", low_t):
         return "uncountable_noun"
-    hits = scan_transfers(learner_text)
-    for _, _, tag in hits:
+    for _, _, tag in scan_transfers(learner_text):
         if "fr" in tag:
             return "fr_calque"
         if "ar" in tag:
@@ -155,7 +192,8 @@ def parse_reply_and_coach(raw: str) -> tuple[list[str], GhostTwinAnalysis | None
             if s.upper().startswith(k + ":"):
                 fields[k.lower()] = _clean_field(s.split(":", 1)[1])
                 break
-    if not fields["us"]:
+    us_clean = scrub_contrived_english(fields["us"])
+    if not us_clean:
         return segs, None
     t2 = fields["take2"]
     return segs, GhostTwinAnalysis(
@@ -163,8 +201,8 @@ def parse_reply_and_coach(raw: str) -> tuple[list[str], GhostTwinAnalysis | None
         habit_key=fields["habit"],
         fix_summary=fields["fix"],
         rhythm_tip=fields["rhythm"],
-        native_take=fields["us"],
-        key_chunk=fields["chunk"],
+        native_take=us_clean,
+        key_chunk=scrub_contrived_english(fields["chunk"]),
         why_tag=fields["why"],
         trigger_take2=bool(t2),
         take2_prompt=t2,
@@ -228,9 +266,9 @@ class EchoTwinEngine:
     def _context_blocks(self, uid: int) -> tuple[str, str]:
         mem_text, _ = self.repo.get_memory(uid)
         habits = self.repo.top_habits(uid, limit=3)
-        mem_blk = f"\nKNOWN SPEAKER CONTEXT (reference naturally only when relevant, never recite):\n{mem_text}" if mem_text else ""
+        mem_blk = f"\nKNOWN SPEAKER CONTEXT (use naturally only when relevant, never recite):\n{mem_text}" if mem_text else ""
         hab_blk = (
-            "\nRECURRING HABITS RADAR (be extra vigilant if any appear): "
+            "\nRECURRING HABITS RADAR: "
             + "; ".join(f"{h['habit_key']} ({h['hits']}x, e.g. '{h['last_example']}')" for h in habits)
             if habits
             else ""
@@ -248,24 +286,24 @@ class EchoTwinEngine:
 
         r = [
             f"{meta['voice_desc']} (Today is {weekday}.){mem_blk}",
-            "CONVERSATION RULES:",
-            "- Match the speaker's length and energy: if they wrote 1-6 words, reply in 1 crisp sentence (6-18 words), NEVER a long paragraph.",
-            "- Plain text only in your reply (no bold, no bullets, no grammar commentary inside your character reply).",
+            SPOKEN_US_DNA,
+            "- Match the speaker's length and energy: if they wrote 1-6 words, reply in 1 plain, relaxed sentence (6-16 words), NEVER a long paragraph.",
+            "- Plain text only in your character reply (no bold, no bullets, no grammar teaching inside character dialogue).",
         ]
         if repair:
             r.append("- PRAGMATIC REPAIR: The speaker didn't catch your last line. Drop any joke immediately, explain warmly in plain US English ('Oh my bad—I just meant...'), and keep rolling.")
         elif two_q:
-            r.append("- Your last two replies ended with questions: make a warm observation or statement WITHOUT ending with a question.")
+            r.append("- Your last two replies ended with questions: respond with a grounded observation or take WITHOUT ending with a question.")
 
         if detect_code_switch(text) and not repair:
-            r.append("- L1 BRIDGE: Speaker mixed Arabic/French hunting for a US expression. Answer their point naturally AND include the exact US idiom in [square brackets] inside your reply.")
+            r.append("- L1 BRIDGE: Speaker mixed Arabic/French hunting for a US expression. Answer their point naturally AND include the exact plain spoken US idiom in [square brackets] inside your reply.")
         if take2 and not repair:
-            r.append(f"- TAKE 2 RETRY: You invited a retry ({take2}). Note briefly how much cleaner it landed, then continue.")
+            r.append(f"- TAKE 2 RETRY: You invited a retry ({take2}). Note briefly in 3-6 words what sounded cleaner, then continue.")
         for v in (due[:1] if not repair else []):
             if int(v["stage"]) == 0:
-                r.append(f"- STEALTH MODEL: If natural, weave '{v['phrase']}' into your reply once.")
+                r.append(f"- STEALTH MODEL: Only if it fits completely naturally, use '{v['phrase']}' once.")
             else:
-                r.append(f"- STEALTH BAIT: Invite the idea behind '{v['phrase']}' without saying the phrase yourself.")
+                r.append(f"- STEALTH BAIT: Create a natural opening for the idea behind '{v['phrase']}' without saying the phrase yourself.")
 
         if ECHO_TWIN_ENABLED and not repair and not PURE_GREETING_RE.match(text.strip()) and wc >= 2:
             hint = f" (Pre-detected slips you MUST fix: {'; '.join(s + ' -> ' + u for s, u, _ in transfers)})" if transfers else ""
@@ -273,15 +311,15 @@ class EchoTwinEngine:
             t2_line = "TAKE2: [1-sentence retry challenge ONLY if major, else NONE]" if allow_t2 else "TAKE2: NONE"
             r.append(
                 f"\nSILENT COACH CHECK (APPEND AFTER YOUR CHARACTER REPLY):{hab_blk}"
-                f"\nInspect the speaker's exact line for US English accuracy & naturalness.{hint}"
+                f"\nInspect LATEST SPEAKER MESSAGE for US English accuracy & genuine spoken naturalness.{hint}"
                 "\n- Ignore casual texting punctuation/capitalization."
                 "\n- If ALREADY 100% grammatically accurate AND natural spoken US English, do NOT append anything."
-                "\n- If there is ANY grammar mistake, L1 Arabic/French calque, wrong word choice, or stiff phrasing—even in 2-5 words—append:"
+                "\n- If there is ANY grammar slip, Arabic/French calque, wrong preposition/tense, or stiff non-native wording, append:"
                 "\n===COACH==="
-                "\nHABIT: [one of: irregular_past | uncountable_noun | tense_aspect | article_prep | fr_calque | ar_calque | stiff_register]"
+                "\nHABIT: [irregular_past | uncountable_noun | tense_aspect | article_prep | fr_calque | ar_calque | stiff_register]"
                 "\nFIX: [concise arrow fixes, e.g. buyed -> bought · many fruit -> a bunch of fruit]"
-                "\nUS: [how a native American naturally says the speaker's exact sentence in 1-2 crisp spoken sentences]"
-                "\nCHUNK: [best reusable 2-5 word US chunk from US]"
+                "\nUS: [the simplest, most natural sentence a real American actually says out loud—ZERO forced slang, ZERO fancy thesaurus words]"
+                "\nCHUNK: [reusable 2-5 word everyday US chunk from US]"
                 "\nWHY: [2-5 word tag]"
                 f"\n{t2_line}"
             )
@@ -300,7 +338,7 @@ class EchoTwinEngine:
             hist = "\n".join(f"{'You' if t['role']=='partner' else 'Speaker'}: {t['content']}" for t in recent[-10:])
             usr_p = f"RECENT DIALOGUE:\n{hist}\n\nLATEST SPEAKER MESSAGE: {learner_text}\nYour reply:" if hist else f"LATEST SPEAKER MESSAGE: {learner_text}\nYour reply:"
 
-            raw = await self.llm.generate_text(user_id, sys_p, usr_p, temperature=0.82, deep_chat=True)
+            raw = await self.llm.generate_text(user_id, sys_p, usr_p, temperature=0.62, deep_chat=True)
             segs, inline_coach = parse_reply_and_coach(raw)
             full = "\n\n".join(segs)
             vhits = self.detect_vault_hits(user_id, learner_text)
@@ -331,40 +369,41 @@ class EchoTwinEngine:
 
             rules = [
                 f"{meta['voice_desc']} (Today is {weekday}.){mem_blk}",
+                SPOKEN_US_DNA,
                 "MULTIMODAL SPOKEN TURN — LISTEN DIRECTLY TO THE SPEAKER'S VOICE:",
-                "- Hear both WHAT they say (words, grammar, any Arabic/French code-switching) AND HOW they sound (stress-timed rhythm, word linking, flap-T, vowel reductions, hesitation).",
-                "- Keep your character reply crisp, warm, and conversational (1-3 spoken sentences, plain text only).",
+                "- Hear both WHAT they say and HOW they sound (content-word stress, consonant-to-vowel linking, flap-T between vowels, function-word reduction like 'to' -> /tə/, 'of' -> /ə/).",
+                "- Keep your character reply relaxed, natural, and concise (1-3 spoken sentences, plain text only).",
             ]
             if two_q:
                 rules.append("- Your last two replies ended with questions: land a statement or reaction WITHOUT ending with a question.")
             if take2:
-                rules.append(f"- TAKE 2 RETRY: You invited a retry ({take2}). Briefly note how much cleaner/punchier this spoken take sounded, then continue.")
+                rules.append(f"- TAKE 2 RETRY: You invited a retry ({take2}). Briefly note how this spoken take landed, then continue.")
             for v in due[:1]:
                 if int(v["stage"]) == 0:
-                    rules.append(f"- STEALTH MODEL: If natural, weave '{v['phrase']}' into your reply once.")
+                    rules.append(f"- STEALTH MODEL: Only if natural, use '{v['phrase']}' once.")
                 else:
                     rules.append(f"- STEALTH BAIT: Invite the idea behind '{v['phrase']}' without saying it yourself.")
 
             rules.append(
                 f"\nOUTPUT FORMAT (FOLLOW EXACTLY):{hab_blk}"
                 "\n===HEARD==="
-                "\n[Exact verbatim transcript preserving contractions, grammar slips, and any Arabic/French words; write [inaudible] ONLY if silent/unintelligible]"
+                "\n[Exact verbatim transcript preserving contractions, slips, and any Arabic/French words; write [inaudible] ONLY if silent]"
                 "\n===REPLY==="
-                "\n[Your natural in-character spoken US reply; if speaker mixed Arabic/French, slip the US idiom in [brackets] inside your reply]"
+                "\n[Your natural in-character spoken US reply; if speaker mixed Arabic/French, slip the plain US idiom in [brackets] inside your reply]"
                 "\n===COACH==="
-                "\n[Write NONE if grammar, phrasing, AND American spoken rhythm/delivery are already completely natural (or if speaker only said hi/thanks or asked what you meant). Otherwise provide:]"
-                "\nHABIT: [one of: irregular_past | uncountable_noun | tense_aspect | article_prep | fr_calque | ar_calque | stiff_register | us_rhythm_linking | word_stress]"
-                "\nFIX: [arrow fixes for grammar/phrasing slips, or NONE if purely delivery]"
-                "\nRHYTHM: [1 specific spoken US prosody/linking/flap-T/stress tip based on the audio, e.g. Link 'picked_up_a' smoothly & flap the T in 'city', or NONE]"
-                "\nUS: [how a sharp native American naturally says their exact thought out loud in 1-2 tight sentences]"
-                "\nCHUNK: [best reusable 2-5 word US chunk from US]"
+                "\n[Write NONE if grammar, phrasing, AND American spoken rhythm/linking are already completely natural. Otherwise provide:]"
+                "\nHABIT: [irregular_past | uncountable_noun | tense_aspect | article_prep | fr_calque | ar_calque | stiff_register | us_rhythm_linking | word_stress]"
+                "\nFIX: [arrow fixes for grammar/wording slips, or NONE if purely prosody]"
+                "\nRHYTHM: [1 concrete physical US pronunciation tip heard in the clip: linking, flap-T, schwa reduction, or primary stress—never vague advice, or NONE]"
+                "\nUS: [the simplest, most authentic spoken US phrasing of their exact thought—ZERO slang, ZERO fancy thesaurus words]"
+                "\nCHUNK: [reusable 2-5 word everyday US chunk from US]"
                 "\nWHY: [2-5 word label]"
                 "\nTAKE2: [1-sentence spoken retry challenge ONLY if major, else NONE]"
             )
             hist = "\n".join(f"{'You' if t['role']=='partner' else 'Speaker'}: {t['content']}" for t in recent[-10:])
             usr_p = f"RECENT DIALOGUE:\n{hist}\n\nListen to the attached voice note ({duration_s:.0f}s) and respond in the exact format." if hist else f"Listen to the attached voice note ({duration_s:.0f}s) and respond in the exact format."
 
-            raw = await self.llm.generate_voice_turn(user_id, "\n".join(rules), audio_bytes, usr_p, mime_type=mime_type, temperature=0.82)
+            raw = await self.llm.generate_voice_turn(user_id, "\n".join(rules), audio_bytes, usr_p, mime_type=mime_type, temperature=0.62)
             heard, segs, inline_coach = parse_voice_turn_output(raw)
             full = "\n\n".join(segs)
 
@@ -400,12 +439,12 @@ class EchoTwinEngine:
             return False
         sys_p = (
             "Extract up to 5 ultra-concise bullet points ('• ...') capturing durable context about this speaker "
-            "(work/research themes, interests, goals, ongoing projects) so conversation partners remember them naturally. "
+            "(work/research themes, interests, ongoing projects) so partners remember them naturally. "
             "Merge with existing notes, drop trivial greetings, plain text only, max 70 words total."
         )
         usr_p = f"Existing memory:\n{old_mem or '(none)'}\n\nRecent speaker lines:\n" + "\n".join(f"- {ln}" for ln in learner_lines[-8:])
         try:
-            merged = await self.llm.generate_text(user_id, sys_p, usr_p, temperature=0.25, deep_chat=False)
+            merged = await self.llm.generate_text(user_id, sys_p, usr_p, temperature=0.2, deep_chat=False)
             if merged and merged.strip():
                 self.repo.save_memory(user_id, merged, turns_now)
                 return True
@@ -427,26 +466,107 @@ class EchoTwinEngine:
         self.repo.set_pending_take2(user_id, "")
         return angle, ANGLE_META[angle]["badge"], line
 
-    async def shift_angle_live(self, user_id: int) -> tuple[str, str, str]:
+    async def shift_angle_live(self, user_id: int) -> ShiftOutcome:
         async with self._lock(user_id):
             new_a = self.repo.cycle_angle(user_id)
             meta = ANGLE_META[new_a]
-            last_l = next((t["content"] for t in reversed(self.repo.recent_turns(user_id, 10)) if t["role"] == "learner" and len(t["content"].split()) >= 3), "")
+            last_l = next(
+                (t["content"] for t in reversed(self.repo.recent_turns(user_id, 10))
+                 if t["role"] == "learner" and not PURE_GREETING_RE.match(t["content"].strip()) and len(t["content"].split()) >= 2),
+                "",
+            )
             if not last_l:
-                return new_a, meta["badge"], meta["opener"]
-            sys_p = meta["voice_desc"] + "\nReact immediately to the speaker's LAST point below from your perspective in 1-2 crisp spoken US sentences. Plain text only."
-            raw = await self.llm.generate_text(user_id, sys_p, f"Speaker's point: {last_l}\nYour reaction:", temperature=0.85, deep_chat=True)
-            segs, _ = parse_reply_and_coach(raw)
-            return new_a, meta["badge"], " ".join(segs)
+                return ShiftOutcome(new_a, meta["badge"], meta["name"], meta["opener"])
+
+            sys_p = (
+                f"{meta['voice_desc']}\n\n{SPOKEN_US_DNA}\n\n{REGISTER_CORPUS_RULES}\n\n"
+                "TASK FOR LIVE REGISTER SHIFT:\n"
+                "1. `reframed_user_point`: Show how a native American would naturally express the speaker's exact point in THIS register ('"
+                + meta["badge"]
+                + "'). Fix any grammar slip first. NEVER invent fake corporate/academic jargon! If an American says this everyday sentence the same plain way here, set `same_across_registers=true` and give that plain natural US sentence.\n"
+                "2. `partner_reply`: Respond naturally in character (1-2 crisp spoken sentences) to what the speaker said—if their topic is everyday life, respond like a normal human without forcing work/academic buzzwords onto it!\n"
+                "3. `key_chunk`: Reusable 2-5 word spoken US chunk from `reframed_user_point`."
+            )
+            fallback = ShiftTurnOutput(
+                reframed_user_point="",
+                same_across_registers=False,
+                partner_reply=meta["opener"],
+                key_chunk="",
+            )
+            res = await self.llm.generate_structured(
+                user_id, sys_p, f"Speaker's last message: \"{last_l}\"", ShiftTurnOutput, fallback, deep_chat=True, temperature=0.25
+            )
+            if has_contrived_buzz(f"{res.reframed_user_point} {res.partner_reply}"):
+                res = await self.llm.generate_structured(
+                    user_id,
+                    sys_p + "\nCRITICAL: Strip ALL buzzwords, slang, or stiff thesaurus words. Keep every word plain spoken US English.",
+                    f"Speaker's last message: \"{last_l}\"",
+                    ShiftTurnOutput,
+                    res,
+                    deep_chat=True,
+                    temperature=0.15,
+                )
+            reframed = scrub_contrived_english(res.reframed_user_point)
+            reply_clean = " ".join(clean_partner_reply(res.partner_reply)) if res.partner_reply.strip() else meta["opener"]
+            chunk_clean = scrub_contrived_english(res.key_chunk)
+            return ShiftOutcome(
+                angle=new_a,
+                badge=meta["badge"],
+                partner_name=meta["name"],
+                partner_reply=reply_clean,
+                reframed_point=reframed,
+                same_across_registers=bool(res.same_across_registers),
+                key_chunk=chunk_clean,
+            )
 
     async def explain_registers(self, user_id: int, target_text: str) -> str:
-        sys_p = "You are a concise US English pragmatics coach for an advanced speaker. Plain text only, zero fluff."
+        clean_in = target_text.strip()
+        sys_p = "You are a corpus-grounded American English pragmatics specialist (COCA Spoken standard).\n\n" + REGISTER_CORPUS_RULES
         usr_p = (
-            f"Idea/Line: {target_text.strip()}\n\n"
-            "Show how Americans naturally say this across 3 spoken registers (contractions, authentic chunks, 1 tight line each):\n"
-            "• Everyday (Malik): ...\n• Work / Exec (Claire): ...\n• Seminar (Prof. Vance): ...\n• Pragmatic nuance: [1 short sentence]"
+            f"Utterance: \"{clean_in}\"\n\n"
+            "Give the authentic spoken American phrasing across Everyday, Workplace, and Seminar settings:\n"
+            "- Fix any grammar or L1 slip first.\n"
+            "- Remember: NEVER invent thesaurus differences! If Americans use the exact same plain words across settings, set is_register_neutral=true.\n"
+            "- In `pragmatic_note`, explain in 1 short plain sentence what actually changes (or why it stays plain)."
         )
-        return await self.llm.generate_text(user_id, sys_p, usr_p, temperature=0.5, deep_chat=False)
+        fallback = RegisterBreakdown(
+            is_register_neutral=True,
+            casual_us=clean_in,
+            work_us=clean_in,
+            seminar_us=clean_in,
+            pragmatic_note="Everyday spoken US phrasing stays plain across registers.",
+        )
+        res = await self.llm.generate_structured(
+            user_id, sys_p, usr_p, RegisterBreakdown, fallback, deep_chat=True, temperature=0.25
+        )
+        if has_contrived_buzz(f"{res.casual_us} {res.work_us} {res.seminar_us}"):
+            res = await self.llm.generate_structured(
+                user_id,
+                sys_p + "\nCRITICAL: Zero corporate clichés, zero slang, zero stiff written words ('procure', 'utilize', 'produce'). Plain spoken words only!",
+                usr_p,
+                RegisterBreakdown,
+                res,
+                deep_chat=True,
+                temperature=0.15,
+            )
+        cas = scrub_contrived_english(res.casual_us or clean_in)
+        wrk = scrub_contrived_english(res.work_us or cas)
+        sem = scrub_contrived_english(res.seminar_us or wrk)
+        note = scrub_contrived_english(res.pragmatic_note or "Shifts via tone and hedging, never fancy vocabulary.")
+
+        if res.is_register_neutral:
+            return (
+                f"• Everyday: \"{cas}\"\n"
+                f"• Workplace: \"{wrk}\"\n"
+                f"• Seminar: \"{sem}\"\n"
+                f"💡 Real US usage: {note}"
+            )
+        return (
+            f"• Everyday (Malik): \"{cas}\"\n"
+            f"• Workplace (Claire): \"{wrk}\"\n"
+            f"• Seminar (Prof. Vance): \"{sem}\"\n"
+            f"💡 What actually shifts: {note}"
+        )
 
     async def coach_on_demand(self, user_id: int, learner_text: str) -> GhostTwinAnalysis | None:
         if not learner_text.strip():
@@ -454,20 +574,23 @@ class EchoTwinEngine:
         u = self.repo.get_user(user_id)
         angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
         transfers = scan_transfers(learner_text)
-        hint = "Slips spotted: " + "; ".join(f"{s}->{up}" for s, up, _ in transfers) if transfers else "Point out any grammar/word-choice slip or give a sharper native US phrasing."
+        hint = "Slips spotted: " + "; ".join(f"{s}->{up}" for s, up, _ in transfers) if transfers else "Point out any slip or give the plainest, most natural spoken US phrasing."
         sys_p = (
-            "You are an elite spoken American English coach.\n"
-            "Set should_intervene=true and fill:\n"
-            "- habit_key: one of irregular_past | uncountable_noun | tense_aspect | article_prep | fr_calque | ar_calque | stiff_register.\n"
-            "- fix_summary: Short arrow corrections of any slips, or empty if already grammatical.\n"
-            "- rhythm_tip: Short tip on how to link/stress native_take when spoken aloud.\n"
-            "- native_take: Their exact thought spoken naturally in first person by an American in 1-2 crisp sentences.\n"
-            "- key_chunk: Best reusable 2-5 word American chunk from native_take.\n"
+            "You are a corpus-grounded spoken American English coach.\n"
+            + SPOKEN_US_DNA
+            + "\nSet should_intervene=true and fill:\n"
+            "- habit_key: irregular_past | uncountable_noun | tense_aspect | article_prep | fr_calque | ar_calque | stiff_register.\n"
+            "- fix_summary: Short arrow fixes of any grammar/lexical slips, or empty if already grammatical.\n"
+            "- rhythm_tip: Concrete US linking, flap-T, reduction, or stress tip when saying native_take aloud.\n"
+            "- native_take: Their exact thought spoken naturally in first person by an American in 1-2 plain, crisp sentences (zero slang/buzzwords).\n"
+            "- key_chunk: Reusable 2-5 word everyday American chunk from native_take.\n"
             "- why_tag: 2-5 word label."
         )
         usr_p = f"Context: {ANGLE_META[angle]['badge']}\n{hint}\nUser said: {learner_text}"
-        res = await self.llm.generate_structured(user_id, sys_p, usr_p, GhostTwinAnalysis, GhostTwinAnalysis(), deep_chat=False)
-        if not res.native_take.strip():
+        res = await self.llm.generate_structured(user_id, sys_p, usr_p, GhostTwinAnalysis, GhostTwinAnalysis(), deep_chat=True, temperature=0.25)
+        res.native_take = scrub_contrived_english(res.native_take)
+        res.key_chunk = scrub_contrived_english(res.key_chunk)
+        if not res.native_take:
             return None
-        self.repo.log_upgrade(user_id, learner_text, res.native_take.strip(), res.why_tag or "us_coach")
+        self.repo.log_upgrade(user_id, learner_text, res.native_take, res.why_tag or "us_coach")
         return res

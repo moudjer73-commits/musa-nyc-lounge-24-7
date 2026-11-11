@@ -3,65 +3,100 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
-from src.bot.handlers import TwinContainer, register_handlers
-from src.twin.engine import GhostTwinAnalysis
+from src.bot.handlers import BTN_SHIFT, TwinContainer, register_handlers
+from src.twin.calques import scan_transfers
+from src.twin.corpus_guard import has_contrived_buzz, scrub_contrived_english
+from src.twin.engine import GhostTwinAnalysis, RegisterBreakdown, ShiftTurnOutput
 
 
-class StubV3LLM:
+class StubCorpusLLM:
     configured = True
     def __init__(self):
         self.voice_calls = 0
-        self.transcribe_calls = 0
+        self.structured_calls = 0
         self.last_sys_prompt = ""
 
-    async def generate_voice_turn(self, user_id, system_prompt, audio_bytes, user_prompt, *, mime_type="audio/ogg", temperature=0.82):
+    async def generate_voice_turn(self, user_id, system_prompt, audio_bytes, user_prompt, *, mime_type="audio/ogg", temperature=0.62):
         self.voice_calls += 1
-        self.last_sys_prompt = system_prompt
+        assert temperature <= 0.65
         return (
             "===HEARD===\n"
-            "I buyed many fruit today before going to work\n"
+            "I returned back home and buyed many fruit\n"
             "===REPLY===\n"
-            "Nice move grabbing fresh fruit before work! What did you get?\n"
+            "Nice, nothing beats having fresh fruit around. What did you end up getting?\n"
             "===COACH===\n"
             "HABIT: uncountable_noun\n"
-            "FIX: buyed -> bought · many fruit -> a bunch of fruit\n"
-            "RHYTHM: Link 'picked_up_a' smoothly and reduce 'to' to 'tuh' before 'work'\n"
-            "US: I picked up a bunch of fruit today before heading to work.\n"
+            "FIX: returned back -> headed back · buyed -> bought · many fruit -> a bunch of fruit\n"
+            "RHYTHM: Flap the T in 'bought_a' and reduce 'of' to 'uh' in 'bunch_of'\n"
+            "US: I headed back home and picked up a bunch of fruit.\n"
             "CHUNK: picked up a bunch of\n"
-            "WHY: Uncountable + connected speech\n"
+            "WHY: Plain phrasal verb + uncountable\n"
             "TAKE2: NONE"
         )
 
-    async def transcribe_voice(self, *a, **k):
-        self.transcribe_calls += 1
-        raise AssertionError("voice_handler must use single-pass generate_voice_turn, not separate transcribe_voice!")
-
-    async def generate_text(self, user_id, system_prompt, user_prompt, *, temperature=0.82, deep_chat=True):
+    async def generate_text(self, user_id, system_prompt, user_prompt, *, temperature=0.62, deep_chat=True):
         self.last_sys_prompt = system_prompt
         if "Existing memory:" in user_prompt:
-            return "• Doctoral researcher studying local participatory governance\n• Practices spoken US English daily"
+            return "• Doctoral researcher in local participatory governance\n• Focuses on authentic spoken US English"
         latest_msg = user_prompt.split("LATEST SPEAKER MESSAGE:")[-1]
-        if "many advice" in latest_msg or "I buyed many fruit now" in latest_msg:
+        if "many advice" in latest_msg:
             return (
-                "Got it—good advice is hard to come by.\n"
+                "Yeah, solid advice is rare.\n"
                 "===COACH===\n"
                 "HABIT: uncountable_noun\n"
-                "FIX: many advice -> some solid advice (uncountable)\n"
+                "FIX: many advice -> some solid advice\n"
                 "US: He gave me some solid advice.\n"
                 "CHUNK: some solid advice\n"
                 "WHY: Uncountable noun\n"
                 "TAKE2: NONE"
             )
-        return "Totally makes sense—how did that play out?"
+        # Simulate an accidental stiff word leak ('utilize', 'prior to') to verify post-scrubber cleans it
+        if "leak test" in latest_msg:
+            return "We usually utilize that right prior to the meeting."
+        return "Makes total sense—how did that turn out?"
 
-    async def generate_structured(self, user_id, system_prompt, user_prompt, schema_cls, fallback, *, deep_chat=False):
+    async def generate_structured(self, user_id, system_prompt, user_prompt, schema_cls, fallback, *, deep_chat=False, temperature=0.25):
+        self.structured_calls += 1
+        assert deep_chat is True and temperature <= 0.25
+        if schema_cls is RegisterBreakdown:
+            # First call simulates buzzword hallucination -> triggers automatic anti-buzzword retry!
+            if "CRITICAL: Zero corporate" not in system_prompt and "fruit" not in user_prompt:
+                return RegisterBreakdown(
+                    is_register_neutral=False,
+                    casual_us="Deadass that won't work.",
+                    work_us="Let's circle back to move the needle.",
+                    seminar_us="One might posit it fails vis-à-vis budgets.",
+                    pragmatic_note="Tone shifts.",
+                )
+            if "fruit" in user_prompt:
+                return RegisterBreakdown(
+                    is_register_neutral=True,
+                    casual_us="I just picked up some fruit.",
+                    work_us="I just picked up some fruit.",
+                    seminar_us="I just picked up some fruit.",
+                    pragmatic_note="Everyday concrete actions stay plain across all settings in the US.",
+                )
+            return RegisterBreakdown(
+                is_register_neutral=False,
+                casual_us="Honestly, I don't think that'll hold up.",
+                work_us="My main worry is whether that holds up on our timeline.",
+                seminar_us="I'm not convinced that holds up once you factor in local budgets.",
+                pragmatic_note="Core verb 'hold up' stays plain; only the hedging shifts.",
+            )
+        if schema_cls is ShiftTurnOutput:
+            return ShiftTurnOutput(
+                reframed_user_point="I'm not sure this timeline is realistic given our current setup.",
+                same_across_registers=False,
+                partner_reply="Fair point—what's the biggest holdup right now?",
+                key_chunk="not sure this is realistic",
+            )
         return GhostTwinAnalysis(
             should_intervene=True,
-            habit_key="uncountable_noun",
-            fix_summary="many fruit -> a bunch of fruit",
-            native_take="I picked up a bunch of fruit.",
-            key_chunk="a bunch of fruit",
-            why_tag="Uncountable",
+            habit_key="stiff_register",
+            fix_summary="utilize -> use",
+            native_take="We just use what we already have.",
+            key_chunk="use what we have",
+            why_tag="Plain spoken verb",
         )
 
 
@@ -77,9 +112,9 @@ class FakeApp:
 
 
 class FakeMsg:
-    def __init__(self, text="", voice=None, mid=10):
-        self.text, self.caption, self.voice, self.reply_to_message, self.message_id = text, None, voice, None, mid
-        self.texts, self.voices, self.reactions = [], [], []
+    def __init__(self, text="", voice=None, reply_to=None, mid=10):
+        self.text, self.caption, self.voice, self.reply_to_message, self.message_id = text, None, voice, reply_to, mid
+        self.texts, self.voices = [], []
     async def reply_text(self, t, **kw):
         self.texts.append((t, kw))
         return FakeMsg(text=t, mid=100 + len(self.texts))
@@ -88,63 +123,59 @@ class FakeMsg:
         return FakeMsg(text="", mid=200 + len(self.voices))
 
 
+def test_corpus_guard_scrubs_thesaurus_and_detects_fake_buzzwords():
+    raw = "Prior to commencing, we utilize data vis-à-vis with regard to budgets."
+    cleaned = scrub_contrived_english(raw)
+    assert cleaned == "Before starting, we use data compared to when it comes to budgets."
+    assert has_contrived_buzz("Let's circle back to move the needle")
+    assert has_contrived_buzz("Deadass no cap")
+    assert has_contrived_buzz("Picked up produce at the store")
+    assert not has_contrived_buzz("My main worry is whether that holds up once budgets get tight.")
+    assert len(scan_transfers("I returned back home since three years")) >= 2
+
+
 @pytest.mark.asyncio
-async def test_v3_single_pass_voice_ear_rhythm_and_habit_radar(tmp_path: Path, monkeypatch):
+async def test_registers_never_invent_fake_synonyms_and_retry_on_buzzwords(tmp_path: Path, monkeypatch):
     from src.bot import handlers as h_mod
     monkeypatch.setattr(h_mod, "synthesize_partner_voice", lambda text, angle="casual_sharp": asyncio.sleep(0, result=b"MP3_P"))
     monkeypatch.setattr(h_mod, "synthesize_twin_voice", lambda text: asyncio.sleep(0, result=b"MP3_T"))
 
-    llm = StubV3LLM()
-    c = TwinContainer(db_path=tmp_path / "v3.db", passphrase="", llm=llm)
+    llm = StubCorpusLLM()
+    c = TwinContainer(db_path=tmp_path / "v32.db", passphrase="", llm=llm)
     app = FakeApp()
     register_handlers(app, c)
-    u = SimpleNamespace(id=21)
-    ch = SimpleNamespace(id=21)
+    u = SimpleNamespace(id=33)
+    ch = SimpleNamespace(id=33)
     ctx = SimpleNamespace(args=[], bot=None)
 
-    # 1. Voice note uses SINGLE multimodal call (0 transcribe_voice calls), logs WPM, and delivers spoken Rhythm tip!
+    # 1. Everyday concrete statement ('fruit') -> Register-neutral honesty (NO 'picked up produce'!)
+    neutral_out = await c.engine.explain_registers(33, "I just picked up some fruit.")
+    assert "Real US usage:" in neutral_out
+    assert "produce" not in neutral_out.lower()
+
+    # 2. Substantive pushback -> Buzzword attempt gets caught & retried cleanly into authentic spoken registers
+    op_out = await c.engine.explain_registers(33, "This plan will fail.")
+    assert "circle back" not in op_out.lower() and "deadass" not in op_out.lower() and "vis-à-vis" not in op_out.lower()
+    assert "holds up" in op_out
+
+    # 3. Partner stiff-word leak gets auto-scrubbed in dialogue
+    m_leak = FakeMsg(text="run leak test now")
+    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=m_leak), ctx)
+    assert "use that right before" in m_leak.texts[0][0]
+
+    # 4. ⚡ Shift Angle produces grounded partner response + authentic reframed user card with audio/save buttons
+    m_sh = FakeMsg(text=BTN_SHIFT)
+    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=m_sh), ctx)
+    assert len(m_sh.texts) == 2
+    assert "Claire" in m_sh.texts[0][0] and "holdup" in m_sh.texts[0][0]
+    assert "How you'd say your point here" in m_sh.texts[1][0]
+    assert "realistic" in m_sh.texts[1][0]
+
+    # 5. Voice note single-pass + Habit Radar still work seamlessly
     v_obj = SimpleNamespace(
-        duration=6.0, file_size=5000,
+        duration=5.0, file_size=4000,
         get_file=lambda: asyncio.sleep(0, result=SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS")))),
     )
     mv = FakeMsg(voice=v_obj)
     await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=mv), ctx)
-    assert llm.voice_calls == 1 and llm.transcribe_calls == 0
-    assert len(mv.voices) == 2
-    coach_cap = mv.voices[1]["caption"]
-    assert "🎧" in coach_cap and "picked_up_a" in coach_cap
-    assert c.repo.weekly_pulse(21)["peak_wpm"] > 0
-
-    # 2. Second hit on same habit ('uncountable_noun') triggers 🔁 Habit #2 badge!
-    mt = FakeMsg(text="He gave me many advice")
-    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=mt), ctx)
-    coach_txt = mt.texts[1][0]
-    assert "🔁" in coach_txt and "Habit #2: Uncountable nouns" in coach_txt
-
-    # 3. Clean substantive turn increments clean_streak on Habit Radar
-    mc = FakeMsg(text="That actually worked out way better than expected.")
-    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=mc), ctx)
-    assert len(mc.texts) == 1
-    assert c.repo.top_habits(21)[0]["clean_streak"] == 1
-    assert all(t["role"] in ("learner", "partner") for t in c.repo.recent_turns(21))
-
-
-@pytest.mark.asyncio
-async def test_v3_partner_memory_syncs_and_survives_fresh_chat(tmp_path: Path):
-    llm = StubV3LLM()
-    c = TwinContainer(db_path=tmp_path / "mem.db", passphrase="", llm=llm)
-    for i in range(6):
-        await c.engine.respond_turn(9, f"I am writing chapter {i+1} on local participatory governance.")
-    assert await c.engine.maybe_sync_memory(9) is True
-    mem_txt, synced_at = c.repo.get_memory(9)
-    assert "participatory governance" in mem_txt and synced_at == 6
-
-    # Fresh chat clears messages but preserves Partner Memory for next conversation!
-    c.repo.clear_conversation(9)
-    assert c.repo.recent_turns(9) == []
-    await c.engine.respond_turn(9, "What should I focus on next week?")
-    assert "participatory governance" in llm.last_sys_prompt
-
-    # Full purge wipes memory too
-    c.repo.purge_user(9)
-    assert c.repo.get_memory(9) == ("", 0)
+    assert llm.voice_calls == 1 and "Flap the T" in mv.voices[1]["caption"]

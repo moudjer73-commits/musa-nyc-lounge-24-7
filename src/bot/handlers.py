@@ -83,7 +83,7 @@ def extract_stealable_chunk(text: str) -> str:
 def _strip_coach_headers(raw_body: str) -> str:
     lines = [
         ln for ln in raw_body.splitlines()
-        if not ln.startswith(("👥", "🎯", "🔁", "⚡", "🎧", "🔑"))
+        if not ln.startswith(("👥", "🎯", "🔁", "⚡", "🎧", "🔑", "🪜"))
     ]
     joined = " ".join(lines).strip().lstrip("🇺🇸 ").strip().strip('"')
     return joined or raw_body.strip()
@@ -201,13 +201,34 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             reply_markup=partner_inline_kb(u["angle"]),
         )
 
-    async def do_shift(update: Update) -> None:
+    async def do_shift(update: Update, context: ContextTypes.DEFAULT_TYPE | None = None) -> None:
         if not update.effective_user or not update.message:
             return
         uid = update.effective_user.id
-        new_angle, badge, line = await c.engine.shift_angle_live(uid)
-        sent = await _send_safe(update.message, f"{badge}\n\n{line}")
-        c.repo.log_turn(uid, "partner", new_angle, line, chat_message_id=getattr(sent, "message_id", None))
+        chat_id = update.effective_chat.id if update.effective_chat else uid
+        if context is not None and "_send_chat_action" in globals():
+            await _send_chat_action(context, chat_id, "typing")
+        out = await c.engine.shift_angle_live(uid)
+        sent = await _send_safe(update.message, f"{out.badge}\n\n{out.partner_reply}")
+        c.repo.log_turn(uid, "partner", out.angle, out.partner_reply, chat_message_id=getattr(sent, "message_id", None))
+        if out.reframed_point:
+            chunk = out.key_chunk.strip() or extract_stealable_chunk(out.reframed_point)
+            cid = _stash_card(out.reframed_point, chunk)
+            if out.same_across_registers:
+                body = (
+                    f"🪜 <b>Your line here</b> · <i>Plain US across registers</i>\n"
+                    f"🇺🇸 \"{html.escape(out.reframed_point)}\""
+                )
+            else:
+                body = (
+                    f"🪜 <b>How you'd say your point here</b>\n"
+                    f"🇺🇸 \"{html.escape(out.reframed_point)}\"\n"
+                    f"🔑 <code>{html.escape(chunk)}</code>"
+                )
+            card_msg = await update.message.reply_text(
+                body, parse_mode="HTML", reply_markup=coach_inline_kb(cid, include_audio_btn=True)
+            )
+            c.repo.log_turn(uid, "ghost", out.angle, chunk, chat_message_id=getattr(card_msg, "message_id", None))
 
     async def do_spark(update: Update) -> None:
         if not update.effective_user or not update.message:
@@ -235,7 +256,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         await do_spark(update)
 
     async def shift_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await do_shift(update)
+        await do_shift(update, context)
 
     async def vault_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
@@ -410,7 +431,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             await partner_cmd(update, context)
             return
         if txt in (BTN_SHIFT, "⚡ Shift", "Shift", "⚡"):
-            await do_shift(update)
+            await do_shift(update, context)
             return
         if txt in (BTN_SPARK, "Spark Topic"):
             await do_spark(update)
