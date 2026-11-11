@@ -1,3 +1,4 @@
+import contextlib
 import base64, functools, logging, os, sqlite3, tempfile, threading, time
 from pathlib import Path
 from typing import Optional
@@ -223,3 +224,16 @@ def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
         conn.executescript(SCHEMA_SQL)
         _SCHEMA_READY.add(key)
     return conn
+
+
+@contextlib.contextmanager
+def db_session(db_path: Path = DB_PATH):
+    conn = get_connection(db_path)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

@@ -16,7 +16,7 @@ T = TypeVar("T", bound=BaseModel)
 
 CALL_TIMEOUT_S = 14.0
 STRUCTURED_TIMEOUT_S = 11.0
-AUDIO_TIMEOUT_S = 60.0
+AUDIO_TIMEOUT_S = 26.0
 HTTP_TIMEOUT_MS = 65_000
 DEAD_PAIR_TTL_S = 1800.0
 RATE_MIN_COOLDOWN_S = 65.0
@@ -276,7 +276,7 @@ class GeminiClient:
         cfg = types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature)
         try:
             return await self._call(
-                [part, user_prompt], cfg, prefer_deep_chat=True, thinking=False, timeout_s=AUDIO_TIMEOUT_S
+                [part, user_prompt], cfg, prefer_deep_chat=True, thinking=True, timeout_s=AUDIO_TIMEOUT_S
             )
         except LLMUnavailableError:
             self.repo.refund_quota(user_id)
@@ -292,7 +292,7 @@ class GeminiClient:
         part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
         try:
             return await self._call(
-                [part, prompt], prefer_deep_chat=False, thinking=False, timeout_s=AUDIO_TIMEOUT_S
+                [part, prompt], prefer_deep_chat=False, thinking=True, timeout_s=AUDIO_TIMEOUT_S
             )
         except LLMUnavailableError:
             self.repo.refund_quota(user_id)

@@ -1,4 +1,4 @@
-import asyncio, logging
+import asyncio, inspect, logging, time
 from telegram import Update
 from telegram.ext import ApplicationBuilder
 
@@ -34,13 +34,15 @@ def build_application(token: str, container: TwinContainer):
                 tasks.append(asyncio.create_task(_publish_loop(SNAPSHOT_PUSH_MINUTES * 60.0)))
         tasks.append(asyncio.create_task(asyncio.to_thread(sync_telegram_bot_profile, token)))
         app.bot_data["bg_tasks"] = tasks
+        logging.info("Echo Twin v3.0 polling active and ready for updates.")
 
     async def post_shutdown(app) -> None:
         for t in app.bot_data.get("bg_tasks", []):
             t.cancel()
         await asyncio.to_thread(container.flush)
 
-    app = ApplicationBuilder().token(token).post_init(post_init).post_shutdown(post_shutdown).build()
+    builder = ApplicationBuilder().token(token).concurrent_updates(True).post_init(post_init).post_shutdown(post_shutdown)
+    app = builder.build()
     register_handlers(app, container)
     return app
 
@@ -53,15 +55,24 @@ def main() -> None:
         restore_encrypted_snapshot(SNAPSHOT_PATH, DB_PATH, SNAPSHOT_PASSPHRASE)
     if SNAPSHOT_PASSPHRASE:
         set_snapshot_min_interval(45.0)
+
     container = TwinContainer()
-    try:
-        app = build_application(token, container)
-        app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-    except Exception as exc:
-        logging.error("Fatal exit: %s", redact_token(str(exc), token))
-        raise
-    finally:
-        container.flush()
+    for attempt in range(1, 6):
+        try:
+            app = build_application(token, container)
+            poll_kwargs = {"allowed_updates": Update.ALL_TYPES, "drop_pending_updates": (attempt == 1)}
+            if "bootstrap_retries" in inspect.signature(app.run_polling).parameters:
+                poll_kwargs["bootstrap_retries"] = -1
+            app.run_polling(**poll_kwargs)
+            break
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            logging.error("Polling interrupted (attempt %d/5): %s", attempt, redact_token(str(exc), token))
+            if attempt == 5:
+                raise
+            time.sleep(6 * attempt)
+    container.flush()
 
 
 if __name__ == "__main__":

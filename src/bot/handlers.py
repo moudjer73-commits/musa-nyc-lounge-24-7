@@ -109,6 +109,16 @@ async def _send_safe(message, text: str, **kwargs):
     return last
 
 
+async def _send_chat_action(context: ContextTypes.DEFAULT_TYPE, chat_id: int | None, action: str) -> None:
+    bot = getattr(context, "bot", None)
+    fn = getattr(bot, "send_chat_action", None) if bot else None
+    if callable(fn) and chat_id:
+        try:
+            await fn(chat_id=chat_id, action=action)
+        except Exception:
+            pass
+
+
 async def _react_quietly(message, emoji: str) -> None:
     fn = getattr(message, "set_reaction", None)
     if callable(fn):
@@ -374,11 +384,12 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         uid = update.effective_user.id
         chat_id = update.effective_chat.id if update.effective_chat else uid
         asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
+        await _send_chat_action(context, chat_id, "typing")
 
-        outcome = await c.engine.respond_turn(
+        outcome = await asyncio.wait_for(c.engine.respond_turn(
             uid, learner_text, chat_message_id=getattr(msg, "message_id", None),
             is_voice=False, duration_s=0.0, log_partner=False,
-        )
+        ), timeout=40.0)
         if outcome.vault_celebrations:
             await _react_quietly(msg, "🔥")
         await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=False)
@@ -438,11 +449,12 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         chat_id = update.effective_chat.id if update.effective_chat else uid
         asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
 
+        await _send_chat_action(context, chat_id, "record_voice")
         tg_file = await v.get_file()
         raw = bytes(await tg_file.download_as_bytearray())
-        outcome = await c.engine.respond_voice_turn(
+        outcome = await asyncio.wait_for(c.engine.respond_voice_turn(
             uid, raw, chat_message_id=getattr(msg, "message_id", None), duration_s=dur, log_partner=False
-        )
+        ), timeout=45.0)
         if outcome.vault_celebrations:
             await _react_quietly(msg, "🔥")
         await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
