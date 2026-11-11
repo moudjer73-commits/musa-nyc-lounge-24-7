@@ -185,3 +185,33 @@ async def test_studio_2x2_buttons_inline_cards_and_menu_purge(tmp_path: Path, mo
     await app.cb("reset_cb")(SimpleNamespace(effective_user=u_obj, callback_query=q_rst), ctx)
     assert c.repo.recent_turns(12) == []
     assert len(c.repo.all_vault_phrases(12)) == 1
+
+
+def test_telegram_profile_limits_and_lang_cleanup(monkeypatch):
+    from src.bot import setup_tg
+    assert 1 <= len(setup_tg.BOT_NAME) <= 64
+    assert 1 <= len(setup_tg.SHORT_DESCRIPTION) <= 120
+    assert 1 <= len(setup_tg.FULL_DESCRIPTION) <= 512
+
+    calls = []
+    def fake_post(url, json=None, timeout=15):
+        m = url.rsplit("/", 1)[1]
+        calls.append((m, dict(json or {})))
+        if m == "getMyName":
+            return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "result": {"name": "Old v1" if json.get("language_code") == "en" else ""}})
+        if m == "getMyShortDescription":
+            return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "result": {"short_description": "Old bio" if json.get("language_code") == "ar" else ""}})
+        if m == "getMyDescription":
+            return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "result": {"description": "Old Marcus desc" if json.get("language_code") == "en" else ""}})
+        if m == "getMyCommands":
+            return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "result": []})
+        if m == "getChatMenuButton":
+            return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "result": {"type": "default"}})
+        return SimpleNamespace(status_code=200, json=lambda: {"ok": True})
+
+    monkeypatch.setattr(setup_tg.requests, "post", fake_post)
+    setup_tg.sync_telegram_bot_profile("123:ABC")
+    assert ("setMyName", {"name": "", "language_code": "en"}) in calls
+    assert ("setMyShortDescription", {"short_description": "", "language_code": "ar"}) in calls
+    assert ("setMyDescription", {"description": "", "language_code": "en"}) in calls
+    assert ("setMyDescription", {"description": setup_tg.FULL_DESCRIPTION}) in calls
