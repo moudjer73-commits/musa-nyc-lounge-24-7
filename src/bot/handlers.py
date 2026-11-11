@@ -10,7 +10,7 @@ from src.db.repo import ANGLES, TwinRepository
 from src.llm.client import GeminiClient, LLMUnavailableError, QuotaExceededError
 from src.twin.calques import scan_transfers
 from src.twin.engine import ANGLE_META, EchoTwinEngine, GhostTwinAnalysis
-from src.voice.tts import synthesize_partner_voice, synthesize_twin_voice
+from src.voice.tts import synthesize_partner_voice, synthesize_shadow_drill, synthesize_twin_voice
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,15 @@ def coach_inline_kb(cid: str, include_audio_btn: bool = True, saved: bool = Fals
     return InlineKeyboardMarkup([row])
 
 
+
+def voice_lab_inline_kb(cid: str, saved: bool = False) -> InlineKeyboardMarkup:
+    save_lbl = '✅ Saved' if saved else '📌 Save Chunk'
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton('🎯 Shadow 2x', callback_data=f'coach:drill:{cid}'),
+        InlineKeyboardButton(save_lbl, callback_data=f'coach:save:{cid}'),
+        InlineKeyboardButton('🪜 3 Registers', callback_data=f'coach:reg:{cid}'),
+    ]])
+
 def partner_inline_kb(active_angle: str) -> InlineKeyboardMarkup:
     rows = []
     for ang in ANGLES:
@@ -83,7 +92,7 @@ def extract_stealable_chunk(text: str) -> str:
 def _strip_coach_headers(raw_body: str) -> str:
     lines = [
         ln for ln in raw_body.splitlines()
-        if not ln.startswith(("👥", "🎯", "🔁", "⚡", "🎧", "🔑", "🪜"))
+        if not ln.startswith(("👥", "🎯", "🎙️", "📊", "🗣️", "🔗", "🔁", "⚡", "🎧", "🔑", "🪜"))
     ]
     joined = " ".join(lines).strip().lstrip("🇺🇸 ").strip().strip('"')
     return joined or raw_body.strip()
@@ -344,6 +353,16 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             await q.answer("Building 3 registers...")
             regs = await c.engine.explain_registers(uid, native_line or chunk)
             await _send_safe(q.message, f"🪜 3 Spoken US Registers:\n{regs}")
+        elif action == "drill":
+            await q.answer("Building slow + natural US drill...")
+            drill_mp3 = await synthesize_shadow_drill(chunk or native_line)
+            if drill_mp3:
+                buf = io.BytesIO(drill_mp3)
+                buf.name = "shadow_drill.mp3"
+                cap = f"🎯 <b>Shadow Drill (Slow ➡️ Natural US)</b>\n<code>{html.escape(chunk or native_line)}</code>"
+                await q.message.reply_voice(voice=buf, caption=cap, parse_mode="HTML", reply_markup=STUDIO_KB)
+            else:
+                await q.message.reply_text("Audio unavailable right now—try again shortly.", reply_markup=STUDIO_KB)
         elif action == "tts":
             await q.answer("Generating US audio...")
             mp3 = await synthesize_twin_voice(native_line or chunk)
@@ -456,34 +475,69 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
 
         await _process_text_turn(update, context, txt)
 
+    async def _prosody_lab_worker(msg, uid: int, raw_audio: bytes, outcome) -> None:
+        try:
+            audit, dsp_badge, hab_badge = await c.engine.run_deep_prosody_audit(uid, raw_audio, outcome.transcript)
+            if audit is not None:
+                recast = audit.native_recast.strip() or (outcome.inline_coach.native_take if outcome.inline_coach else outcome.transcript)
+                drill_target = audit.shadow_chunk.strip() or extract_stealable_chunk(recast)
+                cid = _stash_card(recast, drill_target)
+                lines = ['🎙️ <b>US Voice &amp; Rhythm Lab</b>']
+                if dsp_badge:
+                    lines.append(f'📊 <code>{html.escape(dsp_badge)}</code>')
+                if hab_badge:
+                    lines.append(f'🔁 <b>{html.escape(hab_badge)}</b>')
+                if audit.grammar_fix:
+                    lines.append(f'⚡ <code>{html.escape(audit.grammar_fix)}</code>')
+                if audit.segmental_fix:
+                    lines.append(f'🗣️ <b>Pronunciation:</b> {html.escape(audit.segmental_fix)}')
+                if audit.prosody_fix:
+                    lines.append(f'🔗 <b>Rhythm &amp; Linking:</b> {html.escape(audit.prosody_fix)}')
+                if audit.focus_stress:
+                    lines.append(f'🎯 <b>Stress Peak:</b> <code>{html.escape(audit.focus_stress)}</code>')
+                if recast:
+                    lines.append(f'🇺🇸 <tg-spoiler>{html.escape(recast)}</tg-spoiler>')
+                cap = '\n'.join(lines)
+                mp3 = await synthesize_twin_voice(recast) if len(recast) <= 700 else None
+                if mp3 and len(cap) <= 980:
+                    buf = io.BytesIO(mp3)
+                    buf.name = 'us_voice_lab.mp3'
+                    sent = await msg.reply_voice(voice=buf, caption=cap, parse_mode='HTML', reply_markup=voice_lab_inline_kb(cid))
+                else:
+                    sent = await msg.reply_text(cap.replace('<tg-spoiler>', '"').replace('</tg-spoiler>', '"'), parse_mode='HTML', reply_markup=voice_lab_inline_kb(cid))
+                c.repo.log_turn(uid, 'ghost', outcome.angle, drill_target, chat_message_id=getattr(sent, 'message_id', None))
+                return
+        except Exception as exc:
+            logger.warning('Deep prosody audit fallback: %s', exc)
+        if outcome.inline_coach and not outcome.was_repair:
+            await _deliver_coach_card(msg, c, uid, outcome.inline_coach, title='US Coach', prefer_voice=True)
+
     async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.voice:
             return
         msg = update.message
         uid = update.effective_user.id
         v = msg.voice
-        dur = float(getattr(v, "duration", 0) or 0)
-        size = int(getattr(v, "file_size", 0) or 0)
+        dur = float(getattr(v, 'duration', 0) or 0)
+        size = int(getattr(v, 'file_size', 0) or 0)
         if dur > 180 or size > 8_000_000:
-            await _send_safe(msg, "Keep voice notes under 3 minutes so we stay fast and sharp!")
+            await _send_safe(msg, 'Keep voice notes under 3 minutes so we stay fast and sharp!')
             return
         chat_id = update.effective_chat.id if update.effective_chat else uid
-        asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
-
-        await _send_chat_action(context, chat_id, "record_voice")
+        asyncio.create_task(refresh_chat_menu_once(getattr(context, 'bot', None), chat_id, force=False))
+        if '_send_chat_action' in globals():
+            await _send_chat_action(context, chat_id, 'record_voice')
         tg_file = await v.get_file()
         raw = bytes(await tg_file.download_as_bytearray())
-        outcome = await asyncio.wait_for(c.engine.respond_voice_turn(
-            uid, raw, chat_message_id=getattr(msg, "message_id", None), duration_s=dur, log_partner=False
-        ), timeout=45.0)
+        outcome = await asyncio.wait_for(
+            c.engine.respond_voice_turn(uid, raw, chat_message_id=getattr(msg, 'message_id', None), duration_s=dur, log_partner=False),
+            timeout=45.0,
+        )
         if outcome.vault_celebrations:
-            await _react_quietly(msg, "🔥")
+            await _react_quietly(msg, '🔥')
         await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
-
-        if outcome.inline_coach and not outcome.was_repair:
-            await _deliver_coach_card(msg, c, uid, outcome.inline_coach, title="US Coach", prefer_voice=True)
-        elif not outcome.was_repair and outcome.transcript and scan_transfers(outcome.transcript):
-            asyncio.create_task(_fallback_coach_worker(msg, uid, outcome.transcript, True))
+        if not outcome.was_repair:
+            asyncio.create_task(_prosody_lab_worker(msg, uid, raw, outcome))
         asyncio.create_task(c.engine.maybe_sync_memory(uid))
 
     async def reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

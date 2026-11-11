@@ -88,6 +88,17 @@ PURE_GREETING_RE = re.compile(
 )
 
 
+
+class ProsodyAuditOutput(BaseModel):
+    has_findings: bool = False
+    habit_key: str = 'us_rhythm_linking'
+    segmental_fix: str = ''
+    prosody_fix: str = ''
+    focus_stress: str = ''
+    shadow_chunk: str = ''
+    native_recast: str = ''
+    grammar_fix: str = ''
+
 class GhostTwinAnalysis(BaseModel):
     should_intervene: bool = False
     habit_key: str = ""
@@ -594,3 +605,50 @@ class EchoTwinEngine:
             return None
         self.repo.log_upgrade(user_id, learner_text, res.native_take, res.why_tag or "us_coach")
         return res
+
+    async def run_deep_prosody_audit(
+        self, user_id: int, audio_bytes: bytes, transcript: str, *, mime_type: str = 'audio/ogg'
+    ) -> tuple[ProsodyAuditOutput | None, str, str]:
+        from src.voice.acoustics import analyze_voice_bytes
+        wc = len(transcript.split()) if transcript and transcript != '(voice note)' else 0
+        if is_repair_request(transcript) or PURE_GREETING_RE.match(transcript.strip()):
+            return None, '', ''
+        dsp = await asyncio.to_thread(analyze_voice_bytes, audio_bytes, wc)
+        if wc < 3 and dsp.voiced_s < 0.9:
+            return None, '', ''
+        u = self.repo.get_user(user_id)
+        angle = u['angle'] if u['angle'] in ANGLE_META else 'casual_sharp'
+        transfers = scan_transfers(transcript) if transcript else []
+        tr_hint = ('Pre-detected lexical/grammar slips: ' + '; '.join(f'{s}->{up}' for s, up, _ in transfers)) if transfers else 'None'
+        sys_p = (
+            'You are an acoustic American English pronunciation & prosody specialist coaching an advanced Maghrebi Arabic / French-bilingual speaker.\n'
+            'CRITICAL RULE: Diagnose ONLY what the speaker ACTUALLY pronounced in the attached audio—NEVER invent errors from the suggested recast.\n'
+            'Ground your listening in the objective DSP telemetry provided:\n'
+            '1. WORD STRESS & VOWEL REDUCTION: Spot French/L2 final-syllable stress shifts (e.g. dev-el-OP, par-ti-ci-PA-tive) or unreduced vowels where US English uses schwa /ə/ (to /tə/, of /ə/, for /fər/, can /kən/).\n'
+            '2. CONNECTED SPEECH & RHYTHM: Check consonant-to-vowel linking, intervocalic Flap-T /ɾ/ (better, city, put_it_on), unreleased Stop-T /t̚/, and choppy mid-phrase pauses.\n'
+            '3. SEGMENTAL PRECISION: Spot /p/ vs /b/ voicing, dental /t,d/ vs alveolar, th-stopping, or non-rhotic /r/ drops ONLY if audible.\n'
+            '4. THOUGHT-GROUP FOCUS: Mark primary nuclear stress in CAPS inside `focus_stress` on the 3-7 word `shadow_chunk` the speaker should drill.\n'
+            '5. Grammar/phrasing: Put brief arrow fixes in `grammar_fix` ONLY if the speaker made an actual grammar/lexical slip, and give plain natural spoken US in `native_recast` (zero slang, zero stiff thesaurus words).\n'
+            'If pronunciation, rhythm, AND grammar already sound completely natural American, set has_findings=false.'
+        )
+        usr_p = (
+            f'Register: {ANGLE_META[angle]["badge"]}\n'
+            f'{dsp.to_prompt_summary()}\n'
+            f'Verbatim transcript heard: "{transcript}"\n'
+            f'{tr_hint}\n'
+            'Audit the attached voice recording carefully.'
+        )
+        fb = ProsodyAuditOutput(has_findings=False)
+        res = await self.llm.audit_voice_prosody(user_id, sys_p, audio_bytes, usr_p, ProsodyAuditOutput, fb, mime_type=mime_type)
+        if not res.has_findings:
+            return None, dsp.compact_badge(), ''
+        res.native_recast = scrub_contrived_english(res.native_recast)
+        res.shadow_chunk = scrub_contrived_english(res.shadow_chunk)
+        h_key = res.habit_key.strip().lower() if res.habit_key.strip().lower() in HABIT_LABELS else 'us_rhythm_linking'
+        lbl, hits = self.repo.record_habit_hit(
+            user_id, h_key, transcript[:120], res.prosody_fix or res.segmental_fix or res.grammar_fix
+        )
+        badge_h = f'Habit #{hits}: {lbl}' if hits >= 2 else ''
+        if res.native_recast:
+            self.repo.log_upgrade(user_id, transcript, res.native_recast, lbl)
+        return res, dsp.compact_badge(), badge_h

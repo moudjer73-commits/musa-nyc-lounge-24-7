@@ -283,6 +283,29 @@ class GeminiClient:
             self.repo.refund_quota(user_id)
             raise
 
+    async def audit_voice_prosody(self, user_id: int, system_prompt: str, audio_bytes: bytes, user_prompt: str, schema_cls: Type[T], fallback: T, *, mime_type: str = 'audio/ogg') -> T:
+        if not self.clients:
+            return fallback
+        self._charge(user_id)
+        part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+        kw: dict[str, Any] = {'system_instruction': system_prompt, 'response_mime_type': 'application/json', 'response_schema': schema_cls, 'temperature': 0.15}
+        if hasattr(types, 'ThinkingConfig'):
+            try:
+                kw['thinking_config'] = types.ThinkingConfig(thinking_budget=1024)
+            except Exception:
+                pass
+        cfg = types.GenerateContentConfig(**kw)
+        try:
+            raw = await self._call([part, user_prompt], cfg, prefer_deep_chat=True, thinking=False, timeout_s=AUDIO_TIMEOUT_S)
+            return schema_cls.model_validate_json(raw)
+        except LLMUnavailableError:
+            self.repo.refund_quota(user_id)
+            return fallback
+        except Exception as exc:
+            logger.warning('Prosody audit fallback: %s', _redact(str(exc)))
+            self.repo.refund_quota(user_id)
+            return fallback
+
     async def transcribe_voice(self, user_id: int, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
         self._charge(user_id)
         prompt = (

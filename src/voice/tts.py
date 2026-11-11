@@ -78,3 +78,32 @@ async def synthesize_partner_voice(text: str, angle: str = "casual_sharp") -> by
 
 async def synthesize_twin_voice(text: str) -> bytes | None:
     return await synthesize_mp3(text, voice=TWIN_VOICE, rate="+3%")
+
+async def synthesize_shadow_drill(phrase: str) -> bytes | None:
+    import shutil, subprocess
+    from pathlib import Path
+    clean = prepare_for_tts(phrase)
+    if not clean:
+        return None
+    slow_mp3, fast_mp3 = await asyncio.gather(
+        synthesize_mp3(clean, voice=TWIN_VOICE, rate='-22%'),
+        synthesize_mp3(clean, voice=TWIN_VOICE, rate='+4%'),
+    )
+    if slow_mp3 and fast_mp3 and shutil.which('ffmpeg'):
+        fd1, p1 = tempfile.mkstemp(suffix='.mp3')
+        fd2, p2 = tempfile.mkstemp(suffix='.mp3')
+        fd3, po = tempfile.mkstemp(suffix='.mp3')
+        os.close(fd1); os.close(fd2); os.close(fd3)
+        try:
+            Path(p1).write_bytes(slow_mp3); Path(p2).write_bytes(fast_mp3)
+            cmd = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', p1, '-i', p2, '-filter_complex', '[0:a]apad=pad_dur=0.65[a0];[a0][1:a]concat=n=2:v=0:a=1[out]', '-map', '[out]', '-codec:a', 'libmp3lame', '-q:a', '4', po]
+            r = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=10)
+            if r.returncode == 0 and Path(po).stat().st_size > 200:
+                return Path(po).read_bytes()
+        except Exception:
+            pass
+        finally:
+            for pf in (p1, p2, po):
+                if os.path.exists(pf):
+                    os.remove(pf)
+    return (slow_mp3 + fast_mp3) if (slow_mp3 and fast_mp3) else (fast_mp3 or slow_mp3)

@@ -6,7 +6,7 @@ import pytest
 from src.bot.handlers import BTN_SHIFT, TwinContainer, register_handlers
 from src.twin.calques import scan_transfers
 from src.twin.corpus_guard import has_contrived_buzz, scrub_contrived_english
-from src.twin.engine import GhostTwinAnalysis, RegisterBreakdown, ShiftTurnOutput
+from src.twin.engine import GhostTwinAnalysis, ProsodyAuditOutput, RegisterBreakdown, ShiftTurnOutput
 
 
 class StubCorpusLLM:
@@ -15,6 +15,19 @@ class StubCorpusLLM:
         self.voice_calls = 0
         self.structured_calls = 0
         self.last_sys_prompt = ""
+
+    async def audit_voice_prosody(self, user_id, system_prompt, audio_bytes, user_prompt, schema_cls, fallback, *, mime_type='audio/ogg'):
+        self.prosody_audits = getattr(self, 'prosody_audits', 0) + 1
+        return ProsodyAuditOutput(
+            has_findings=True,
+            habit_key='us_rhythm_linking',
+            segmental_fix=" Stress first syllable in 'PAR-ti-ci-pate', not final syllable",
+            prosody_fix="Link 'picked_up_a' smoothly and reduce 'of' to /ə/",
+            focus_stress='picked up a BUNCH of FRUIT',
+            shadow_chunk='picked up a bunch of fruit',
+            native_recast='I headed back home and picked up a bunch of fruit.',
+            grammar_fix='buyed -> bought · many fruit -> a bunch of fruit',
+        )
 
     async def generate_voice_turn(self, user_id, system_prompt, audio_bytes, user_prompt, *, mime_type="audio/ogg", temperature=0.62):
         self.voice_calls += 1
@@ -178,4 +191,9 @@ async def test_registers_never_invent_fake_synonyms_and_retry_on_buzzwords(tmp_p
     )
     mv = FakeMsg(voice=v_obj)
     await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=mv), ctx)
-    assert llm.voice_calls == 1 and "Flap the T" in mv.voices[1]["caption"]
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert llm.voice_calls == 1 and getattr(llm, "prosody_audits", 0) == 1
+    assert "US Voice &amp; Rhythm Lab" in mv.voices[1]["caption"]
+    assert "PAR-ti-ci-pate" in mv.voices[1]["caption"]
