@@ -8,6 +8,7 @@ from src.config import DB_PATH, SNAPSHOT_PASSPHRASE, SNAPSHOT_PATH
 from src.db.engine import export_encrypted_snapshot, flush_pending_snapshots
 from src.db.repo import ANGLES, TwinRepository
 from src.llm.client import GeminiClient, LLMUnavailableError, QuotaExceededError
+from src.twin.calques import scan_transfers
 from src.twin.engine import ANGLE_META, EchoTwinEngine, GhostTwinAnalysis
 from src.voice.tts import synthesize_partner_voice, synthesize_twin_voice
 
@@ -61,7 +62,7 @@ def partner_inline_kb(active_angle: str) -> InlineKeyboardMarkup:
 
 def reset_inline_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧹 Fresh Chat (Keep Saved Phrases)", callback_data="reset:chat")],
+        [InlineKeyboardButton("🧹 Fresh Chat (Keep Phrases & Memory)", callback_data="reset:chat")],
         [InlineKeyboardButton("🗑️ Erase All Stored Data", callback_data="reset:all")],
         [InlineKeyboardButton("Cancel", callback_data="reset:cancel")],
     ])
@@ -77,6 +78,15 @@ def extract_stealable_chunk(text: str) -> str:
     parts = [p.strip() for p in re.split(r"[.!?\n—]+", text) if len(p.strip().split()) >= 2]
     best = min(parts, key=lambda s: abs(len(s.split()) - 5)) if parts else text.strip()
     return " ".join(best.split()[:10])
+
+
+def _strip_coach_headers(raw_body: str) -> str:
+    lines = [
+        ln for ln in raw_body.splitlines()
+        if not ln.startswith(("👥", "🎯", "🔁", "⚡", "🎧", "🔑"))
+    ]
+    joined = " ".join(lines).strip().lstrip("🇺🇸 ").strip().strip('"')
+    return joined or raw_body.strip()
 
 
 class TwinContainer:
@@ -112,27 +122,30 @@ async def _deliver_coach_card(message, c: TwinContainer, uid: int, ghost: GhostT
     steal_target = ghost.key_chunk.strip() or extract_stealable_chunk(ghost.native_take)
     cid = _stash_card(ghost.native_take.strip(), steal_target)
     tag_html = f" · <i>{html.escape(ghost.why_tag)}</i>" if ghost.why_tag else ""
+    hab_html = f"\n🔁 <b>{html.escape(ghost.habit_badge)}</b>" if ghost.habit_badge else ""
     fix_html = f"\n⚡ <code>{html.escape(ghost.fix_summary)}</code>" if ghost.fix_summary else ""
+    rhy_html = f"\n🎧 <i>{html.escape(ghost.rhythm_tip)}</i>" if ghost.rhythm_tip else ""
     chunk_html = f"\n🔑 <code>{html.escape(steal_target)}</code>" if steal_target else ""
 
     sent = None
     if prefer_voice and len(ghost.native_take) <= 750:
         mp3 = await synthesize_twin_voice(ghost.native_take)
         if mp3:
-            cap = f"🎯 <b>{html.escape(title)}</b>{tag_html}{fix_html}\n🇺🇸 <tg-spoiler>{html.escape(ghost.native_take)}</tg-spoiler>{chunk_html}"
+            cap = f"🎯 <b>{html.escape(title)}</b>{tag_html}{hab_html}{fix_html}{rhy_html}\n🇺🇸 <tg-spoiler>{html.escape(ghost.native_take)}</tg-spoiler>{chunk_html}"
             buf = io.BytesIO(mp3)
             buf.name = "us_coach.mp3"
             sent = await message.reply_voice(
                 voice=buf, caption=cap, parse_mode="HTML", reply_markup=coach_inline_kb(cid, include_audio_btn=False)
             )
     if sent is None:
-        body = f"🎯 <b>{html.escape(title)}</b>{tag_html}{fix_html}\n🇺🇸 \"{html.escape(ghost.native_take)}\"{chunk_html}"
+        body = f"🎯 <b>{html.escape(title)}</b>{tag_html}{hab_html}{fix_html}{rhy_html}\n🇺🇸 \"{html.escape(ghost.native_take)}\"{chunk_html}"
         sent = await message.reply_text(
             body, parse_mode="HTML", reply_markup=coach_inline_kb(cid, include_audio_btn=True)
         )
     c.repo.log_turn(uid, "ghost", c.repo.get_user(uid)["angle"], steal_target, chat_message_id=getattr(sent, "message_id", None))
     if ghost.trigger_take2 and ghost.take2_prompt:
         await message.reply_text(f"🎬 <b>Take 2:</b> {html.escape(ghost.take2_prompt)}", parse_mode="HTML", reply_markup=STUDIO_KB)
+
 
 def register_handlers(app: Application, c: TwinContainer) -> None:
     async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -155,8 +168,8 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         u = c.repo.get_user(uid)
         meta = ANGLE_META.get(u["angle"], ANGLE_META["casual_sharp"])
         welcome = (
-            f"🎙️ Spoken English Lab — {meta['badge']}\n\n"
-            "Talk naturally by text or voice note:\n"
+            f"🎙️ Spoken English Lab v3 — {meta['badge']}\n\n"
+            "Talk naturally by voice note (direct US audio ear!) or text:\n"
             "• 🎭 Partner — Switch between Malik, Claire & Prof. Vance\n"
             "• ⚡ Shift Angle — Flip the room onto your exact last thought\n"
             "• 🎲 Spark Topic — Jump into a live scenario or debate\n"
@@ -224,17 +237,30 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                 await _send_safe(update.message, f"📌 Saved to Vault: \"{ph}\" — I'll weave it into upcoming chats.")
             return
         p = c.repo.weekly_pulse(uid)
-        items = c.repo.all_vault_phrases(uid, limit=10)
+        items = c.repo.all_vault_phrases(uid, limit=8)
+        mem_txt, _ = c.repo.get_memory(uid)
         pace = f"{p['avg_wpm']} avg / {p['peak_wpm']} peak WPM" if p["avg_wpm"] else "Send voice notes to measure spoken pace"
+
+        habits = p.get("top_habits") or []
+        habit_lines = (
+            "\n".join(
+                f"• {h['label']}: {h['hits']}x caught · {'✅ ' + str(h['clean_streak']) + ' clean streak' if h['clean_streak'] else '🎯 active focus'}"
+                for h in habits
+            )
+            if habits
+            else "• Clean slate so far—keep talking to map your top focus areas."
+        )
         phrase_lines = (
             "\n".join(f"• \"{it['phrase']}\" — {'🔥 used ' + str(it['hits']) + 'x' if it['hits'] else '⏳ queued'}" for it in items)
             if items
             else "• Tap 📌 Save Phrase on any coach card (or react 👍) to collect chunks."
         )
+        mem_block = f"\n\n🧠 Partner Memory:\n{mem_txt}" if mem_txt else ""
         txt = (
             f"📊 7-Day Studio Pulse\n"
             f"• Turns spoken: {p['learner_turns']} | Pace: {pace}\n\n"
-            f"🔐 Saved US Chunks:\n{phrase_lines}"
+            f"🔁 Habit Radar:\n{habit_lines}\n\n"
+            f"🔐 Saved US Chunks:\n{phrase_lines}{mem_block}"
         )
         await _send_safe(update.message, txt)
 
@@ -253,10 +279,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         chosen, badge, opener = c.engine.switch_partner(uid, target)
         meta = ANGLE_META[chosen]
         try:
-            await q.edit_message_text(
-                f"✅ Switched to {badge}",
-                reply_markup=partner_inline_kb(chosen),
-            )
+            await q.edit_message_text(f"✅ Switched to {badge}", reply_markup=partner_inline_kb(chosen))
         except Exception:
             pass
         if q.message:
@@ -275,7 +298,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         uid = update.effective_user.id
         msg_body = (getattr(q.message, "text", None) or getattr(q.message, "caption", None) or "").strip()
         cached = _CARD_MEMO.get(cid)
-        native_line = cached[0] if cached else re.sub(r"^[👥🎯].*?\n(?:⚡.*?\n)?", "", msg_body).lstrip("🇺🇸 ").split("\n🔑")[0].strip().strip('"')
+        native_line = cached[0] if cached else _strip_coach_headers(msg_body)
         chunk = cached[1] if cached else extract_stealable_chunk(msg_body)
 
         if action == "save":
@@ -311,12 +334,12 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             c.repo.clear_conversation(uid)
             u = c.repo.get_user(uid)
             meta = ANGLE_META.get(u["angle"], ANGLE_META["casual_sharp"])
-            await q.edit_message_text(f"🧹 Fresh conversation started (your saved Vault phrases are intact).\n\n{meta['name']}: {meta['opener']}")
+            await q.edit_message_text(f"🧹 Fresh chat started (your saved phrases, Habit Radar & Partner Memory are intact).\n\n{meta['name']}: {meta['opener']}")
         elif act == "all":
             erased = await asyncio.to_thread(c.repo.purge_user, uid)
             if c.passphrase:
                 await asyncio.to_thread(export_encrypted_snapshot, c.db_path, c.snapshot_path, c.passphrase, True)
-            await q.edit_message_text("🗑️ All your conversation history and saved data have been permanently erased." if erased else "Nothing stored for your account.")
+            await q.edit_message_text("🗑️ All your conversation history, habits, memory, and saved phrases have been permanently erased." if erased else "Nothing stored for your account.")
         else:
             await q.edit_message_text("Cancelled—nothing changed.")
 
@@ -328,20 +351,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         except Exception as exc:
             logger.debug("Fallback coach skipped: %s", exc)
 
-    async def _process_turn(update: Update, context: ContextTypes.DEFAULT_TYPE, learner_text: str, *, is_voice: bool, duration_s: float = 0.0) -> None:
-        from src.twin.calques import scan_transfers
-        msg = update.message
-        uid = update.effective_user.id
-        chat_id = update.effective_chat.id if update.effective_chat else uid
-        asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
-
-        outcome = await c.engine.respond_turn(
-            uid, learner_text, chat_message_id=getattr(msg, "message_id", None),
-            is_voice=is_voice, duration_s=duration_s, log_partner=False,
-        )
-        if outcome.vault_celebrations:
-            await _react_quietly(msg, "🔥")
-
+    async def _deliver_partner_voice_or_text(msg, uid: int, outcome, *, is_voice: bool) -> None:
         if is_voice:
             mp3 = await synthesize_partner_voice(outcome.full_reply, angle=outcome.angle)
             if mp3:
@@ -354,18 +364,30 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                     await msg.reply_voice(voice=buf, reply_markup=STUDIO_KB)
                     sent = await _send_safe(msg, f"<tg-spoiler>{html.escape(outcome.full_reply)}</tg-spoiler>", parse_mode="HTML")
                 c.repo.log_turn(uid, "partner", outcome.angle, outcome.full_reply, chat_message_id=getattr(sent, "message_id", None), is_voice=True)
-            else:
-                sent = await _send_safe(msg, outcome.full_reply)
-                c.repo.log_turn(uid, "partner", outcome.angle, outcome.full_reply, chat_message_id=getattr(sent, "message_id", None))
-        else:
-            for seg in outcome.segments:
-                sent = await _send_safe(msg, seg)
-                c.repo.log_turn(uid, "partner", outcome.angle, seg, chat_message_id=getattr(sent, "message_id", None))
+                return
+        for seg in outcome.segments:
+            sent = await _send_safe(msg, seg)
+            c.repo.log_turn(uid, "partner", outcome.angle, seg, chat_message_id=getattr(sent, "message_id", None))
+
+    async def _process_text_turn(update: Update, context: ContextTypes.DEFAULT_TYPE, learner_text: str) -> None:
+        msg = update.message
+        uid = update.effective_user.id
+        chat_id = update.effective_chat.id if update.effective_chat else uid
+        asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
+
+        outcome = await c.engine.respond_turn(
+            uid, learner_text, chat_message_id=getattr(msg, "message_id", None),
+            is_voice=False, duration_s=0.0, log_partner=False,
+        )
+        if outcome.vault_celebrations:
+            await _react_quietly(msg, "🔥")
+        await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=False)
 
         if outcome.inline_coach and not outcome.was_repair:
-            await _deliver_coach_card(msg, c, uid, outcome.inline_coach, title="US Coach", prefer_voice=is_voice)
+            await _deliver_coach_card(msg, c, uid, outcome.inline_coach, title="US Coach", prefer_voice=False)
         elif not outcome.was_repair and scan_transfers(learner_text):
-            asyncio.create_task(_fallback_coach_worker(msg, uid, learner_text, is_voice))
+            asyncio.create_task(_fallback_coach_worker(msg, uid, learner_text, False))
+        asyncio.create_task(c.engine.maybe_sync_memory(uid))
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.text:
@@ -389,8 +411,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         rep = getattr(update.message, "reply_to_message", None)
         rep_txt = (getattr(rep, "text", None) or getattr(rep, "caption", None) or "").strip()
         if rep_txt and txt in ("?", "؟"):
-            clean_target = re.sub(r"^[👥🎯].*?\n(?:⚡.*?\n)?", "", rep_txt).lstrip("🇺🇸 ").split("\n🔑")[0].strip()
-            regs = await c.engine.explain_registers(uid, clean_target)
+            regs = await c.engine.explain_registers(uid, _strip_coach_headers(rep_txt))
             await _send_safe(update.message, f"🪜 3 Spoken US Registers:\n{regs}")
             return
         if rep_txt and (txt == "+" or txt.startswith("+ ")):
@@ -401,24 +422,36 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                 await _send_safe(update.message, f"📌 Saved to Vault: \"{chunk}\"")
             return
 
-        await _process_turn(update, context, txt, is_voice=False)
+        await _process_text_turn(update, context, txt)
 
     async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.voice:
             return
-        v = update.message.voice
+        msg = update.message
+        uid = update.effective_user.id
+        v = msg.voice
         dur = float(getattr(v, "duration", 0) or 0)
         size = int(getattr(v, "file_size", 0) or 0)
         if dur > 180 or size > 8_000_000:
-            await _send_safe(update.message, "Keep voice notes under 3 minutes so we stay fast and sharp!")
+            await _send_safe(msg, "Keep voice notes under 3 minutes so we stay fast and sharp!")
             return
+        chat_id = update.effective_chat.id if update.effective_chat else uid
+        asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
+
         tg_file = await v.get_file()
         raw = bytes(await tg_file.download_as_bytearray())
-        transcript = (await c.llm.transcribe_voice(update.effective_user.id, raw)).strip()
-        if not transcript:
-            await _send_safe(update.message, "Couldn't catch that audio clearly—try one more take?")
-            return
-        await _process_turn(update, context, transcript, is_voice=True, duration_s=dur)
+        outcome = await c.engine.respond_voice_turn(
+            uid, raw, chat_message_id=getattr(msg, "message_id", None), duration_s=dur, log_partner=False
+        )
+        if outcome.vault_celebrations:
+            await _react_quietly(msg, "🔥")
+        await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
+
+        if outcome.inline_coach and not outcome.was_repair:
+            await _deliver_coach_card(msg, c, uid, outcome.inline_coach, title="US Coach", prefer_voice=True)
+        elif not outcome.was_repair and outcome.transcript and scan_transfers(outcome.transcript):
+            asyncio.create_task(_fallback_coach_worker(msg, uid, outcome.transcript, True))
+        asyncio.create_task(c.engine.maybe_sync_memory(uid))
 
     async def reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         mr = getattr(update, "message_reaction", None)

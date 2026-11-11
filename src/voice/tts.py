@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 PARTNER_VOICES: dict[str, tuple[str, str]] = {
     "casual_sharp": ("en-US-AndrewMultilingualNeural", "+4%"),
-    "seminar_skeptic": ("en-US-AvaMultilingualNeural", "+2%"),
+    "seminar_skeptic": ("en-US-ChristopherNeural", "+1%"),
     "exec_clock": ("en-US-EmmaMultilingualNeural", "+5%"),
 }
 TWIN_VOICE = "en-US-BrianMultilingualNeural"

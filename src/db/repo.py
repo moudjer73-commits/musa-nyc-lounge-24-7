@@ -6,6 +6,18 @@ from src.db.engine import export_encrypted_snapshot, get_connection
 
 ANGLES = ("casual_sharp", "exec_clock", "seminar_skeptic")
 
+HABIT_LABELS: dict[str, str] = {
+    "irregular_past": "Irregular past verbs",
+    "uncountable_noun": "Uncountable nouns",
+    "tense_aspect": "US tense & time markers",
+    "article_prep": "Articles & prepositions",
+    "fr_calque": "French academic calques",
+    "ar_calque": "Arabic phrasing transfers",
+    "stiff_register": "Textbook -> spoken US flow",
+    "us_rhythm_linking": "Connected speech & flap-T",
+    "word_stress": "US stress & vowel reduction",
+}
+
 
 class TwinRepository:
     def __init__(self, db_path: Path = DB_PATH, snapshot_path: Path = SNAPSHOT_PATH, passphrase: str = SNAPSHOT_PASSPHRASE) -> None:
@@ -35,10 +47,7 @@ class TwinRepository:
         target = angle if angle in ANGLES else ANGLES[0]
         self.get_user(user_id)
         with get_connection(self.db_path) as conn:
-            conn.execute(
-                "UPDATE twin_users SET angle = ?, pending_take2 = '', updated_at = ? WHERE user_id = ?",
-                (target, time.time(), user_id),
-            )
+            conn.execute("UPDATE twin_users SET angle = ?, pending_take2 = '', updated_at = ? WHERE user_id = ?", (target, time.time(), user_id))
             conn.commit()
         self._sync()
         return target
@@ -46,8 +55,7 @@ class TwinRepository:
     def cycle_angle(self, user_id: int) -> str:
         u = self.get_user(user_id)
         cur = u["angle"] if u["angle"] in ANGLES else ANGLES[0]
-        nxt = ANGLES[(ANGLES.index(cur) + 1) % len(ANGLES)]
-        return self.set_angle(user_id, nxt)
+        return self.set_angle(user_id, ANGLES[(ANGLES.index(cur) + 1) % len(ANGLES)])
 
     def set_pending_take2(self, user_id: int, prompt_text: str) -> None:
         self.get_user(user_id)
@@ -75,24 +83,78 @@ class TwinRepository:
 
     def recent_turns(self, user_id: int, limit: int = 12) -> list[dict]:
         with get_connection(self.db_path) as conn:
-            rows = conn.execute("SELECT * FROM twin_turns WHERE user_id = ? ORDER BY id DESC LIMIT ?", (user_id, limit)).fetchall()
+            rows = conn.execute("SELECT * FROM twin_turns WHERE user_id = ? AND role IN ('learner', 'partner') ORDER BY id DESC LIMIT ?", (user_id, limit)).fetchall()
         return [dict(r) for r in reversed(rows)]
 
     def last_learner_turn(self, user_id: int) -> str:
         with get_connection(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT content FROM twin_turns WHERE user_id = ? AND role = 'learner' ORDER BY id DESC LIMIT 1",
-                (user_id,),
-            ).fetchone()
+            row = conn.execute("SELECT content FROM twin_turns WHERE user_id = ? AND role = 'learner' ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
         return str(row["content"]) if row else ""
 
     def find_turn_by_msg_id(self, user_id: int, chat_message_id: int) -> dict | None:
         with get_connection(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT * FROM twin_turns WHERE user_id = ? AND chat_message_id = ? ORDER BY id DESC LIMIT 1",
-                (user_id, chat_message_id),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM twin_turns WHERE user_id = ? AND chat_message_id = ? ORDER BY id DESC LIMIT 1", (user_id, chat_message_id)).fetchone()
         return dict(row) if row else None
+
+    def record_habit_hit(self, user_id: int, habit_key: str, example: str = "", fix_hint: str = "") -> tuple[str, int]:
+        key = habit_key.strip().lower() if habit_key else ""
+        if key not in HABIT_LABELS:
+            key = "stiff_register"
+        label = HABIT_LABELS[key]
+        now = time.time()
+        with get_connection(self.db_path) as conn:
+            row = conn.execute(
+                """
+                INSERT INTO twin_habits (user_id, habit_key, label, last_example, fix_hint, hits, clean_streak, updated_at)
+                VALUES (?, ?, ?, ?, ?, 1, 0, ?)
+                ON CONFLICT(user_id, habit_key) DO UPDATE SET
+                    hits = twin_habits.hits + 1,
+                    clean_streak = 0,
+                    last_example = CASE WHEN excluded.last_example != '' THEN excluded.last_example ELSE twin_habits.last_example END,
+                    fix_hint = CASE WHEN excluded.fix_hint != '' THEN excluded.fix_hint ELSE twin_habits.fix_hint END,
+                    updated_at = excluded.updated_at
+                RETURNING hits
+                """,
+                (user_id, key, label, example[:160], fix_hint[:160], now),
+            ).fetchone()
+            conn.commit()
+        self._sync()
+        return label, int(row["hits"]) if row else 1
+
+    def record_clean_turn(self, user_id: int) -> None:
+        with get_connection(self.db_path) as conn:
+            conn.execute("UPDATE twin_habits SET clean_streak = clean_streak + 1 WHERE user_id = ?", (user_id,))
+            conn.commit()
+
+    def top_habits(self, user_id: int, limit: int = 3) -> list[dict]:
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT * FROM twin_habits WHERE user_id = ? ORDER BY hits DESC, updated_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_memory(self, user_id: int) -> tuple[str, int]:
+        with get_connection(self.db_path) as conn:
+            row = conn.execute("SELECT facts_text, last_turn_synced FROM twin_memory WHERE user_id = ?", (user_id,)).fetchone()
+        return (str(row["facts_text"]), int(row["last_turn_synced"])) if row else ("", 0)
+
+    def save_memory(self, user_id: int, facts_text: str, turn_count: int) -> None:
+        clean = "\n".join(ln.strip() for ln in facts_text.strip().splitlines() if ln.strip())[:600]
+        with get_connection(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO twin_memory (user_id, facts_text, last_turn_synced, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    facts_text = excluded.facts_text,
+                    last_turn_synced = excluded.last_turn_synced,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, clean, turn_count, time.time()),
+            )
+            conn.commit()
+        self._sync()
 
     def save_vault_phrase(self, user_id: int, phrase: str, source_context: str = "") -> bool:
         clean = " ".join(phrase.strip().strip('"“”‘’\'').split())[:140]
@@ -112,10 +174,7 @@ class TwinRepository:
 
     def due_vault_phrases(self, user_id: int, limit: int = 2) -> list[dict]:
         with get_connection(self.db_path) as conn:
-            rows = conn.execute(
-                "SELECT * FROM twin_vault WHERE user_id = ? AND due_ts <= ? ORDER BY stage ASC, due_ts ASC LIMIT ?",
-                (user_id, time.time(), limit),
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM twin_vault WHERE user_id = ? AND due_ts <= ? ORDER BY stage ASC, due_ts ASC LIMIT ?", (user_id, time.time(), limit)).fetchall()
         return [dict(r) for r in rows]
 
     def all_vault_phrases(self, user_id: int, limit: int = 20) -> list[dict]:
@@ -131,10 +190,9 @@ class TwinRepository:
             if not row:
                 return
             new_stage = min(int(row["stage"]) + 1, len(intervals_days) - 1)
-            next_due = now + intervals_days[new_stage] * 86400
             conn.execute(
                 "UPDATE twin_vault SET stage = ?, hits = hits + 1, due_ts = ? WHERE user_id = ? AND phrase = ?",
-                (new_stage, next_due, user_id, phrase),
+                (new_stage, now + intervals_days[new_stage] * 86400, user_id, phrase),
             )
             conn.commit()
         self._sync()
@@ -151,16 +209,9 @@ class TwinRepository:
     def weekly_pulse(self, user_id: int) -> dict:
         since = time.time() - 7 * 86400
         with get_connection(self.db_path) as conn:
-            turns = conn.execute(
-                "SELECT * FROM twin_turns WHERE user_id = ? AND role = 'learner' AND created_at >= ?", (user_id, since)
-            ).fetchall()
-            activated = conn.execute(
-                "SELECT phrase, hits FROM twin_vault WHERE user_id = ? AND hits > 0 ORDER BY hits DESC LIMIT 4", (user_id,)
-            ).fetchall()
-            upgrades = conn.execute(
-                "SELECT original_span, native_take, tag FROM twin_upgrades WHERE user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT 3",
-                (user_id, since),
-            ).fetchall()
+            turns = conn.execute("SELECT * FROM twin_turns WHERE user_id = ? AND role = 'learner' AND created_at >= ?", (user_id, since)).fetchall()
+            activated = conn.execute("SELECT phrase, hits FROM twin_vault WHERE user_id = ? AND hits > 0 ORDER BY hits DESC LIMIT 4", (user_id,)).fetchall()
+            upgrades = conn.execute("SELECT original_span, native_take, tag FROM twin_upgrades WHERE user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT 3", (user_id, since)).fetchall()
         wpms = [float(r["wpm"]) for r in turns if float(r["wpm"]) > 0]
         return {
             "learner_turns": len(turns),
@@ -168,6 +219,7 @@ class TwinRepository:
             "avg_wpm": round(sum(wpms) / len(wpms), 1) if wpms else 0.0,
             "activated_phrases": [dict(r) for r in activated],
             "recent_upgrades": [dict(r) for r in upgrades],
+            "top_habits": self.top_habits(user_id, limit=3),
         }
 
     def check_and_increment_quota(self, user_id: int, daily_limit: int = DEFAULT_DAILY_USER_LLM_BUDGET) -> tuple[bool, int]:
@@ -205,7 +257,7 @@ class TwinRepository:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         deleted = 0
         with get_connection(self.db_path) as conn:
-            for tbl in ("twin_users", "twin_turns", "twin_vault", "twin_upgrades"):
+            for tbl in ("twin_users", "twin_turns", "twin_vault", "twin_upgrades", "twin_habits", "twin_memory"):
                 deleted += conn.execute(f"DELETE FROM {tbl} WHERE user_id = ?", (user_id,)).rowcount
             conn.execute("DELETE FROM daily_usage WHERE user_id = ? AND usage_date < ?", (user_id, today))
             conn.commit()

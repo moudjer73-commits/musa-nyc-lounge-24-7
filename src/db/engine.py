@@ -51,6 +51,25 @@ CREATE TABLE IF NOT EXISTS twin_upgrades (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS twin_habits (
+    user_id INTEGER NOT NULL,
+    habit_key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    last_example TEXT NOT NULL DEFAULT '',
+    fix_hint TEXT NOT NULL DEFAULT '',
+    hits INTEGER NOT NULL DEFAULT 1,
+    clean_streak INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (user_id, habit_key)
+);
+
+CREATE TABLE IF NOT EXISTS twin_memory (
+    user_id INTEGER PRIMARY KEY,
+    facts_text TEXT NOT NULL DEFAULT '',
+    last_turn_synced INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS daily_usage (
     user_id INTEGER NOT NULL,
     usage_date TEXT NOT NULL,

@@ -261,6 +261,27 @@ class GeminiClient:
         self.repo.refund_quota(user_id)
         return fallback
 
+    async def generate_voice_turn(
+        self,
+        user_id: int,
+        system_prompt: str,
+        audio_bytes: bytes,
+        user_prompt: str,
+        *,
+        mime_type: str = "audio/ogg",
+        temperature: float = 0.82,
+    ) -> str:
+        self._charge(user_id)
+        part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+        cfg = types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature)
+        try:
+            return await self._call(
+                [part, user_prompt], cfg, prefer_deep_chat=True, thinking=False, timeout_s=AUDIO_TIMEOUT_S
+            )
+        except LLMUnavailableError:
+            self.repo.refund_quota(user_id)
+            raise
+
     async def transcribe_voice(self, user_id: int, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
         self._charge(user_id)
         prompt = (

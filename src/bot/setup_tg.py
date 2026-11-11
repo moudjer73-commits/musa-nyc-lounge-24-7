@@ -7,19 +7,19 @@ logger = logging.getLogger(__name__)
 BOT_NAME = "Spoken English Lab"
 SHORT_DESCRIPTION = "Practice real spoken American English by voice or text with Malik, Claire & Prof. Vance + instant US coaching."
 FULL_DESCRIPTION = (
-    "🎙️ Spoken English Lab — Real US English Studio\n\n"
+    "🎙️ Spoken English Lab v3 — Real US English Studio\n\n"
     "Talk naturally by voice note or text with 3 sharp American partners:\n"
     "• ⚡ Malik — Everyday Chicago banter & real talk\n"
     "• 💼 Claire — Crisp NY workplace & executive pushback\n"
     "• 🎓 Prof. Vance — Seminar debates & big ideas\n\n"
-    "🎯 Instant US Coach catches every grammar slip or L1 calque and shows how Americans naturally say your exact thought.\n\n"
+    "🎯 Direct US audio ear coaches grammar, idioms, linking & spoken rhythm in real time.\n\n"
     "Tap Start below to jump in."
 )
 COMMANDS = [
     {"command": "start", "description": "Open studio & refresh buttons"},
     {"command": "partner", "description": "Switch partner (Malik, Claire, Vance)"},
     {"command": "spark", "description": "Start a live scenario or debate"},
-    {"command": "vault", "description": "Saved US phrases & 7-day pulse"},
+    {"command": "vault", "description": "Habit radar, saved chunks & pulse"},
     {"command": "reset", "description": "Fresh topic or erase my history"},
 ]
 _REFRESHED_CHATS: set[int] = set()
