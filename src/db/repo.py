@@ -4,7 +4,7 @@ import time
 from src.config import DB_PATH, DEFAULT_DAILY_USER_LLM_BUDGET, SNAPSHOT_PASSPHRASE, SNAPSHOT_PATH
 from src.db.engine import export_encrypted_snapshot, get_connection
 
-ANGLES = ("casual_sharp", "seminar_skeptic", "exec_clock")
+ANGLES = ("casual_sharp", "exec_clock", "seminar_skeptic")
 
 
 class TwinRepository:
@@ -31,15 +31,23 @@ class TwinRepository:
         self._sync()
         return {"user_id": user_id, "angle": "casual_sharp", "pending_take2": "", "turns_count": 0, "updated_at": now}
 
+    def set_angle(self, user_id: int, angle: str) -> str:
+        target = angle if angle in ANGLES else ANGLES[0]
+        self.get_user(user_id)
+        with get_connection(self.db_path) as conn:
+            conn.execute(
+                "UPDATE twin_users SET angle = ?, pending_take2 = '', updated_at = ? WHERE user_id = ?",
+                (target, time.time(), user_id),
+            )
+            conn.commit()
+        self._sync()
+        return target
+
     def cycle_angle(self, user_id: int) -> str:
         u = self.get_user(user_id)
         cur = u["angle"] if u["angle"] in ANGLES else ANGLES[0]
         nxt = ANGLES[(ANGLES.index(cur) + 1) % len(ANGLES)]
-        with get_connection(self.db_path) as conn:
-            conn.execute("UPDATE twin_users SET angle = ?, updated_at = ? WHERE user_id = ?", (nxt, time.time(), user_id))
-            conn.commit()
-        self._sync()
-        return nxt
+        return self.set_angle(user_id, nxt)
 
     def set_pending_take2(self, user_id: int, prompt_text: str) -> None:
         self.get_user(user_id)
@@ -70,6 +78,14 @@ class TwinRepository:
             rows = conn.execute("SELECT * FROM twin_turns WHERE user_id = ? ORDER BY id DESC LIMIT ?", (user_id, limit)).fetchall()
         return [dict(r) for r in reversed(rows)]
 
+    def last_learner_turn(self, user_id: int) -> str:
+        with get_connection(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT content FROM twin_turns WHERE user_id = ? AND role = 'learner' ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+        return str(row["content"]) if row else ""
+
     def find_turn_by_msg_id(self, user_id: int, chat_message_id: int) -> dict | None:
         with get_connection(self.db_path) as conn:
             row = conn.execute(
@@ -79,17 +95,15 @@ class TwinRepository:
         return dict(row) if row else None
 
     def save_vault_phrase(self, user_id: int, phrase: str, source_context: str = "") -> bool:
-        clean = " ".join(phrase.strip().strip('"“”‘’').split())[:140]
+        clean = " ".join(phrase.strip().strip('"“”‘’\'').split())[:140]
         if len(clean) < 3:
             return False
         now = time.time()
         with get_connection(self.db_path) as conn:
             conn.execute(
-                """
-                INSERT INTO twin_vault (user_id, phrase, source_context, stage, due_ts, hits, created_at)
-                VALUES (?, ?, ?, 0, ?, 0, ?)
-                ON CONFLICT(user_id, phrase) DO UPDATE SET due_ts = MIN(twin_vault.due_ts, excluded.due_ts)
-                """,
+                "INSERT INTO twin_vault (user_id, phrase, source_context, stage, due_ts, hits, created_at) "
+                "VALUES (?, ?, ?, 0, ?, 0, ?) "
+                "ON CONFLICT(user_id, phrase) DO UPDATE SET due_ts = MIN(twin_vault.due_ts, excluded.due_ts)",
                 (user_id, clean, source_context[:220], now, now),
             )
             conn.commit()
@@ -141,7 +155,7 @@ class TwinRepository:
                 "SELECT * FROM twin_turns WHERE user_id = ? AND role = 'learner' AND created_at >= ?", (user_id, since)
             ).fetchall()
             activated = conn.execute(
-                "SELECT phrase, hits FROM twin_vault WHERE user_id = ? AND hits > 0 ORDER BY hits DESC LIMIT 3", (user_id,)
+                "SELECT phrase, hits FROM twin_vault WHERE user_id = ? AND hits > 0 ORDER BY hits DESC LIMIT 4", (user_id,)
             ).fetchall()
             upgrades = conn.execute(
                 "SELECT original_span, native_take, tag FROM twin_upgrades WHERE user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT 3",
@@ -162,11 +176,9 @@ class TwinRepository:
             return False, 0
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
-                """
-                INSERT INTO daily_usage (user_id, usage_date, llm_calls) VALUES (?, ?, 1)
-                ON CONFLICT(user_id, usage_date) DO UPDATE SET llm_calls = daily_usage.llm_calls + 1
-                WHERE daily_usage.llm_calls < ? RETURNING llm_calls
-                """,
+                "INSERT INTO daily_usage (user_id, usage_date, llm_calls) VALUES (?, ?, 1) "
+                "ON CONFLICT(user_id, usage_date) DO UPDATE SET llm_calls = daily_usage.llm_calls + 1 "
+                "WHERE daily_usage.llm_calls < ? RETURNING llm_calls",
                 (user_id, today, daily_limit),
             ).fetchall()
             if rows:
@@ -182,6 +194,13 @@ class TwinRepository:
             conn.execute("UPDATE daily_usage SET llm_calls = MAX(llm_calls - 1, 0) WHERE user_id = ? AND usage_date = ?", (user_id, today))
             conn.commit()
 
+    def clear_conversation(self, user_id: int) -> None:
+        with get_connection(self.db_path) as conn:
+            conn.execute("DELETE FROM twin_turns WHERE user_id = ?", (user_id,))
+            conn.execute("UPDATE twin_users SET pending_take2 = '', updated_at = ? WHERE user_id = ?", (time.time(), user_id))
+            conn.commit()
+        self._sync()
+
     def purge_user(self, user_id: int) -> bool:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         deleted = 0
@@ -189,10 +208,6 @@ class TwinRepository:
             for tbl in ("twin_users", "twin_turns", "twin_vault", "twin_upgrades"):
                 deleted += conn.execute(f"DELETE FROM {tbl} WHERE user_id = ?", (user_id,)).rowcount
             conn.execute("DELETE FROM daily_usage WHERE user_id = ? AND usage_date < ?", (user_id, today))
-            tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-            for legacy in ("learner_profiles", "onboarding_logs", "active_scenes", "conversation_turns", "analyst_logs", "hint_ladder_states", "chunk_mastery", "user_reminders", "nat_turn_log", "nat_heard", "baseline_snapshots", "benchmark_scores", "podcast_episodes", "podcast_learner_states", "correction_ratings"):
-                if legacy in tables:
-                    conn.execute(f"DELETE FROM {legacy} WHERE user_id = ?", (user_id,))
             conn.commit()
         self._sync()
         return deleted > 0

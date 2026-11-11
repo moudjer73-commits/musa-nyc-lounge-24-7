@@ -1,23 +1,27 @@
 import logging, re, requests
+from telegram import BotCommand, BotCommandScopeChat
 from src.config import resolve_telegram_token
 
 logger = logging.getLogger(__name__)
 
 BOT_NAME = "Spoken English Lab"
-SHORT_DESCRIPTION = "Echo Twin — Spontaneous US English, Native Recasts & Live Register Shifts."
+SHORT_DESCRIPTION = "Spontaneous American English sparring with Malik, Claire & Prof. Vance + Native Recasts."
 FULL_DESCRIPTION = (
-    "🎙️ Echo Twin — Zero-menu American English sparring.\n\n"
-    "• Talk or send a voice note: voice replies mirror you with tap-to-reveal spoiler text.\n"
-    "• Drop Arabic or French mid-thought to get the exact US idiom inline.\n"
-    "• 👥 Native Take replays your own point the way a sharp American says it.\n"
-    "• Tap ⚡ Shift anytime to flip the room on your exact last sentence."
+    "🎙️ Spoken English Lab — Studio Edition\n\n"
+    "• Talk naturally by voice or text with Malik (Everyday), Claire (Work/Exec), or Prof. Vance (Seminar).\n"
+    "• Voice replies mirror you with tap-to-reveal spoiler transcripts.\n"
+    "• 👥 Native Take & ✨ Coach Last show how a native American says your exact thought.\n"
+    "• Mix Arabic or French mid-sentence anytime to get the exact US idiom [in brackets]."
 )
 COMMANDS = [
-    {"command": "start", "description": "Wake up Echo Twin"},
-    {"command": "pulse", "description": "7-day spoken pulse & upgrades"},
-    {"command": "vault", "description": "Stolen US chunks & activations"},
-    {"command": "wipe", "description": "Erase all my stored history"},
+    {"command": "start", "description": "Open studio & refresh buttons"},
+    {"command": "partner", "description": "Switch partner (Malik · Claire · Vance)"},
+    {"command": "spark", "description": "Drop a fresh live topic or pushback"},
+    {"command": "vault", "description": "Saved US phrases & 7-day pulse"},
+    {"command": "reset", "description": "New chat topic or erase history"},
 ]
+
+_REFRESHED_CHATS: set[int] = set()
 
 
 def redact_token(text: str, token: str | None = None) -> str:
@@ -61,18 +65,54 @@ def sync_telegram_bot_profile(token: str | None = None) -> None:
     if not tok:
         return
     base = f"https://api.telegram.org/bot{tok}"
-    for scope in ({"type": "default"}, {"type": "all_private_chats"}):
-        cur = _tg_call(base, "getMyCommands", {"scope": scope}, tok)
-        if cur and cur.get("_rate_limited"):
-            return
-        existing = [{"command": c.get("command"), "description": c.get("description")} for c in (cur or {}).get("result", []) if isinstance(c, dict)]
-        if existing != COMMANDS:
-            res = _tg_call(base, "setMyCommands", {"commands": COMMANDS, "scope": scope}, tok)
-            if res and res.get("_rate_limited"):
+    # Clear stale multi-language commands from v1 across global scopes, then set fresh commands
+    for scope in ({"type": "default"}, {"type": "all_private_chats"}, {"type": "all_group_chats"}):
+        for lang in ("", "en", "ar", "fr"):
+            lp = {"language_code": lang} if lang else {}
+            if scope["type"] == "all_group_chats":
+                res = _tg_call(base, "deleteMyCommands", {"scope": scope, **lp}, tok)
+                if res and res.get("_rate_limited"):
+                    return
+                continue
+            if lang == "fr":
+                _tg_call(base, "deleteMyCommands", {"scope": scope, **lp}, tok)
+                continue
+            cur = _tg_call(base, "getMyCommands", {"scope": scope, **lp}, tok)
+            if cur and cur.get("_rate_limited"):
                 return
+            existing = [{"command": c.get("command"), "description": c.get("description")} for c in (cur or {}).get("result", []) if isinstance(c, dict)]
+            if existing != COMMANDS:
+                res = _tg_call(base, "setMyCommands", {"commands": COMMANDS, "scope": scope, **lp}, tok)
+                if res and res.get("_rate_limited"):
+                    return
+
+    _tg_call(base, "setChatMenuButton", {"menu_button": {"type": "commands"}}, tok)
     sd = _tg_call(base, "getMyShortDescription", {}, tok)
     if sd and not sd.get("_rate_limited") and (sd.get("result") or {}).get("short_description") != SHORT_DESCRIPTION:
         _tg_call(base, "setMyShortDescription", {"short_description": SHORT_DESCRIPTION}, tok)
     fd = _tg_call(base, "getMyDescription", {}, tok)
     if fd and not fd.get("_rate_limited") and (fd.get("result") or {}).get("description") != FULL_DESCRIPTION:
         _tg_call(base, "setMyDescription", {"description": FULL_DESCRIPTION}, tok)
+
+
+async def refresh_chat_menu_once(bot, chat_id: int | None, force: bool = False) -> None:
+    if not bot or not chat_id:
+        return
+    if not force and chat_id in _REFRESHED_CHATS:
+        return
+    _REFRESHED_CHATS.add(chat_id)
+    scope = BotCommandScopeChat(chat_id=chat_id)
+    bot_cmds = [BotCommand(c["command"], c["description"]) for c in COMMANDS]
+    for lang in (None, "en", "ar", "fr"):
+        fn_del = getattr(bot, "delete_my_commands", None)
+        if callable(fn_del):
+            try:
+                await fn_del(scope=scope, language_code=lang)
+            except Exception:
+                pass
+    fn_set = getattr(bot, "set_my_commands", None)
+    if callable(fn_set):
+        try:
+            await fn_set(commands=bot_cmds, scope=scope)
+        except Exception:
+            pass
