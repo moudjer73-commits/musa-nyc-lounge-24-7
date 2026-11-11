@@ -221,3 +221,7 @@ class NaturalnessGauge:
                 q_share <= 0.35 and statistics.median(word_counts) <= 12 and short_share >= 0.20
             ),
         }
+
+    def forget_user(self, user_id: int) -> None:
+        self.logs = [e for e in self.logs if e.user_id != user_id]
+        self.heard_notebook = [h for h in self.heard_notebook if h.get("user_id") != user_id]

@@ -19,7 +19,7 @@ TRANSIENT_PAIR_COOLDOWN_S = 60
 MODEL_OVERLOAD_COOLDOWN_S = 180
 CALL_TIMEOUT_S = 12.0
 AUDIO_TIMEOUT_S = 60.0
-HTTP_TIMEOUT_MS = 14_000
+HTTP_TIMEOUT_MS = 65_000
 
 
 class QuotaExceededError(RuntimeError):
@@ -38,7 +38,6 @@ class LLMUnavailableError(RuntimeError):
 
 
 def _classify(exc: Exception) -> str:
-    """Return 'rate' | 'model' | 'auth' | 'transient' | 'other' for a failed Gemini call."""
     text = f"{type(exc).__name__} {exc}".lower()
     code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if code == 429 or "resource_exhausted" in text or "quota" in text or "rate limit" in text:
@@ -64,6 +63,24 @@ def _thinking_config_for(model: str):
     except Exception:  # noqa: BLE001
         return None
     return None
+
+
+def _with_http_timeout(cfg: types.GenerateContentConfig | None, timeout_s: float) -> types.GenerateContentConfig | None:
+    if not hasattr(types, "GenerateContentConfig") or not hasattr(types, "HttpOptions"):
+        return cfg
+    fields = getattr(types.GenerateContentConfig, "model_fields", {})
+    if "http_options" not in fields:
+        return cfg
+    req_ms = max(int(timeout_s * 1000), int((timeout_s + 2.0) * 1000))
+    try:
+        http_opts = types.HttpOptions(timeout=req_ms)
+        if cfg is None:
+            return types.GenerateContentConfig(http_options=http_opts)
+        if hasattr(cfg, "model_copy"):
+            return cfg.model_copy(update={"http_options": http_opts})
+    except Exception:  # noqa: BLE001
+        return cfg
+    return cfg
 
 
 def _rate_cooldown(exc: Exception) -> float:
@@ -107,6 +124,17 @@ class GeminiService:
         except Exception:  # noqa: BLE001
             logger.exception("quota refund failed")
 
+    @staticmethod
+    async def _invoke_generate(client_obj: Any, kwargs: dict[str, Any], timeout_s: float) -> Any:
+        aio = getattr(client_obj, "aio", None)
+        aio_models = getattr(aio, "models", None) if aio is not None else None
+        aio_fn = getattr(aio_models, "generate_content", None) if aio_models is not None else None
+        if callable(aio_fn):
+            coro = aio_fn(**kwargs)
+        else:
+            coro = asyncio.to_thread(client_obj.models.generate_content, **kwargs)
+        return await asyncio.wait_for(coro, timeout=timeout_s)
+
     async def _call(
         self,
         contents: Any,
@@ -124,6 +152,7 @@ class GeminiService:
         dead_keys: set[int] = set()
         attempts = 0
         max_attempts = max(MAX_ATTEMPTS_PER_CALL, len(self.clients) * len(models))
+        overload_threshold = min(2, len(self.clients))
         last_reason = ""
 
         now_init = time.monotonic()
@@ -145,20 +174,17 @@ class GeminiService:
                 use_thinking = thinking and (idx, model_name) not in self._no_thinking
                 for _pass in (0, 1):
                     try:
-                        cfg = config
+                        cfg = _with_http_timeout(config, timeout_s)
                         if use_thinking:
                             tc = _thinking_config_for(model_name)
-                            if tc is not None and config is not None:
-                                cfg = config.model_copy(update={"thinking_config": tc}) if hasattr(
-                                    config, "model_copy"
-                                ) else config
+                            if tc is not None and cfg is not None:
+                                cfg = cfg.model_copy(update={"thinking_config": tc}) if hasattr(
+                                    cfg, "model_copy"
+                                ) else cfg
                         kwargs: dict[str, Any] = {"model": model_name, "contents": contents}
                         if cfg is not None:
                             kwargs["config"] = cfg
-                        resp = await asyncio.wait_for(
-                            asyncio.to_thread(self.clients[idx].models.generate_content, **kwargs),
-                            timeout=timeout_s,
-                        )
+                        resp = await self._invoke_generate(self.clients[idx], kwargs, timeout_s)
                         text = getattr(resp, "text", None)
                         if text:
                             return text.strip()
@@ -169,8 +195,7 @@ class GeminiService:
                         last_reason = f"timeout after {timeout_s:.0f}s on {model_name}"
                         logger.warning("Gemini timeout on %s (key #%d)", model_name, idx)
                         consec_overload += 1
-                        if len(self.clients) > 1:
-                            self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_PAIR_COOLDOWN_S
+                        self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_PAIR_COOLDOWN_S
                         break
                     except Exception as exc:  # noqa: BLE001
                         kind = _classify(exc)
@@ -188,12 +213,10 @@ class GeminiService:
                             self._cooldown_until[(idx, model_name)] = time.monotonic() + _rate_cooldown(exc)
                         elif kind == "transient":
                             consec_overload += 1
-                            if len(self.clients) > 1:
-                                self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_PAIR_COOLDOWN_S
+                            self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_PAIR_COOLDOWN_S
                             await asyncio.sleep(0.3)
                         break
-                # If 2 keys failed with 503/504 on this model, the model itself is overloaded — jump to next model now
-                if consec_overload >= 2 and len(models) > 1:
+                if consec_overload >= overload_threshold:
                     self._model_cooldown_until[model_name] = time.monotonic() + MODEL_OVERLOAD_COOLDOWN_S
                     logger.warning("Cooling down overloaded model %s for %ds", model_name, MODEL_OVERLOAD_COOLDOWN_S)
                     break

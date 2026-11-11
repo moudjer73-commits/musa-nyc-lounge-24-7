@@ -3,7 +3,7 @@ import logging
 import random
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes
-from src.bot.telegram_setup import clear_stale_chat_commands
+from src.bot.telegram_setup import clear_stale_chat_commands, safe_reply_text
 from src.naturalness import LearnerLabTools
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ OPENING_LINES: dict[str, list[str]] = {
     "intellectual_professor": ["Come on in! So tell me, how's the comparative chapter shaping up this week?"],
     "social_networking": ["Great panel earlier—what part of the local governance puzzle are you working on right now?"],
     "service_counter": ["Hey there! What can I get started for you today?"],
-    "phone_call": ["Hey, it's Marcus—glad I caught you. Got a quick second?"],
+    "phone_call": ["Hey—glad I caught you. Got a quick second?"],
 }
 
 SPONTANEOUS_TOPICS: list[str] = [
@@ -132,7 +132,7 @@ def rooms_keyboard() -> InlineKeyboardMarkup:
     ])
     rows.append([
         InlineKeyboardButton("☕ Coffee Shop (Barista)", callback_data="ui:setroom:service_counter"),
-        InlineKeyboardButton("📞 Phone Call (Marcus)", callback_data="ui:setroom:phone_call"),
+        InlineKeyboardButton("📞 Phone Call", callback_data="ui:setroom:phone_call"),
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -285,7 +285,7 @@ def register_interactive_ui(app: Application, container) -> None:
                 system_prompt="You are a concise American English pragmatics coach.",
                 user_prompt=prompt,
             )
-            await query.message.reply_text(f"🔄 [{target_prof}]\n{out}")
+            await safe_reply_text(query.message, f"🔄 [{target_prof}]\n{out}")
             return
 
         if data == "ui:menu:ladder":
@@ -297,7 +297,8 @@ def register_interactive_ui(app: Application, container) -> None:
                 system_prompt="You are a concise American English pragmatics coach.",
                 user_prompt=prompt,
             )
-            await query.message.reply_text(
+            await safe_reply_text(
+                query.message,
                 f'🪜 Register Ladder for: "{intent}"\n\n{out}\n\n'
                 f"(Tip: You can also type /ladder <any sentence> anytime!)"
             )
@@ -316,17 +317,26 @@ def register_interactive_ui(app: Application, container) -> None:
             return
 
         if data == "ui:menu:podcast":
+            from src.bot.podcast_handlers import deliver_podcast_episode
+
             await query.message.reply_text("🎧 Generating Maya & Jordan dialogue podcast... (takes ~12s)")
             try:
-                ep = await container.podcast_pipeline.generate_daily_episode(uid)
+                chat_id = update.effective_chat.id if update.effective_chat else None
+                await deliver_podcast_episode(
+                    query.message,
+                    uid,
+                    container.podcast_repo,
+                    container.podcast_pipeline,
+                    profile_repo=container.profile_repo,
+                    bot=getattr(context, "bot", None),
+                    chat_id=chat_id,
+                )
             except Exception as exc:  # noqa: BLE001 - LLM down / quota: say so instead of a generic error
                 logger.warning("Podcast generation failed for %s: %s", uid, exc)
                 await query.message.reply_text(
                     str(exc) if exc.__class__.__name__ in ("QuotaExceededError", "LLMUnavailableError")
                     else "I couldn't build the episode right now. Try again in a minute."
                 )
-                return
-            await query.message.reply_text(f"🎧 {ep.title}\n\n{ep.transcript[:3500]}")
             return
 
         if data == "ui:menu:notebook":

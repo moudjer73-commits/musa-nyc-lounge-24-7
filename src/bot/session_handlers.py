@@ -21,7 +21,7 @@ def register_session_handlers(
             await update.message.reply_text(f"[{phase}]\n{desc}")
             return
 
-        day_num = int(args[0]) if (args and args[0].isdigit()) else 1
+        day_num = max(1, min(365, int(args[0]))) if (args and args[0].lstrip("-").isdigit()) else 1
         state = session_mgr.start_session(uid, day_number=day_num)
         chunks_preview = (
             ", ".join(f'"{bank.get_chunk(cid).phrase}"' for cid in state.target_chunk_ids)
@@ -59,7 +59,7 @@ def register_session_handlers(
             return
         uid = update.effective_user.id
         args = context.args or []
-        hour = int(args[0]) if (args and args[0].isdigit()) else 18
+        hour = max(0, min(23, int(args[0]))) if (args and args[0].lstrip("-").isdigit()) else 18
         chunk_repo.configure_reminder(uid, hour_utc=hour, enabled=True)
         await update.message.reply_text(f"Daily practice reminder set for {hour:02d}:00 UTC.")
 

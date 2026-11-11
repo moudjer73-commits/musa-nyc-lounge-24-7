@@ -1,6 +1,7 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from src.alex.responder import AlexResponder
+from src.bot.telegram_setup import safe_reply_text
 from src.analyst.engine import AnalystEngine
 from src.db.profile_repo import ProfileRepository
 from src.db.scene_repo import SceneRepository
@@ -21,6 +22,11 @@ async def handle_analyzed_conversation_turn(
     voice_mode=True (the learner sent a voice note) routes to the spoken 'friend_voice' profile.
     """
     if getattr(responder.llm, "configured", False):
+        if hasattr(responder, "reply_with_segments"):
+            _reply, segments = await responder.reply_with_segments(
+                user_id=user_id, learner_text=learner_text, voice_mode=voice_mode
+            )
+            return list(segments)
         alex_reply, _, _ = await responder.reply(user_id=user_id, learner_text=learner_text, voice_mode=voice_mode)
         segments = getattr(responder, "last_segments", {}).get(user_id) or [alex_reply]
         return list(segments)
@@ -68,7 +74,7 @@ def register_analyst_handlers(
         target = " ".join(args[:-1] if ask_ar else args)
         profile = profile_repo.get_or_create_profile(update.effective_user.id)
         step_name, hint_text = await analyst.get_next_hint(profile, target, ask_arabic=ask_ar)
-        await update.message.reply_text(f"[Hint — {step_name}]\n{hint_text}")
+        await safe_reply_text(update.message, f"[Hint — {step_name}]\n{hint_text}")
 
     async def summary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:

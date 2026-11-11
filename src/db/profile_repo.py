@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional
 from src.config import (
     DB_PATH,
-     DEFAULT_DAILY_USER_LLM_BUDGET,
+    DEFAULT_DAILY_USER_LLM_BUDGET,
     RECALIBRATION_INTERVAL_DAYS,
     SNAPSHOT_PASSPHRASE,
     SNAPSHOT_PATH,
@@ -94,27 +94,32 @@ class ProfileRepository:
     ) -> tuple[bool, int]:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with get_connection(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT llm_calls FROM daily_usage WHERE user_id = ? AND usage_date = ?",
-                (user_id, today),
-            ).fetchone()
-            current = int(row["llm_calls"]) if row else 0
-            if current >= daily_limit:
-                return False, current
-            new_count = current + 1
-            conn.execute(
+            if daily_limit <= 0:
+                cur = conn.execute(
+                    "SELECT llm_calls FROM daily_usage WHERE user_id = ? AND usage_date = ?", (user_id, today)
+                ).fetchone()
+                return False, int(cur["llm_calls"]) if cur else 0
+            rows = conn.execute(
                 """
                 INSERT INTO daily_usage (user_id, usage_date, llm_calls)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id, usage_date) DO UPDATE SET llm_calls = excluded.llm_calls
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, usage_date) DO UPDATE SET
+                    llm_calls = daily_usage.llm_calls + 1
+                WHERE daily_usage.llm_calls < ?
+                RETURNING llm_calls
                 """,
-                (user_id, today, new_count),
-            )
+                (user_id, today, daily_limit),
+            ).fetchall()
+            if rows:
+                conn.commit()
+                return True, int(rows[0]["llm_calls"])
+            cur = conn.execute(
+                "SELECT llm_calls FROM daily_usage WHERE user_id = ? AND usage_date = ?", (user_id, today)
+            ).fetchone()
             conn.commit()
-            return True, new_count
+            return False, int(cur["llm_calls"]) if cur else daily_limit
 
     def refund_quota(self, user_id: int) -> None:
-        """Give back one call (used when the LLM failed and the learner got nothing)."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with get_connection(self.db_path) as conn:
             conn.execute(
@@ -124,11 +129,11 @@ class ProfileRepository:
             conn.commit()
 
     def delete_user_data(self, user_id: int) -> bool:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with get_connection(self.db_path) as conn:
             c1 = conn.execute("DELETE FROM learner_profiles WHERE user_id = ?", (user_id,)).rowcount
             c2 = conn.execute("DELETE FROM onboarding_logs WHERE user_id = ?", (user_id,)).rowcount
-            c3 = conn.execute("DELETE FROM daily_usage WHERE user_id = ?", (user_id,)).rowcount
+            conn.execute("DELETE FROM daily_usage WHERE user_id = ? AND usage_date < ?", (user_id, today))
             conn.commit()
         self._sync_snapshot()
-        return (c1 + c2 + c3) > 0
-
+        return (c1 + c2) > 0

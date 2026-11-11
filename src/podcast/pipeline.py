@@ -1,5 +1,5 @@
-from pathlib import Path
-from src.config import DATA_DIR, PROMPTS_DIR
+import hashlib
+from src.config import DATA_DIR
 from src.db.podcast_repo import PodcastRepository
 from src.llm.gemini_client import GeminiService
 from src.models.listening_podcast import (
@@ -18,8 +18,6 @@ REPAIR_MARKERS = ("i mean", "what i meant", "let me rephrase", "sorry, to clarif
 
 PODCAST_PROMPT = """Generate an AI-generated two-host American English podcast script as schema-validated JSON.
 Rules: written for speech (natural contractions like gonna/kinda/I'm), short sentences, varied turn lengths, ONE focus function, embed 3-5 target chunks organically (never list them), include backchannels, and include ONE small misunderstanding and its natural repair. Never use interview cadence."""
-
-(PROMPTS_DIR / "podcast_script.md").write_text(PODCAST_PROMPT + "\n", encoding="utf-8")
 
 
 class ScriptAuditor:
@@ -80,7 +78,7 @@ class PodcastPipeline:
             level=level,
             target_chunks=chunks[:3] or [c0, c1],
             turns=[
-                PodcastTurn(speaker="Host_A", text=f"We're gonna roll out the new schedule on Monday."),
+                PodcastTurn(speaker="Host_A", text="We're gonna roll out the new schedule on Monday."),
                 PodcastTurn(speaker="Host_B", text=f"Right, {c0} the testing team still needs two more days."),
                 PodcastTurn(speaker="Host_A", text="Wait, you want to cancel the launch completely?"),
                 PodcastTurn(
@@ -101,11 +99,10 @@ class PodcastPipeline:
         max_retries: int = 2,
     ) -> PodcastEpisodeRecord:
         cache_key = (
-            f"personal_{user_id}_{register}_{function}_{ '_'.join(sorted(target_chunks)) }"
+            f"personal_{user_id}_{register}_{function}_{'_'.join(sorted(target_chunks))}"
             if personal
             else f"lib_{register}_{function}_{level}"
         )
-        # Blueprint: Never regenerate an existing episode
         cached = self.repo.get_cached_episode(cache_key)
         if cached:
             return cached
@@ -116,8 +113,9 @@ class PodcastPipeline:
         fallback_script = self._default_fallback_script(register, function, level, target_chunks)
         script = fallback_script
         audit = self.auditor.audit_script(script)
+        used_fallback = True
 
-        for attempt in range(max_retries):
+        for _attempt in range(max_retries):
             candidate = await self.llm.generate_structured(
                 user_id=user_id,
                 system_prompt=PODCAST_PROMPT,
@@ -125,16 +123,20 @@ class PodcastPipeline:
                 schema_cls=PodcastScript,
                 fallback_instance=fallback_script,
             )
+            if candidate is fallback_script:
+                break
             cand_audit = self.auditor.audit_script(candidate)
             if cand_audit.passed:
                 script, audit = candidate, cand_audit
+                used_fallback = False
                 break
 
         if not audit.passed:
             script = fallback_script
             audit = self.auditor.audit_script(script)
+            used_fallback = True
 
-        ep_id = f"ep_{ abs(hash(cache_key)) % 1000000 }"
+        ep_id = hashlib.sha1(cache_key.encode()).hexdigest()[:12]
         audio_out = DATA_DIR / "podcasts" / f"{ep_id}.mp3"
         voice_map = {"Host_A": "en-US-AndrewNeural", "Host_B": "en-US-AvaNeural"}
         rendered_path, _ = await self.tts.render_episode_audio(script.turns, audio_out, voice_map)
@@ -149,11 +151,15 @@ class PodcastPipeline:
             audio_path=str(rendered_path),
             label="AI-generated",
         )
+        if used_fallback:
+            if personal:
+                self.repo.refund_personal_budget(user_id)
+            return record
+
         self.repo.save_episode(record)
         return record
 
     def evaluate_post_episode_evidence(self, state_accuracy: float, used_target_chunk_after: bool) -> str:
-        """Blueprint 4.7: Comprehension feeds E1; using a chunk right after the episode is E2 at most (NEVER E3)."""
         if used_target_chunk_after:
             return "E2"
         if state_accuracy >= 0.5:

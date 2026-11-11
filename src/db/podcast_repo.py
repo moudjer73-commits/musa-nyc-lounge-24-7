@@ -77,26 +77,62 @@ class PodcastRepository:
         self._sync()
 
     def check_and_consume_personal_budget(self, user_id: int, max_per_day: int = 1) -> bool:
+        if max_per_day <= 0:
+            return False
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         with get_connection(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT episodes_generated FROM personal_podcast_budget WHERE user_id = ? AND budget_date = ?",
-                (user_id, today),
-            ).fetchone()
-            used = int(row["episodes_generated"]) if row else 0
-            if used >= max_per_day:
-                return False
-            conn.execute(
+            rows = conn.execute(
                 """
                 INSERT INTO personal_podcast_budget (user_id, budget_date, episodes_generated)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id, budget_date) DO UPDATE SET episodes_generated = excluded.episodes_generated
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, budget_date) DO UPDATE SET
+                    episodes_generated = personal_podcast_budget.episodes_generated + 1
+                WHERE personal_podcast_budget.episodes_generated < ?
+                RETURNING episodes_generated
                 """,
-                (user_id, today, used + 1),
+                (user_id, today, max_per_day),
+            ).fetchall()
+            conn.commit()
+        if not rows:
+            return False
+        self._sync()
+        return True
+
+    def refund_personal_budget(self, user_id: int) -> None:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        with get_connection(self.db_path) as conn:
+            conn.execute(
+                "UPDATE personal_podcast_budget SET episodes_generated = MAX(episodes_generated - 1, 0) "
+                "WHERE user_id = ? AND budget_date = ?",
+                (user_id, today),
             )
             conn.commit()
         self._sync()
-        return True
+
+    def delete_user_episodes(self, user_id: int) -> None:
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT record_json FROM podcast_episodes WHERE user_id = ?", (user_id,)
+            ).fetchall()
+            conn.execute("DELETE FROM podcast_episodes WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM podcast_learner_states WHERE user_id = ?", (user_id,))
+            conn.commit()
+        for r in rows:
+            try:
+                rec = PodcastEpisodeRecord.model_validate_json(r["record_json"])
+                if rec.audio_path:
+                    base = Path(rec.audio_path)
+                    for cand in (
+                        base,
+                        base.with_suffix(".mp3"),
+                        base.with_suffix(".wav"),
+                        base.with_name(f"{base.stem}_slow.mp3"),
+                        base.with_name(f"{base.stem}_slow.wav"),
+                    ):
+                        cand.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+        self._sync()
 
     def get_or_create_learner_state(self, user_id: int, episode_id: str) -> LearnerPodcastState:
         with get_connection(self.db_path) as conn:

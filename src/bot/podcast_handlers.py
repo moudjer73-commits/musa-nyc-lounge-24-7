@@ -35,8 +35,11 @@ def handle_podcast_button_action(
     repo: PodcastRepository, episode: PodcastEpisodeRecord, user_id: int, action: str
 ) -> tuple[str, LearnerPodcastState]:
     state = repo.get_or_create_learner_state(user_id, episode.episode_id)
-    state.first_listen_done = True
+    if action not in ("replay", "slower", "questions", "transcript", "shadow", "voice"):
+        return "", state
 
+    state.first_listen_done = True
+    msg = ""
     if action == "replay":
         state.replayed_count += 1
         msg = f"[{episode.label}] Replaying episode ({state.replayed_count}x)."
@@ -62,8 +65,8 @@ def handle_podcast_button_action(
     elif action == "shadow":
         state.shadowing_attempted = True
         state.step = "shadow_15s"
-        msg = f"Shadowing 15-Second Segment (Repeat out loud matching rhythm):\n\"{episode.script.shadow_segment_15s}\""
-    else:
+        msg = f'Shadowing 15-Second Segment (Repeat out loud matching rhythm):\n"{episode.script.shadow_segment_15s}"'
+    elif action == "voice":
         state.voice_reply_submitted = True
         state.step = "voice_reply_third_speaker"
         msg = "Send a voice note now jumping in as the 3rd speaker to give your take!"
@@ -73,10 +76,6 @@ def handle_podcast_button_action(
 
 
 async def ensure_episode_audio(pipeline: PodcastPipeline, episode: PodcastEpisodeRecord, slow: bool = False) -> Path | None:
-    """Return a real speech MP3 for the episode (normal or 0.85x-style slow), re-rendering if the file is gone.
-
-    Returns None when only the offline beep fallback is available: we never send a beep as if it were a podcast.
-    """
     base = Path(episode.audio_path)
     mp3 = base.with_name(f"{base.stem}_slow.mp3") if slow else base.with_suffix(".mp3")
     if mp3.exists() and mp3.stat().st_size > 0:
@@ -88,7 +87,7 @@ async def ensure_episode_audio(pipeline: PodcastPipeline, episode: PodcastEpisod
     except Exception:  # noqa: BLE001
         logger.exception("Podcast audio render failed for %s", episode.episode_id)
         return None
-    if Path(path).suffix.lower() != ".mp3":  # offline sine-wave fallback is not speech
+    if Path(path).suffix.lower() != ".mp3":
         try:
             Path(path).unlink(missing_ok=True)
         except OSError:
@@ -108,6 +107,47 @@ async def send_episode_audio(message, audio: Path, episode: PodcastEpisodeRecord
         )
 
 
+async def deliver_podcast_episode(
+    message,
+    uid: int,
+    repo: PodcastRepository,
+    pipeline: PodcastPipeline,
+    profile_repo=None,
+    bot=None,
+    chat_id: int | None = None,
+) -> PodcastEpisodeRecord:
+    register = "professional"
+    if profile_repo is not None:
+        weights = profile_repo.get_or_create_profile(uid).register_weights
+        if weights:
+            register = max(weights, key=weights.get)
+    if bot is not None and chat_id is not None:
+        try:
+            await bot.send_chat_action(chat_id, "upload_voice")
+        except Exception:  # noqa: BLE001
+            pass
+    ep = await pipeline.get_or_create_episode(
+        user_id=uid,
+        register=register,  # type: ignore[arg-type]
+        function="disagree",
+        level="L2",
+        target_chunks=["I see where you're coming from, but", "Sorry to jump in here, but"],
+        personal=False,
+    )
+    state = repo.get_or_create_learner_state(uid, ep.episode_id)
+    kb = build_podcast_keyboard(ep.episode_id, state)
+    caption = (
+        f"[{ep.label}] Spoken English Lab Podcast ({ep.script.register_label} | {ep.script.level})\n"
+        "Step 1: Listen first without transcript, then answer Gist & Detail to unlock the text."
+    )
+    audio = await ensure_episode_audio(pipeline, ep)
+    if audio:
+        await send_episode_audio(message, audio, ep, caption, kb)
+    else:
+        await message.reply_text(f"{caption}\n\n{AUDIO_UNAVAILABLE}", reply_markup=kb)
+    return ep
+
+
 def register_podcast_handlers(
     app: Application,
     repo: PodcastRepository,
@@ -118,35 +158,16 @@ def register_podcast_handlers(
     async def podcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
             return
-        uid = update.effective_user.id
-        register = "professional"
-        if profile_repo is not None:  # pick the register the learner's goal weights favour most
-            weights = profile_repo.get_or_create_profile(uid).register_weights
-            if weights:
-                register = max(weights, key=weights.get)
-        try:
-            await context.bot.send_chat_action(update.effective_chat.id, "upload_voice")
-        except Exception:  # noqa: BLE001
-            pass
-        ep = await pipeline.get_or_create_episode(
-            user_id=uid,
-            register=register,  # type: ignore[arg-type]
-            function="disagree",
-            level="L2",
-            target_chunks=["I see where you're coming from, but", "Sorry to jump in here, but"],
-            personal=False,
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        await deliver_podcast_episode(
+            update.message,
+            update.effective_user.id,
+            repo,
+            pipeline,
+            profile_repo=profile_repo,
+            bot=getattr(context, "bot", None),
+            chat_id=chat_id,
         )
-        state = repo.get_or_create_learner_state(uid, ep.episode_id)
-        kb = build_podcast_keyboard(ep.episode_id, state)
-        caption = (
-            f"[{ep.label}] Spoken English Lab Podcast ({ep.script.register_label} | {ep.script.level})\n"
-            "Step 1: Listen first without transcript, then answer Gist & Detail to unlock the text."
-        )
-        audio = await ensure_episode_audio(pipeline, ep)
-        if audio:
-            await send_episode_audio(update.message, audio, ep, caption, kb)
-        else:
-            await update.message.reply_text(f"{caption}\n\n{AUDIO_UNAVAILABLE}", reply_markup=kb)
 
     async def curated_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
@@ -170,6 +191,8 @@ def register_podcast_handlers(
             await query.message.reply_text("That episode is no longer available — send /podcast for a fresh one.")
             return
         msg, state = handle_podcast_button_action(repo, ep, update.effective_user.id, action)
+        if not msg:
+            return
         kb = build_podcast_keyboard(ep_id, state)
         if action in ("replay", "slower"):
             audio = await ensure_episode_audio(pipeline, ep, slow=(action == "slower"))

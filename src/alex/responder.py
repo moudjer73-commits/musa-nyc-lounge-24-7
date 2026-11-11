@@ -239,3 +239,23 @@ class AlexResponder:
             guard_hits=guard_res.guard_hits,
         )
         return draft, scene, audit
+
+    async def reply_with_segments(
+        self,
+        user_id: int,
+        learner_text: str,
+        recast_phrase: str | None = None,
+        voice_mode: bool = False,
+    ) -> tuple[str, list[str]]:
+        async with self.user_lock(user_id):
+            draft, _scene, _audit = await self._reply_locked(user_id, learner_text, recast_phrase, voice_mode)
+            segments = list(self.last_segments.get(user_id) or [draft])
+            return draft, segments
+
+    def forget_user(self, user_id: int) -> None:
+        self._user_turn_counts.pop(user_id, None)
+        self._recent_dice.pop(user_id, None)
+        self._recent_soft_hits.pop(user_id, None)
+        self._last_fn.pop(user_id, None)
+        self.last_segments.pop(user_id, None)
+        self._locks.pop(user_id, None)

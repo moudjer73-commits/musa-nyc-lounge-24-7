@@ -1,10 +1,20 @@
+from typing import get_args
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 from src.alex.responder import AlexResponder
+from src.bot.telegram_setup import safe_reply_text
 from src.db.scene_repo import SceneRepository
+from src.models.register_scene import SettingType
 from src.naturalness import LearnerLabTools
 from src.quality.guard import QualityGuard
 from src.register.engine import PRESET_ROOMS, RegisterEngine
+
+ALLOWED_SETTINGS: tuple[str, ...] = get_args(SettingType)
+MODE_MAP = {
+    "a": "a_bot_scene_change",
+    "b": "b_learner_requested",
+    "c": "c_mid_conversation_shift",
+}
 
 
 def register_alex_handlers(
@@ -21,9 +31,9 @@ def register_alex_handlers(
             return
         uid = update.effective_user.id
         args = context.args or []
+        rooms_list = ", ".join(PRESET_ROOMS.keys())
         if not args:
             current = scene_repo.get_active_scene(uid)
-            rooms_list = ", ".join(PRESET_ROOMS.keys())
             await update.message.reply_text(
                 f"Active Scene: {current.room_id} ({current.setting} | {current.relationship} | "
                 f"directness={current.directness} | flavor={current.flavor})\n"
@@ -31,6 +41,11 @@ def register_alex_handlers(
             )
             return
         room_id = args[0].strip()
+        if room_id not in PRESET_ROOMS:
+            await update.message.reply_text(
+                f"Unknown room '{room_id}'.\nAvailable rooms: {rooms_list}\nUsage: /room <room_id>"
+            )
+            return
         scene = reg_engine.create_room_scene(room_id=room_id)
         scene_repo.save_active_scene(uid, scene)
         await update.message.reply_text(
@@ -44,14 +59,34 @@ def register_alex_handlers(
         uid = update.effective_user.id
         current = scene_repo.get_active_scene(uid)
         args = context.args or []
-        mode_arg = args[0].lower() if args else "a"
-        mode_map = {
-            "a": "a_bot_scene_change",
-            "b": "b_learner_requested",
-            "c": "c_mid_conversation_shift",
-        }
-        mode = mode_map.get(mode_arg, "a_bot_scene_change")
-        new_setting = args[1] if len(args) > 1 else ("professional" if current.setting != "professional" else "casual")
+        usage_msg = (
+            f"Usage: /switch [a|b|c] <setting>\n"
+            f"Allowed settings: {', '.join(ALLOWED_SETTINGS)}"
+        )
+        default_setting = "professional" if current.setting != "professional" else "casual"
+        if not args:
+            mode = MODE_MAP["a"]
+            new_setting = default_setting
+        elif len(args) == 1:
+            a0 = args[0].strip().lower()
+            if a0 in MODE_MAP:
+                mode = MODE_MAP[a0]
+                new_setting = default_setting
+            elif a0 in ALLOWED_SETTINGS:
+                mode = MODE_MAP["a"]
+                new_setting = a0
+            else:
+                await update.message.reply_text(usage_msg)
+                return
+        else:
+            m_key = args[0].strip().lower()
+            s_key = args[1].strip().lower()
+            if m_key not in MODE_MAP or s_key not in ALLOWED_SETTINGS:
+                await update.message.reply_text(usage_msg)
+                return
+            mode = MODE_MAP[m_key]
+            new_setting = s_key
+
         new_rel = "hierarchical" if new_setting == "professional" else "equal"
         event = reg_engine.switch_scene(
             current=current,
@@ -104,7 +139,7 @@ def register_alex_handlers(
             system_prompt="You are a concise American English pragmatics coach.",
             user_prompt=prompt,
         )
-        await update.message.reply_text(out)
+        await safe_reply_text(update.message, out)
 
     async def flip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
@@ -119,7 +154,7 @@ def register_alex_handlers(
             system_prompt="You are a concise American English pragmatics coach.",
             user_prompt=prompt,
         )
-        await update.message.reply_text(f"🔄 [{target_profile}]: {out}")
+        await safe_reply_text(update.message, f"🔄 [{target_profile}]: {out}")
 
     async def stats_nat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
@@ -150,7 +185,7 @@ def register_alex_handlers(
         ok = responder.nat_gauge.flag_artificial(msg_id, context_turns=ctx_turns, user_id=uid)
         try:
             await query.answer("🎭 Logged as artificial (with 4 turns of context)." if ok else "Already logged or too old.")
-        except Exception:  # noqa: BLE001 - stale button
+        except Exception:  # noqa: BLE001
             pass
 
     app.add_handler(CommandHandler("room", room_cmd))
@@ -161,4 +196,3 @@ def register_alex_handlers(
     app.add_handler(CommandHandler("flip", flip_cmd))
     app.add_handler(CommandHandler("stats_naturalness", stats_nat_cmd))
     app.add_handler(CallbackQueryHandler(flag_artificial_cb, pattern=r"^nat:flag:"))
-

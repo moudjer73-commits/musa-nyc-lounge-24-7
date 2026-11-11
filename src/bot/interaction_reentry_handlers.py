@@ -34,7 +34,7 @@ def register_interaction_and_reentry_handlers(
             await update.message.reply_text(f"[{block}]\n{desc}")
             return
 
-        days = int(args[0]) if (args and args[0].isdigit()) else 12
+        days = max(1, min(365, int(args[0]))) if (args and args[0].lstrip("-").isdigit()) else 12
         state = reentry_mgr.start_reentry_session(uid, days_away=days)
         await update.message.reply_text(
             f"10-Min Re-Entry Session Started ({state.days_away} days away)\n"

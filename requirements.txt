@@ -1,8 +1,8 @@
-google-genai>=1.0.0
-pydantic>=2.7.0
-cryptography>=42.0.0
-python-telegram-bot>=21.0
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
-edge-tts>=6.1.12
-requests>=2.31.0
+google-genai==3.0.0
+pydantic==2.14.3
+cryptography==50.0.2
+python-telegram-bot==22.8
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
+edge-tts==7.3.1
+requests==2.34.2

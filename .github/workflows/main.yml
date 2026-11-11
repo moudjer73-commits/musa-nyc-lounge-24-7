@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -35,7 +37,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt && pip install -U edge-tts
+        run: pip install -r requirements.txt
 
       # The tests report problems but never keep the bot offline: a red test is a warning, not an outage.
       - name: Run Verification Suite
@@ -58,14 +60,17 @@ jobs:
           GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
           GEMINI_MODEL_CHAIN: "${{ vars.GEMINI_MODEL_CHAIN || 'gemini-3.5-flash-lite,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-3.8-flash' }}"
           SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
-          GEMINI_MODEL_CHAIN: "${{ vars.GEMINI_MODEL_CHAIN || 'gemini-3.5-flash-lite,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-3.8-flash' }}"
           ADMIN_USER_IDS: ${{ vars.ADMIN_USER_IDS }}
           SEL_SNAPSHOT_PUSH_MIN: ${{ vars.SEL_SNAPSHOT_PUSH_MIN }}
         run: |
           START_TS=$(date +%s)
           timeout --signal=TERM --kill-after=60s 17100s python app.py || true
           END_TS=$(date +%s)
-          echo "uptime_s=$((END_TS - START_TS))" >> "$GITHUB_OUTPUT"
+          UPTIME_S=$((END_TS - START_TS))
+          if [ "$UPTIME_S" -lt 60 ]; then
+            echo "::error::Bot exited after ${UPTIME_S}s"
+          fi
+          echo "uptime_s=${UPTIME_S}" >> "$GITHUB_OUTPUT"
 
       - name: Save Encrypted State Snapshot
         if: always()

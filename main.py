@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder
 
 from src.bot.app import LabContainer, register_all_modules
 from src.bot.background import start_background_tasks, stop_background_tasks
-from src.bot.telegram_setup import sync_telegram_bot_profile
+from src.bot.telegram_setup import redact_token, sync_telegram_bot_profile
 from src.config import resolve_telegram_token
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -20,7 +20,7 @@ def build_application(bot_token: str, container: LabContainer):
             try:
                 await asyncio.to_thread(sync_telegram_bot_profile, bot_token)
             except Exception as exc:  # noqa: BLE001
-                logging.warning("Telegram profile sync skipped: %s", exc)
+                logging.warning("Telegram profile sync skipped: %s", redact_token(str(exc), bot_token))
 
         app.bot_data["bg_tasks"] = start_background_tasks(app, container) + [asyncio.create_task(_sync())]
 

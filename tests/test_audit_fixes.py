@@ -71,17 +71,17 @@ def test_snapshot_writes_are_coalesced_then_flushed(tmp_path: Path):
 
     engine.set_snapshot_min_interval(3600.0)
     try:
-        repo = ProfileRepository(tmp_path / "p.db", tmp_path / "p.enc", "pw")
-        p = repo.get_or_create_profile(5)  # first write exports
-        first = (tmp_path / "p.enc").read_bytes()
-        p.goal = "changed"
-        repo.save_profile(p)  # inside the window: coalesced, not exported
-        assert (tmp_path / "p.enc").read_bytes() == first
-        assert engine.flush_pending_snapshots() == 1  # shutdown / background flush writes it
-        assert (tmp_path / "p.enc").read_bytes() != first
+        snap = tmp_path / "p.enc"
+        repo = ProfileRepository(tmp_path / "p.db", snap, "pw-long-enough-16c")
+        p = repo.get_or_create_profile(5)  # deferred: marks dirty, no sync encryption on request path
+        assert not snap.exists()
+        p.goal = "study"
+        repo.save_profile(p)  # still deferred inside interval
+        assert not snap.exists()
+        assert engine.flush_pending_snapshots() == 1  # background / shutdown flush writes it
+        assert snap.exists() and snap.stat().st_size > 24
     finally:
         engine.set_snapshot_min_interval(0)
-
 
 def test_refund_quota_gives_back_one_call(tmp_path: Path):
     repo = ProfileRepository(tmp_path / "p.db", tmp_path / "p.enc", "")

@@ -1,14 +1,24 @@
-"""Background loops started from main.post_init: periodic snapshot publishing and practice reminders."""
+"""Background loops started from main.post_init: snapshot flushing, publishing, and practice reminders."""
 import asyncio
 import logging
 
 from src.config import SNAPSHOT_PUSH_MINUTES
-from src.db.engine import export_encrypted_snapshot
+from src.db.engine import export_encrypted_snapshot, flush_pending_snapshots
 from src.db.persist import publish_snapshot
 
 logger = logging.getLogger(__name__)
 
 REMINDER_TEXT = "👋 Quick check-in: got five minutes to chat today? Just send me anything, text or a voice note."
+
+
+async def flush_loop(interval_s: float = 30.0) -> None:
+    """Flush coalesced dirty DB snapshots off the event loop every 30s."""
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await asyncio.to_thread(flush_pending_snapshots)
+        except Exception:  # noqa: BLE001
+            logger.exception("Periodic snapshot flush failed")
 
 
 async def snapshot_loop(container, interval_s: float) -> None:
@@ -33,7 +43,7 @@ async def reminder_loop(bot, container, interval_s: float = 300.0, first_delay_s
             for uid in container.chunk_repo.get_due_reminder_users():
                 try:
                     await bot.send_message(chat_id=uid, text=REMINDER_TEXT)
-                except Exception as exc:  # noqa: BLE001 - user blocked the bot, etc.: do not retry forever today
+                except Exception as exc:  # noqa: BLE001
                     logger.info("Reminder to %s not delivered: %s", uid, exc)
                 container.chunk_repo.mark_reminder_sent(uid)
         except Exception:  # noqa: BLE001
@@ -43,6 +53,8 @@ async def reminder_loop(bot, container, interval_s: float = 300.0, first_delay_s
 
 def start_background_tasks(app, container) -> list[asyncio.Task]:
     tasks: list[asyncio.Task] = []
+    if container.passphrase:
+        tasks.append(asyncio.create_task(flush_loop(30.0)))
     if SNAPSHOT_PUSH_MINUTES > 0 and container.passphrase:
         tasks.append(asyncio.create_task(snapshot_loop(container, SNAPSHOT_PUSH_MINUTES * 60.0)))
     tasks.append(asyncio.create_task(reminder_loop(app.bot, container)))

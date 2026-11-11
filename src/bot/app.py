@@ -19,7 +19,9 @@ from src.chunks.scheduler import AcquisitionScheduler, ChunkBank
 from src.config import DB_PATH, SNAPSHOT_PASSPHRASE, SNAPSHOT_PATH, admin_user_ids
 from src.db.analyst_repo import AnalystRepository
 from src.db.chunk_repo import ChunkRepository
-from src.db.engine import flush_pending_snapshots, get_connection, restore_encrypted_snapshot, set_snapshot_min_interval
+from datetime import datetime, timezone
+from src.bot.telegram_setup import safe_reply_text
+from src.db.engine import export_encrypted_snapshot, flush_pending_snapshots, get_connection, restore_encrypted_snapshot, set_snapshot_min_interval
 from src.db.podcast_repo import PodcastRepository
 from src.db.profile_repo import ProfileRepository
 from src.db.scene_repo import SceneRepository
@@ -99,20 +101,26 @@ class LabContainer:
 
     def purge_all_user_data(self, user_id: int) -> bool:
         """Complete per-user privacy wipe across every table in Spoken English Lab."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self.scene_repo.delete_user_scenes(user_id)
         self.analyst_repo.delete_user_analyst_data(user_id)
         self.chunk_repo.delete_user_chunk_data(user_id)
+        self.podcast_repo.delete_user_episodes(user_id)
+        self.responder.forget_user(user_id)
+        self.responder.nat_gauge.forget_user(user_id)
         with get_connection(self.db_path) as conn:
             conn.execute("DELETE FROM baseline_snapshots WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM benchmark_scores WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM podcast_learner_states WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM personal_podcast_budget WHERE user_id = ?", (user_id,))
+            conn.execute(
+                "DELETE FROM personal_podcast_budget WHERE user_id = ? AND budget_date < ?",
+                (user_id, today),
+            )
             conn.execute("DELETE FROM correction_ratings WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM nat_turn_log WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM nat_heard WHERE user_id = ?", (user_id,))
             conn.commit()
         return self.profile_repo.delete_user_data(user_id)
-
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global safety net: any handler that raises still gives the learner a visible answer."""
@@ -215,7 +223,7 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
             for idx, r in enumerate(replies):
                 is_last = (idx == len(replies) - 1)
                 kb = turn_action_keyboard(f"{uid}:{turn_no}") if is_last else None
-                await update.message.reply_text(r, reply_markup=kb)
+                await safe_reply_text(update.message, r, reply_markup=kb)
         except BaseException:
             if audio_task:
                 audio_task.cancel()
@@ -280,7 +288,13 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
         if action == "ask":
             await _ask_delete_confirmation(query.message)
         elif action == "confirm":
-            deleted = container.purge_all_user_data(update.effective_user.id)
+            deleted = await asyncio.to_thread(container.purge_all_user_data, update.effective_user.id)
+            if container.passphrase:
+                await asyncio.to_thread(
+                    export_encrypted_snapshot, container.db_path, container.snapshot_path, container.passphrase, True
+                )
+            else:
+                await asyncio.to_thread(container.flush)
             await query.message.reply_text(
                 "All your records have been permanently erased." if deleted else "No stored data was found for you."
             )
@@ -313,6 +327,13 @@ def register_core_turn_and_privacy_handlers(app: Application, container: LabCont
         if not update.effective_user or not update.message or not update.message.voice:
             return
         uid = update.effective_user.id
+        v_dur = getattr(update.message.voice, "duration", 0) or 0
+        v_size = getattr(update.message.voice, "file_size", 0) or 0
+        if v_dur > 120 or v_size > 5_000_000:
+            await update.message.reply_text(
+                "That voice note is too long or large (max 2 minutes / 5 MB). Please send a shorter clip!"
+            )
+            return
         await _typing(update, context)
         try:
             tg_file = await update.message.voice.get_file()
