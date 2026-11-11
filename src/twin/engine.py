@@ -614,7 +614,7 @@ class EchoTwinEngine:
         if is_repair_request(transcript) or PURE_GREETING_RE.match(transcript.strip()):
             return None, '', ''
         dsp = await asyncio.to_thread(analyze_voice_bytes, audio_bytes, wc)
-        if wc < 3 and dsp.voiced_s < 0.9:
+        if wc < 1 and dsp.voiced_s < 0.4:
             return None, '', ''
         u = self.repo.get_user(user_id)
         angle = u['angle'] if u['angle'] in ANGLE_META else 'casual_sharp'
@@ -641,7 +641,10 @@ class EchoTwinEngine:
         fb = ProsodyAuditOutput(has_findings=False)
         res = await self.llm.audit_voice_prosody(user_id, sys_p, audio_bytes, usr_p, ProsodyAuditOutput, fb, mime_type=mime_type)
         if not res.has_findings:
-            return None, dsp.compact_badge(), ''
+            res.prosody_fix = res.prosody_fix or 'Clean, natural US rhythm and linking on this take.'
+            res.native_recast = scrub_contrived_english(res.native_recast or transcript)
+            res.shadow_chunk = scrub_contrived_english(res.shadow_chunk or ' '.join(res.native_recast.split()[:6]))
+            return res, dsp.compact_badge(), ''
         res.native_recast = scrub_contrived_english(res.native_recast)
         res.shadow_chunk = scrub_contrived_english(res.shadow_chunk)
         h_key = res.habit_key.strip().lower() if res.habit_key.strip().lower() in HABIT_LABELS else 'us_rhythm_linking'

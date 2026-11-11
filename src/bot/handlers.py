@@ -41,15 +41,16 @@ def _stash_card(native_take: str, key_chunk: str) -> str:
 
 
 def coach_inline_kb(cid: str, include_audio_btn: bool = True, saved: bool = False) -> InlineKeyboardMarkup:
-    save_lbl = "✅ Saved" if saved else "📌 Save Phrase"
-    row = [
+    save_lbl = "✅ Saved" if saved else "📌 Save"
+    row1 = [
+        InlineKeyboardButton("🎯 Shadow 2x", callback_data=f"coach:drill:{cid}"),
         InlineKeyboardButton(save_lbl, callback_data=f"coach:save:{cid}"),
         InlineKeyboardButton("🪜 3 Registers", callback_data=f"coach:reg:{cid}"),
     ]
+    rows = [row1]
     if include_audio_btn:
-        row.append(InlineKeyboardButton("🔊 Hear US", callback_data=f"coach:tts:{cid}"))
-    return InlineKeyboardMarkup([row])
-
+        rows.append([InlineKeyboardButton("🔊 Hear Normal US", callback_data=f"coach:tts:{cid}")])
+    return InlineKeyboardMarkup(rows)
 
 
 def voice_lab_inline_kb(cid: str, saved: bool = False) -> InlineKeyboardMarkup:
@@ -261,6 +262,28 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             return
         await _deliver_coach_card(update.message, c, uid, ghost, title="US Upgrade", prefer_voice=False)
 
+    async def shadow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.effective_user or not update.message:
+            return
+        uid = update.effective_user.id
+        rep = getattr(update.message, "reply_to_message", None)
+        rep_txt = _strip_coach_headers((getattr(rep, "text", None) or getattr(rep, "caption", None) or "").strip()) if rep else ""
+        target = " ".join(context.args).strip() if context.args else (rep_txt or c.repo.last_learner_turn(uid))
+        if not target:
+            await _send_safe(update.message, "Send a voice note first or type: /shadow I ended up holding off on it")
+            return
+        chat_id = update.effective_chat.id if update.effective_chat else uid
+        if "_send_chat_action" in globals():
+            await _send_chat_action(context, chat_id, "record_voice")
+        drill_mp3 = await synthesize_shadow_drill(target)
+        if drill_mp3:
+            buf = io.BytesIO(drill_mp3)
+            buf.name = "shadow_drill.mp3"
+            cap = f"🎯 <b>Shadow Drill (Slow ➡️ Natural US)</b>\n<code>{html.escape(target[:220])}</code>"
+            await update.message.reply_voice(voice=buf, caption=cap, parse_mode="HTML", reply_markup=STUDIO_KB)
+        else:
+            await _send_safe(update.message, "Audio engine busy—try again in a moment.")
+
     async def spark_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await do_spark(update)
 
@@ -346,7 +369,9 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             await q.answer(f"Saved: {chunk}")
             has_voice = getattr(q.message, "voice", None) is not None
             try:
-                await q.edit_message_reply_markup(reply_markup=coach_inline_kb(cid, include_audio_btn=(not has_voice), saved=True))
+                is_vlab = 'Voice' in msg_body
+                new_kb = voice_lab_inline_kb(cid, saved=True) if is_vlab else coach_inline_kb(cid, include_audio_btn=(not has_voice), saved=True)
+                await q.edit_message_reply_markup(reply_markup=new_kb)
             except Exception:
                 pass
         elif action == "reg":
@@ -511,6 +536,14 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             logger.warning('Deep prosody audit fallback: %s', exc)
         if outcome.inline_coach and not outcome.was_repair:
             await _deliver_coach_card(msg, c, uid, outcome.inline_coach, title='US Coach', prefer_voice=True)
+        elif outcome.transcript and outcome.transcript != '(voice note)' and not outcome.was_repair:
+            chunk = extract_stealable_chunk(outcome.transcript)
+            cid = _stash_card(outcome.transcript, chunk)
+            await msg.reply_text(
+                f'🎙️ <b>US Voice Lab</b>\n🇺🇸 "{html.escape(outcome.transcript)}"',
+                parse_mode='HTML',
+                reply_markup=voice_lab_inline_kb(cid),
+            )
 
     async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.voice:
@@ -553,6 +586,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("partner", partner_cmd))
     app.add_handler(CommandHandler("spark", spark_cmd))
+    app.add_handler(CommandHandler("shadow", shadow_cmd))
     app.add_handler(CommandHandler("shift", shift_cmd))
     app.add_handler(CommandHandler(["vault", "pulse", "phrases"], vault_cmd))
     app.add_handler(CommandHandler(["reset", "wipe", "delete_everything"], reset_cmd))

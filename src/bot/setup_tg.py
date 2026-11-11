@@ -19,6 +19,7 @@ COMMANDS = [
     {"command": "start", "description": "Open studio & refresh buttons"},
     {"command": "partner", "description": "Switch partner (Malik, Claire, Vance)"},
     {"command": "spark", "description": "Start a live scenario or debate"},
+    {"command": "shadow", "description": "2x slow-to-natural US pronunciation drill"},
     {"command": "vault", "description": "Habit radar, saved chunks & pulse"},
     {"command": "reset", "description": "Fresh topic or erase my history"},
 ]

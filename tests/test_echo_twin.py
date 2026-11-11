@@ -197,3 +197,44 @@ async def test_registers_never_invent_fake_synonyms_and_retry_on_buzzwords(tmp_p
     assert llm.voice_calls == 1 and getattr(llm, "prosody_audits", 0) == 1
     assert "US Voice &amp; Rhythm Lab" in mv.voices[1]["caption"]
     assert "PAR-ti-ci-pate" in mv.voices[1]["caption"]
+
+
+@pytest.mark.asyncio
+async def test_shadow_2x_button_always_visible_on_cards_and_clean_voice(tmp_path: Path, monkeypatch):
+    from src.bot import handlers as h_mod
+    monkeypatch.setattr(h_mod, "synthesize_partner_voice", lambda text, angle="casual_sharp": asyncio.sleep(0, result=b"MP3_P"))
+    monkeypatch.setattr(h_mod, "synthesize_twin_voice", lambda text: asyncio.sleep(0, result=b"MP3_T"))
+    monkeypatch.setattr(h_mod, "synthesize_shadow_drill", lambda text: asyncio.sleep(0, result=b"MP3_DRILL"))
+
+    llm = StubCorpusLLM()
+    # Even when speaker's pronunciation has NO errors (has_findings=False), Voice Lab card + 🎯 Shadow 2x button MUST appear!
+    async def clean_audit(user_id, system_prompt, audio_bytes, user_prompt, schema_cls, fallback, *, mime_type="audio/ogg"):
+        return ProsodyAuditOutput(has_findings=False)
+    llm.audit_voice_prosody = clean_audit
+
+    c = TwinContainer(db_path=tmp_path / "v41.db", passphrase="", llm=llm)
+    app = FakeApp()
+    register_handlers(app, c)
+    u = SimpleNamespace(id=44)
+    ch = SimpleNamespace(id=44)
+    ctx = SimpleNamespace(args=[], bot=None)
+
+    v_obj = SimpleNamespace(
+        duration=4.0, file_size=3500,
+        get_file=lambda: asyncio.sleep(0, result=SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS")))),
+    )
+    mv = FakeMsg(voice=v_obj)
+    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=mv), ctx)
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    assert len(mv.voices) == 2
+    kb = mv.voices[1]["reply_markup"].inline_keyboard
+    btn_texts = [b.text for row in kb for b in row]
+    assert "🎯 Shadow 2x" in btn_texts
+
+    # Also test /shadow command directly
+    ms = FakeMsg(text="/shadow")
+    await app.cb("shadow_cmd")(SimpleNamespace(effective_user=u, effective_chat=ch, message=ms), SimpleNamespace(args=["picked", "up", "some", "fruit"], bot=None))
+    assert len(ms.voices) == 1 and "Shadow Drill" in ms.voices[0]["caption"]
