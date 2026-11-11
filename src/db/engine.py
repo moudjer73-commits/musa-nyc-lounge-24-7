@@ -1,36 +1,54 @@
-import base64
-import functools
-import logging
-import os
-import sqlite3
-import tempfile
-import threading
-import time
+import base64, functools, logging, os, sqlite3, tempfile, threading, time
 from pathlib import Path
 from typing import Optional
-
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
 from src.config import DB_PATH, SNAPSHOT_PASSPHRASE, SNAPSHOT_PATH
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS learner_profiles (
+CREATE TABLE IF NOT EXISTS twin_users (
     user_id INTEGER PRIMARY KEY,
-    profile_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    angle TEXT NOT NULL DEFAULT 'casual_sharp',
+    pending_take2 TEXT NOT NULL DEFAULT '',
+    turns_count INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS onboarding_logs (
+CREATE TABLE IF NOT EXISTS twin_turns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
-    session_num INTEGER NOT NULL,
+    chat_message_id INTEGER,
     role TEXT NOT NULL,
+    angle TEXT NOT NULL,
     content TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    is_voice INTEGER NOT NULL DEFAULT 0,
+    duration_s REAL NOT NULL DEFAULT 0.0,
+    wpm REAL NOT NULL DEFAULT 0.0,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS twin_vault (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    phrase TEXT NOT NULL,
+    source_context TEXT NOT NULL DEFAULT '',
+    stage INTEGER NOT NULL DEFAULT 0,
+    due_ts REAL NOT NULL DEFAULT 0.0,
+    hits INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    UNIQUE(user_id, phrase)
+);
+
+CREATE TABLE IF NOT EXISTS twin_upgrades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    original_span TEXT NOT NULL,
+    native_take TEXT NOT NULL,
+    tag TEXT NOT NULL DEFAULT 'flow',
+    created_at REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS daily_usage (
@@ -39,49 +57,24 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     llm_calls INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, usage_date)
 );
-
-CREATE TABLE IF NOT EXISTS nat_turn_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    msg_id TEXT NOT NULL,
-    user_id INTEGER NOT NULL,
-    ts REAL NOT NULL,
-    profile TEXT NOT NULL,
-    dice_id TEXT NOT NULL,
-    cards_json TEXT NOT NULL,
-    n_words INTEGER NOT NULL,
-    ends_with_question INTEGER NOT NULL,
-    guard_hits_json TEXT NOT NULL,
-    first_word TEXT NOT NULL,
-    text TEXT NOT NULL,
-    flagged INTEGER NOT NULL DEFAULT 0,
-    context_json TEXT NOT NULL DEFAULT '[]'
-);
-
-CREATE TABLE IF NOT EXISTS nat_heard (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    phrase TEXT NOT NULL,
-    context_note TEXT NOT NULL DEFAULT '',
-    ts REAL NOT NULL
-);
 """
 
 _SNAPSHOT_V2_MAGIC = b"SELSNAP2"
-_PBKDF2_ITERATIONS_V1 = 120_000
-_PBKDF2_ITERATIONS_V2 = 600_000
+_ITER_V1 = 120_000
+_ITER_V2 = 600_000
 _PROCESS_SALT = os.urandom(16)
-_SNAPSHOT_LOCK = threading.RLock()
+_LOCK = threading.RLock()
+_MIN_INTERVAL_S = 0.0
+_LAST_EXPORT: dict[str, float] = {}
+_DIRTY: dict[str, tuple[Path, Path, str]] = {}
+_SCHEMA_READY: set[str] = set()
+_WAL_READY: set[str] = set()
 
 
 @functools.lru_cache(maxsize=32)
-def _derive_fernet_key(passphrase: str, salt: bytes, iterations: int = _PBKDF2_ITERATIONS_V2) -> bytes:
+def _derive_key(passphrase: str, salt: bytes, iterations: int = _ITER_V2) -> bytes:
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations)
     return base64.urlsafe_b64encode(kdf.derive(passphrase.encode("utf-8")))
-
-
-def _warn_if_short_passphrase(passphrase: str) -> None:
-    if passphrase and len(passphrase) < 16:
-        logger.warning("SNAPSHOT_PASSPHRASE is shorter than 16 characters; use a stronger passphrase.")
 
 
 def _marker(snapshot_path: Path) -> Path:
@@ -92,14 +85,9 @@ def restore_failed(snapshot_path: Path = SNAPSHOT_PATH) -> bool:
     return _marker(snapshot_path).exists()
 
 
-_MIN_INTERVAL_S = 0.0
-_LAST_EXPORT: dict[str, float] = {}
-_DIRTY: dict[str, tuple[Path, Path, str]] = {}
-
-
 def set_snapshot_min_interval(seconds: float) -> None:
     global _MIN_INTERVAL_S
-    with _SNAPSHOT_LOCK:
+    with _LOCK:
         _MIN_INTERVAL_S = max(0.0, float(seconds))
         if _MIN_INTERVAL_S == 0:
             _LAST_EXPORT.clear()
@@ -107,11 +95,11 @@ def set_snapshot_min_interval(seconds: float) -> None:
 
 
 def flush_pending_snapshots() -> int:
-    with _SNAPSHOT_LOCK:
+    with _LOCK:
         pending = list(_DIRTY.items())
     n = 0
-    for _key, (db_path, snapshot_path, passphrase) in pending:
-        if export_encrypted_snapshot(db_path, snapshot_path, passphrase, force=True):
+    for _k, (db_p, snap_p, pw) in pending:
+        if export_encrypted_snapshot(db_p, snap_p, pw, force=True):
             n += 1
     return n
 
@@ -124,17 +112,14 @@ def export_encrypted_snapshot(
 ) -> Optional[Path]:
     if not passphrase or not db_path.exists():
         return None
-    _warn_if_short_passphrase(passphrase)
-    with _SNAPSHOT_LOCK:
+    with _LOCK:
         if restore_failed(snapshot_path):
-            logger.warning("Snapshot export skipped: restore failed earlier in this run (existing snapshot kept).")
             return None
         key = str(Path(snapshot_path).resolve())
         if not force and _MIN_INTERVAL_S > 0:
             _DIRTY[key] = (db_path, snapshot_path, passphrase)
             return None
-        tmp_db = ""
-        tmp_snap = ""
+        tmp_db = tmp_snap = ""
         try:
             fd, tmp_db = tempfile.mkstemp(suffix=".db")
             os.close(fd)
@@ -147,15 +132,12 @@ def export_encrypted_snapshot(
                     dst.close()
             finally:
                 src.close()
-            raw_bytes = Path(tmp_db).read_bytes()
-            fernet = Fernet(_derive_fernet_key(passphrase, _PROCESS_SALT, _PBKDF2_ITERATIONS_V2))
-            encrypted = _SNAPSHOT_V2_MAGIC + _PROCESS_SALT + fernet.encrypt(raw_bytes)
+            raw = Path(tmp_db).read_bytes()
+            enc = _SNAPSHOT_V2_MAGIC + _PROCESS_SALT + Fernet(_derive_key(passphrase, _PROCESS_SALT, _ITER_V2)).encrypt(raw)
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-            sfd, tmp_snap = tempfile.mkstemp(
-                prefix=snapshot_path.name + ".", suffix=".tmp", dir=str(snapshot_path.parent)
-            )
+            sfd, tmp_snap = tempfile.mkstemp(prefix=snapshot_path.name + ".", suffix=".tmp", dir=str(snapshot_path.parent))
             try:
-                os.write(sfd, encrypted)
+                os.write(sfd, enc)
             finally:
                 os.close(sfd)
             os.replace(tmp_snap, snapshot_path)
@@ -164,22 +146,12 @@ def export_encrypted_snapshot(
             _DIRTY.pop(key, None)
             return snapshot_path
         finally:
-            for leftover in (tmp_db, tmp_snap):
-                if leftover and os.path.exists(leftover):
+            for f in (tmp_db, tmp_snap):
+                if f and os.path.exists(f):
                     try:
-                        os.remove(leftover)
+                        os.remove(f)
                     except OSError:
                         pass
-
-
-_SCHEMA_READY: set[str] = set()
-_WAL_READY: set[str] = set()
-
-
-def _forget_schema(db_path) -> None:
-    resolved = str(Path(db_path).resolve())
-    _SCHEMA_READY.discard(resolved)
-    _WAL_READY.discard(resolved)
 
 
 def restore_encrypted_snapshot(
@@ -189,41 +161,32 @@ def restore_encrypted_snapshot(
 ) -> bool:
     if not passphrase or not snapshot_path.exists():
         return False
-    _warn_if_short_passphrase(passphrase)
-    with _SNAPSHOT_LOCK:
+    with _LOCK:
         payload = snapshot_path.read_bytes()
         if payload.startswith(_SNAPSHOT_V2_MAGIC):
             hdr = len(_SNAPSHOT_V2_MAGIC) + 16
             if len(payload) <= hdr:
-                _marker(snapshot_path).write_text("snapshot too short\n")
+                _marker(snapshot_path).write_text("short\n")
                 return False
-            salt, token = payload[len(_SNAPSHOT_V2_MAGIC):hdr], payload[hdr:]
-            iterations = _PBKDF2_ITERATIONS_V2
+            salt, tok, iters = payload[len(_SNAPSHOT_V2_MAGIC):hdr], payload[hdr:], _ITER_V2
         else:
             if len(payload) <= 16:
-                _marker(snapshot_path).write_text("snapshot too short\n")
+                _marker(snapshot_path).write_text("short\n")
                 return False
-            salt, token = payload[:16], payload[16:]
-            iterations = _PBKDF2_ITERATIONS_V1
-        fernet = Fernet(_derive_fernet_key(passphrase, salt, iterations))
+            salt, tok, iters = payload[:16], payload[16:], _ITER_V1
         try:
-            decrypted = fernet.decrypt(token)
-        except Exception:  # noqa: BLE001
-            logger.error("Could not decrypt the state snapshot (wrong SNAPSHOT_PASSPHRASE or corrupt file).")
-            _marker(snapshot_path).write_text("decrypt failed\n")
+            dec = Fernet(_derive_key(passphrase, salt, iters)).decrypt(tok)
+        except Exception:
+            _marker(snapshot_path).write_text("decrypt_failed\n")
             return False
         db_path.parent.mkdir(parents=True, exist_ok=True)
         for suf in ("-wal", "-shm"):
-            try:
-                Path(f"{db_path}{suf}").unlink(missing_ok=True)
-            except OSError:
-                pass
-        db_path.write_bytes(decrypted)
-        _forget_schema(db_path)
-        try:
-            _marker(snapshot_path).unlink(missing_ok=True)
-        except OSError:
-            pass
+            Path(f"{db_path}{suf}").unlink(missing_ok=True)
+        db_path.write_bytes(dec)
+        resolved = str(Path(db_path).resolve())
+        _SCHEMA_READY.discard(resolved)
+        _WAL_READY.discard(resolved)
+        _marker(snapshot_path).unlink(missing_ok=True)
         return True
 
 
@@ -233,11 +196,11 @@ def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=15000")
     key = str(Path(db_path).resolve())
-    is_empty = not Path(db_path).exists() or not Path(db_path).stat().st_size
-    if key not in _WAL_READY or is_empty:
+    empty = not Path(db_path).exists() or not Path(db_path).stat().st_size
+    if key not in _WAL_READY or empty:
         conn.execute("PRAGMA journal_mode=WAL")
         _WAL_READY.add(key)
-    if key not in _SCHEMA_READY or is_empty:
+    if key not in _SCHEMA_READY or empty:
         conn.executescript(SCHEMA_SQL)
         _SCHEMA_READY.add(key)
     return conn
