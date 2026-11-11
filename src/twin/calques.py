@@ -5,7 +5,6 @@ FRENCH_CUE_RE = re.compile(
     r"(?:[àâçéèêëîïôûùüÿœæ]|\b(?:c'est|c’est|par rapport|comment dire|en fait|du coup|au niveau|ça)\b)",
     re.IGNORECASE,
 )
-
 REPAIR_RE = re.compile(
     r"(?:\bdidn'?t\s+(?:get|catch|follow)\b|\bdon'?t\s+(?:get|understand|follow)\b|"
     r"\bwhat\s+do\s+you\s+mean\b|\bwait\s*,?\s*what\b|\bcome\s+again\b|\bhuh\?*$|"
@@ -13,7 +12,15 @@ REPAIR_RE = re.compile(
     re.IGNORECASE,
 )
 
-TRANSFER_PATTERNS = (
+GRAMMAR_AND_TRANSFER_PATTERNS = (
+    (r"\bbuyed\b", "bought / picked up", "grammar"),
+    (r"\b(?:goed|wented)\b", "went / headed", "grammar"),
+    (r"\b(?:teached|thinked|catched|bringed|finded|knowed|selled|telled|feelled|keeped|leaved)\b", "irregular past form", "grammar"),
+    (r"\bdidn'?t\s+(?:went|saw|bought|came|took|knew|said|made|got|had)\b", "didn't + base verb", "grammar"),
+    (r"\bmany\s+(?:fruit|fruits|information|advice|furniture|equipment|homework|work|traffic|money|news|research|luggage)\b", "a bunch of / a lot of (uncountable)", "grammar"),
+    (r"\b(?:informations|advices|furnitures|equipments|homeworks|researches|knowledges)\b", "uncountable singular in English", "grammar"),
+    (r"\bi\s+am\s+(?:agree|not\s+agree)\b", "I agree / I'm with you", "grammar"),
+    (r"\b(?:he|she|it)\s+don'?t\b", "doesn't", "grammar"),
     (r"\bat the level of\b", "when it comes to / across", "fr_calque"),
     (r"\bin the frame of\b", "as part of / under", "fr_calque"),
     (r"\bput in question\b", "call into question / challenge", "fr_calque"),
@@ -49,7 +56,7 @@ def is_repair_request(text: str) -> bool:
 
 def scan_transfers(text: str) -> list[tuple[str, str, str]]:
     hits = []
-    for pat, up, tag in TRANSFER_PATTERNS:
+    for pat, up, tag in GRAMMAR_AND_TRANSFER_PATTERNS:
         m = re.search(pat, text, flags=re.IGNORECASE)
         if m:
             hits.append((m.group(0), up, tag))

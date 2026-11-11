@@ -4,10 +4,17 @@ from src.config import resolve_telegram_token
 
 logger = logging.getLogger(__name__)
 
-BOT_NAME = 'Spoken English Lab'
-SHORT_DESCRIPTION = 'Practice real spoken American English by voice or text with Malik, Claire & Prof. Vance + instant native recasts.'
-FULL_DESCRIPTION = '🎙️ Spoken English Lab — Real US English Studio\n\nTalk naturally by voice note or text with 3 sharp American partners:\n• ⚡ Malik — Everyday Chicago banter & real talk\n• 💼 Claire — Crisp NY workplace & executive pushback\n• 🎓 Prof. Vance — Seminar debates & big ideas\n\n✨ Voice replies with tap-to-reveal transcripts, instant Native Takes on how Americans phrase your exact thought, and Arabic/French-to-US idiom bridging mid-chat.\n\nTap Start below to jump in.'
-
+BOT_NAME = "Spoken English Lab"
+SHORT_DESCRIPTION = "Practice real spoken American English by voice or text with Malik, Claire & Prof. Vance + instant US coaching."
+FULL_DESCRIPTION = (
+    "🎙️ Spoken English Lab — Real US English Studio\n\n"
+    "Talk naturally by voice note or text with 3 sharp American partners:\n"
+    "• ⚡ Malik — Everyday Chicago banter & real talk\n"
+    "• 💼 Claire — Crisp NY workplace & executive pushback\n"
+    "• 🎓 Prof. Vance — Seminar debates & big ideas\n\n"
+    "🎯 Instant US Coach catches every grammar slip or L1 calque and shows how Americans naturally say your exact thought.\n\n"
+    "Tap Start below to jump in."
+)
 COMMANDS = [
     {"command": "start", "description": "Open studio & refresh buttons"},
     {"command": "partner", "description": "Switch partner (Malik, Claire, Vance)"},
@@ -15,7 +22,6 @@ COMMANDS = [
     {"command": "vault", "description": "Saved US phrases & 7-day pulse"},
     {"command": "reset", "description": "Fresh topic or erase my history"},
 ]
-
 _REFRESHED_CHATS: set[int] = set()
 
 
@@ -50,7 +56,7 @@ def _tg_call(base_url: str, method: str, payload: dict, token: str) -> dict | No
             data = r.json()
             if r.status_code == 429 or (isinstance(data, dict) and data.get("error_code") == 429):
                 wait_s = int(((data or {}).get("parameters") or {}).get("retry_after") or 0)
-                if attempt == 1 and 0 < wait_s <= 12:
+                if attempt == 1 and 0 < wait_s <= 10:
                     time.sleep(wait_s + 1)
                     continue
                 return {"_rate_limited": True}
@@ -61,19 +67,15 @@ def _tg_call(base_url: str, method: str, payload: dict, token: str) -> dict | No
     return None
 
 
-def _sync_text_field(base: str, tok: str, getter: str, setter: str, key: str, target: str) -> bool:
-    # 1. Remove stale v1 language overrides (en, ar, fr) so every client sees the unified profile
+def _sync_field(base: str, tok: str, getter: str, setter: str, key: str, target: str) -> bool:
     for lang in ("en", "ar", "fr"):
         cur_l = _tg_call(base, getter, {"language_code": lang}, tok)
         if cur_l and cur_l.get("_rate_limited"):
             return False
-        val_l = ((cur_l or {}).get("result") or {}).get(key, "")
-        if val_l:
+        if ((cur_l or {}).get("result") or {}).get(key, ""):
             res_l = _tg_call(base, setter, {key: "", "language_code": lang}, tok)
             if res_l and res_l.get("_rate_limited"):
                 return False
-
-    # 2. Update default universal value if changed
     cur = _tg_call(base, getter, {}, tok)
     if cur and cur.get("_rate_limited"):
         return False
@@ -89,16 +91,12 @@ def sync_telegram_bot_profile(token: str | None = None) -> None:
     if not tok:
         return
     base = f"https://api.telegram.org/bot{tok}"
-
-    # Priority 1: Bot Name, Bio (Short Description), and Welcome Description
-    if not _sync_text_field(base, tok, "getMyName", "setMyName", "name", BOT_NAME):
+    if not _sync_field(base, tok, "getMyName", "setMyName", "name", BOT_NAME):
         return
-    if not _sync_text_field(base, tok, "getMyShortDescription", "setMyShortDescription", "short_description", SHORT_DESCRIPTION):
+    if not _sync_field(base, tok, "getMyShortDescription", "setMyShortDescription", "short_description", SHORT_DESCRIPTION):
         return
-    if not _sync_text_field(base, tok, "getMyDescription", "setMyDescription", "description", FULL_DESCRIPTION):
+    if not _sync_field(base, tok, "getMyDescription", "setMyDescription", "description", FULL_DESCRIPTION):
         return
-
-    # Priority 2: Wipe language-specific command overrides & set unified Menu commands
     for scope in ({"type": "default"}, {"type": "all_private_chats"}, {"type": "all_group_chats"}):
         for lang in ("en", "ar", "fr"):
             _tg_call(base, "deleteMyCommands", {"scope": scope, "language_code": lang}, tok)
@@ -110,13 +108,8 @@ def sync_telegram_bot_profile(token: str | None = None) -> None:
             return
         existing = [{"command": c.get("command"), "description": c.get("description")} for c in (cur or {}).get("result", []) if isinstance(c, dict)]
         if existing != COMMANDS:
-            res = _tg_call(base, "setMyCommands", {"commands": COMMANDS, "scope": scope}, tok)
-            if res and res.get("_rate_limited"):
-                return
-
-    mb = _tg_call(base, "getChatMenuButton", {}, tok)
-    if mb and not mb.get("_rate_limited") and ((mb.get("result") or {}).get("type") != "commands"):
-        _tg_call(base, "setChatMenuButton", {"menu_button": {"type": "commands"}}, tok)
+            _tg_call(base, "setMyCommands", {"commands": COMMANDS, "scope": scope}, tok)
+    _tg_call(base, "setChatMenuButton", {"menu_button": {"type": "commands"}}, tok)
 
 
 async def refresh_chat_menu_once(bot, chat_id: int | None, force: bool = False) -> None:

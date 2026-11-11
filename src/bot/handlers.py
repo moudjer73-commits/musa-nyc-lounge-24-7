@@ -108,31 +108,31 @@ async def _react_quietly(message, emoji: str) -> None:
             pass
 
 
-async def _deliver_coach_card(message, c: TwinContainer, uid: int, ghost: GhostTwinAnalysis, *, title: str = "Native Take", prefer_voice: bool = False) -> None:
+async def _deliver_coach_card(message, c: TwinContainer, uid: int, ghost: GhostTwinAnalysis, *, title: str = "US Coach", prefer_voice: bool = False) -> None:
     steal_target = ghost.key_chunk.strip() or extract_stealable_chunk(ghost.native_take)
     cid = _stash_card(ghost.native_take.strip(), steal_target)
     tag_html = f" · <i>{html.escape(ghost.why_tag)}</i>" if ghost.why_tag else ""
-    chunk_html = f"\n🔑 <code>{html.escape(steal_target)}</code>"
+    fix_html = f"\n⚡ <code>{html.escape(ghost.fix_summary)}</code>" if ghost.fix_summary else ""
+    chunk_html = f"\n🔑 <code>{html.escape(steal_target)}</code>" if steal_target else ""
 
     sent = None
     if prefer_voice and len(ghost.native_take) <= 750:
         mp3 = await synthesize_twin_voice(ghost.native_take)
         if mp3:
-            cap = f"👥 <b>{html.escape(title)}</b>{tag_html}\n<tg-spoiler>{html.escape(ghost.native_take)}</tg-spoiler>{chunk_html}"
+            cap = f"🎯 <b>{html.escape(title)}</b>{tag_html}{fix_html}\n🇺🇸 <tg-spoiler>{html.escape(ghost.native_take)}</tg-spoiler>{chunk_html}"
             buf = io.BytesIO(mp3)
-            buf.name = "native_take.mp3"
+            buf.name = "us_coach.mp3"
             sent = await message.reply_voice(
                 voice=buf, caption=cap, parse_mode="HTML", reply_markup=coach_inline_kb(cid, include_audio_btn=False)
             )
     if sent is None:
-        body = f"👥 <b>{html.escape(title)}</b>{tag_html}\n\"{html.escape(ghost.native_take)}\"{chunk_html}"
+        body = f"🎯 <b>{html.escape(title)}</b>{tag_html}{fix_html}\n🇺🇸 \"{html.escape(ghost.native_take)}\"{chunk_html}"
         sent = await message.reply_text(
             body, parse_mode="HTML", reply_markup=coach_inline_kb(cid, include_audio_btn=True)
         )
     c.repo.log_turn(uid, "ghost", c.repo.get_user(uid)["angle"], steal_target, chat_message_id=getattr(sent, "message_id", None))
     if ghost.trigger_take2 and ghost.take2_prompt:
         await message.reply_text(f"🎬 <b>Take 2:</b> {html.escape(ghost.take2_prompt)}", parse_mode="HTML", reply_markup=STUDIO_KB)
-
 
 def register_handlers(app: Application, c: TwinContainer) -> None:
     async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,7 +275,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         uid = update.effective_user.id
         msg_body = (getattr(q.message, "text", None) or getattr(q.message, "caption", None) or "").strip()
         cached = _CARD_MEMO.get(cid)
-        native_line = cached[0] if cached else re.sub(r"^👥.*?\n", "", msg_body).split("\n🔑")[0].strip().strip('"')
+        native_line = cached[0] if cached else re.sub(r"^[👥🎯].*?\n(?:⚡.*?\n)?", "", msg_body).lstrip("🇺🇸 ").split("\n🔑")[0].strip().strip('"')
         chunk = cached[1] if cached else extract_stealable_chunk(msg_body)
 
         if action == "save":
@@ -320,15 +320,16 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         else:
             await q.edit_message_text("Cancelled—nothing changed.")
 
-    async def _ghost_worker(message, uid: int, text: str, is_voice: bool, duration_s: float) -> None:
+    async def _fallback_coach_worker(message, uid: int, text: str, is_voice: bool) -> None:
         try:
-            ghost = await c.engine.analyze_ghost_twin(uid, text, is_voice=is_voice, duration_s=duration_s)
+            ghost = await c.engine.coach_on_demand(uid, text)
             if ghost:
-                await _deliver_coach_card(message, c, uid, ghost, title="Native Take", prefer_voice=is_voice)
+                await _deliver_coach_card(message, c, uid, ghost, title="US Coach", prefer_voice=is_voice)
         except Exception as exc:
-            logger.debug("Ghost Twin skipped: %s", exc)
+            logger.debug("Fallback coach skipped: %s", exc)
 
     async def _process_turn(update: Update, context: ContextTypes.DEFAULT_TYPE, learner_text: str, *, is_voice: bool, duration_s: float = 0.0) -> None:
+        from src.twin.calques import scan_transfers
         msg = update.message
         uid = update.effective_user.id
         chat_id = update.effective_chat.id if update.effective_chat else uid
@@ -361,8 +362,10 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                 sent = await _send_safe(msg, seg)
                 c.repo.log_turn(uid, "partner", outcome.angle, seg, chat_message_id=getattr(sent, "message_id", None))
 
-        if not outcome.was_repair:
-            asyncio.create_task(_ghost_worker(msg, uid, learner_text, is_voice, duration_s))
+        if outcome.inline_coach and not outcome.was_repair:
+            await _deliver_coach_card(msg, c, uid, outcome.inline_coach, title="US Coach", prefer_voice=is_voice)
+        elif not outcome.was_repair and scan_transfers(learner_text):
+            asyncio.create_task(_fallback_coach_worker(msg, uid, learner_text, is_voice))
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message or not update.message.text:
@@ -386,7 +389,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         rep = getattr(update.message, "reply_to_message", None)
         rep_txt = (getattr(rep, "text", None) or getattr(rep, "caption", None) or "").strip()
         if rep_txt and txt in ("?", "؟"):
-            clean_target = re.sub(r"^👥.*?\n", "", rep_txt).split("\n🔑")[0].strip()
+            clean_target = re.sub(r"^[👥🎯].*?\n(?:⚡.*?\n)?", "", rep_txt).lstrip("🇺🇸 ").split("\n🔑")[0].strip()
             regs = await c.engine.explain_registers(uid, clean_target)
             await _send_safe(update.message, f"🪜 3 Spoken US Registers:\n{regs}")
             return
