@@ -16,7 +16,7 @@ T = TypeVar("T", bound=BaseModel)
 
 CALL_TIMEOUT_S = 14.0
 STRUCTURED_TIMEOUT_S = 11.0
-AUDIO_TIMEOUT_S = 38.0
+AUDIO_TIMEOUT_S = 20.0
 HTTP_TIMEOUT_MS = 65_000
 DEAD_PAIR_TTL_S = 1800.0
 RATE_MIN_COOLDOWN_S = 65.0
@@ -283,6 +283,55 @@ class GeminiClient:
             self.repo.refund_quota(user_id)
             raise
 
+    async def generate_fast_multimodal(
+        self,
+        user_id: int,
+        system_prompt: str,
+        audio_bytes: bytes,
+        user_prompt: str,
+        *,
+        mime_type: str = "audio/ogg",
+        temperature: float = 0.3,
+    ) -> str:
+        """Ultra-low-latency multimodal pass (zero JSON FSM lag, zero 400 errors)."""
+        if not self.clients:
+            raise LLMUnavailableError("Gemini API keys are not configured.")
+        self._charge(user_id)
+        part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+        configs: list[types.GenerateContentConfig] = []
+        if hasattr(types, "ThinkingConfig"):
+            try:
+                configs.append(
+                    types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=temperature,
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    )
+                )
+            except Exception:
+                pass
+        configs.append(
+            types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=temperature,
+            )
+        )
+        last_err: Exception | None = None
+        for cfg in configs:
+            try:
+                return await self._call(
+                    [part, user_prompt],
+                    cfg,
+                    prefer_deep_chat=True,
+                    thinking=False,
+                    timeout_s=18.0,
+                )
+            except Exception as exc:
+                last_err = exc
+                logger.warning("Fast multimodal retry: %s", _redact(str(exc)))
+        self.repo.refund_quota(user_id)
+        raise LLMUnavailableError(f"Voice analysis busy: {_redact(str(last_err))}")
+
     async def audit_voice_prosody(
         self,
         user_id: int,
@@ -304,35 +353,30 @@ class GeminiClient:
             "response_schema": schema_cls,
             "temperature": 0.15,
         }
-        configs: list[tuple[types.GenerateContentConfig, bool]] = []
+        configs: list[types.GenerateContentConfig] = []
         if hasattr(types, "ThinkingConfig"):
             try:
                 tk_kw = dict(base_kw)
-                tk_kw["thinking_config"] = types.ThinkingConfig(thinking_budget=512)
-                configs.append((types.GenerateContentConfig(**tk_kw), False))
+                tk_kw["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                configs.append(types.GenerateContentConfig(**tk_kw))
             except Exception:
                 pass
-        configs.append((types.GenerateContentConfig(**base_kw), True))
-
-        last_err: Exception | None = None
-        for cfg, fast_think in configs:
+        configs.append(types.GenerateContentConfig(**base_kw))
+        for cfg in configs:
             try:
                 raw = await self._call(
                     [part, user_prompt],
                     cfg,
                     prefer_deep_chat=True,
-                    thinking=fast_think,
-                    timeout_s=AUDIO_TIMEOUT_S,
+                    thinking=False,
+                    timeout_s=18.0,
                 )
                 cleaned = raw.strip()
                 if cleaned.startswith("```"):
                     cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
                 return schema_cls.model_validate_json(cleaned)
             except Exception as exc:
-                last_err = exc
-                logger.warning("Prosody audit attempt retry: %s", _redact(str(exc)))
-
-        logger.warning("Prosody audit exhausted retries: %s", _redact(str(last_err)))
+                logger.warning("Structured audio retry: %s", _redact(str(exc)))
         self.repo.refund_quota(user_id)
         return fallback
 

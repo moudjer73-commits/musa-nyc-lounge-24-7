@@ -301,6 +301,7 @@ async def _deliver_lab_report(
     *,
     raw_audio: bytes = b"",
     pure_mode: bool = False,
+    status_msg=None,
 ) -> None:
     a = report.audit
     has_gfix = bool(a.grammar_fix.strip() and a.native_recast.strip())
@@ -315,31 +316,37 @@ async def _deliver_lab_report(
         VOICE_CLIP_CACHE.stash(uid, cid, raw_audio, target_spoken)
 
     card_html = format_prosody_lab_html(report, pure_mode=pure_mode)
-    if pure_mode or report.is_retake:
-        mp3 = await synthesize_shadow_drill(drill_target or target_spoken)
-    else:
-        mp3 = await synthesize_twin_voice(target_spoken) if len(target_spoken) <= 650 else None
+    kb = voice_lab_inline_kb(cid)
 
-    if mp3 and len(card_html) <= 950:
-        buf = io.BytesIO(mp3)
-        buf.name = "us_pronunciation.mp3"
-        sent = await msg.reply_voice(
-            voice=buf,
-            caption=card_html,
-            parse_mode="HTML",
-            reply_markup=voice_lab_inline_kb(cid),
-        )
-    else:
-        sent = await msg.reply_text(
-            card_html, parse_mode="HTML", reply_markup=voice_lab_inline_kb(cid)
-        )
+    # 1. عرض بطاقة تقييم النطق فوراً دون انتظار توليد الصوت حتى لا يتأخر التقييم أبداً!
+    sent = None
+    if status_msg is not None and hasattr(status_msg, "edit_text"):
+        try:
+            sent = await status_msg.edit_text(
+                card_html, parse_mode="HTML", reply_markup=kb
+            )
+        except Exception:
+            sent = None
+    if sent is None:
+        sent = await msg.reply_text(card_html, parse_mode="HTML", reply_markup=kb)
+
+    c.repo.log_turn(
+        uid, "ghost", angle, drill_target,
+        chat_message_id=getattr(sent, "message_id", None),
+    )
+
+    # 2. إرفاق ملف المحاكاة الصوتي في وضع المختبر الصرف أو الإعادة فقط
+    if (pure_mode or report.is_retake) and target_spoken != "(spoken audio clip)":
+        mp3 = await synthesize_shadow_drill(drill_target or target_spoken)
         if mp3:
             buf = io.BytesIO(mp3)
-            buf.name = "us_pronunciation.mp3"
-            await msg.reply_voice(voice=buf, reply_markup=STUDIO_KB)
-    c.repo.log_turn(
-        uid, "ghost", angle, drill_target, chat_message_id=getattr(sent, "message_id", None)
-    )
+            buf.name = "shadow_3x.mp3"
+            await msg.reply_voice(
+                voice=buf,
+                caption="🎯 <b>3-Beat US Model</b> (Slow linked ➔ Natural ➔ Speak along)",
+                parse_mode="HTML",
+                reply_markup=STUDIO_KB,
+            )
 
 
 async def _send_mirror_reply(
@@ -950,67 +957,99 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         await _process_text_turn(update, context, txt)
 
     async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message or not update.message.voice:
+        if not update.effective_user or not update.message:
             return
         msg = update.message
+        v = getattr(msg, "voice", None) or getattr(msg, "audio", None)
+        if not v:
+            return
         uid = update.effective_user.id
-        v = msg.voice
         dur = float(getattr(v, "duration", 0) or 0)
         size = int(getattr(v, "file_size", 0) or 0)
         mime_type = getattr(v, "mime_type", None) or "audio/ogg"
         if dur > 180 or size > 8_000_000:
-            await _send_safe(
-                msg, "Keep voice notes under 3 minutes so phonetic analysis stays fast!"
-            )
+            await _send_safe(msg, "Keep voice clips under 3 minutes so analysis stays instant!")
             return
+
         chat_id = update.effective_chat.id if update.effective_chat else uid
-        asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
-        await _send_chat_action(context, chat_id, "record_voice")
+        asyncio.create_task(
+            refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False)
+        )
+        # استجابة بصرية فورية خلال 0.2 ثانية تؤكد استلام الصوت وبدء فحص النطق
+        status_msg = await msg.reply_text(
+            "🎙️ <i>Listening &amp; assessing your pronunciation...</i>",
+            parse_mode="HTML",
+        )
 
-        tg_file = await v.get_file()
-        raw = bytes(await tg_file.download_as_bytearray())
-        lab_st = c.repo.get_lab_state(uid)
-        pure_or_retake = bool(lab_st.get("lab_mode") or lab_st.get("pending_retake"))
+        try:
+            tg_file = await v.get_file()
+            raw = bytes(await tg_file.download_as_bytearray())
+            lab_st = c.repo.get_lab_state(uid)
+            pure_or_retake = bool(lab_st.get("lab_mode") or lab_st.get("pending_retake"))
 
-        if pure_or_retake:
-            angle = c.repo.get_user(uid)["angle"]
-            report = await asyncio.wait_for(
-                c.engine.run_deep_prosody_audit(
-                    uid, raw, "", mime_type=mime_type,
-                    force_retake=bool(lab_st.get("pending_retake")),
-                    log_learner_turn=True,
-                    chat_message_id=getattr(msg, "message_id", None),
-                    duration_s=dur,
-                ),
-                timeout=45.0,
-            )
-            if report is None:
-                await _send_safe(
-                    msg, "Couldn't detect speech—try recording a bit closer to the mic."
+            if pure_or_retake:
+                angle = c.repo.get_user(uid)["angle"]
+                report = await asyncio.wait_for(
+                    c.engine.run_deep_prosody_audit(
+                        uid, raw, "", mime_type=mime_type,
+                        force_retake=bool(lab_st.get("pending_retake")),
+                        log_learner_turn=True,
+                        chat_message_id=getattr(msg, "message_id", None),
+                        duration_s=dur,
+                    ),
+                    timeout=28.0,
+                )
+                if report is None:
+                    if hasattr(status_msg, "edit_text"):
+                        await status_msg.edit_text(
+                            "Couldn't detect speech—try recording closer to the mic."
+                        )
+                    return
+                await _deliver_lab_report(
+                    msg, c, uid, angle, report,
+                    raw_audio=raw, pure_mode=True, status_msg=status_msg,
                 )
                 return
-            await _deliver_lab_report(
-                msg, c, uid, angle, report, raw_audio=raw, pure_mode=True
-            )
-            return
 
-        # Single-Call Hybrid Mode: 1 API call returns Partner reply + Full Prosody Lab!
-        outcome, report = await asyncio.wait_for(
-            c.engine.respond_hybrid_voice_turn(
-                uid, raw, mime_type=mime_type,
-                chat_message_id=getattr(msg, "message_id", None),
-                duration_s=dur, log_partner=False,
-            ),
-            timeout=45.0,
-        )
-        if outcome.vault_celebrations:
-            await _react_quietly(msg, "🔥")
-        await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
-        if report is not None:
-            await _deliver_lab_report(
-                msg, c, uid, outcome.angle, report, raw_audio=raw, pure_mode=False
+            outcome, report = await asyncio.wait_for(
+                c.engine.respond_hybrid_voice_turn(
+                    uid, raw, mime_type=mime_type,
+                    chat_message_id=getattr(msg, "message_id", None),
+                    duration_s=dur, log_partner=False,
+                ),
+                timeout=28.0,
             )
-        asyncio.create_task(c.engine.maybe_sync_memory(uid))
+            if outcome.vault_celebrations:
+                await _react_quietly(msg, "🔥")
+
+            # تحديث الرسالة الفورية ببطاقة تقييم النطق أولاً ثم إرسال رد الشريك الصوتي مباشرة
+            if report is not None:
+                await _deliver_lab_report(
+                    msg, c, uid, outcome.angle, report,
+                    raw_audio=raw, pure_mode=False, status_msg=status_msg,
+                )
+            elif hasattr(status_msg, "delete"):
+                try:
+                    await status_msg.delete()
+                except Exception:
+                    pass
+
+            await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
+            asyncio.create_task(c.engine.maybe_sync_memory(uid))
+        except Exception as exc:
+            logger.error("Voice handler error: %s", exc, exc_info=exc)
+            err_txt = (
+                str(exc)
+                if isinstance(exc, (QuotaExceededError, LLMUnavailableError))
+                else "Voice analysis hit a brief timeout—send that clip once more."
+            )
+            if hasattr(status_msg, "edit_text"):
+                try:
+                    await status_msg.edit_text(err_txt)
+                    return
+                except Exception:
+                    pass
+            await _send_safe(msg, err_txt)
 
     async def reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         mr = getattr(update, "message_reaction", None)
@@ -1044,6 +1083,6 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
     ReactionCls = getattr(tg_ext, "MessageReactionHandler", None)
     if ReactionCls is not None:
         app.add_handler(ReactionCls(reaction_handler))
-    app.add_handler(MessageHandler(filters.VOICE, voice_handler))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, voice_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_error_handler(on_error)
