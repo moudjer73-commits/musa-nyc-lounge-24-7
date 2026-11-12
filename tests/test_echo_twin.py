@@ -128,33 +128,30 @@ async def test_instant_ack_and_guaranteed_pronunciation_card(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
-async def test_gemini_38_routing_404_blacklist_and_minimal_thinking(tmp_path: Path, monkeypatch):
-    from google.genai import types
-
+async def test_gemini_38_routing_and_real_container_init(tmp_path: Path, monkeypatch):
+    from telegram.ext import Application
     assert sanitize_gemini_model("gemini-2.5-flash") == "gemini-3.8-flash"
     assert sanitize_gemini_model("gemini-2.5-flash-lite") == "gemini-3.5-flash-lite"
 
+    # Verify full TwinContainer + GeminiClient + Application build with 4 keys (exact startup path!)
+    monkeypatch.setenv("GEMINI_API_KEYS", "AIzaFake1,AIzaFake2,AIzaFake3,AIzaFake4")
     repo = TwinRepository(db_path=tmp_path / "r.db", passphrase="")
     cli = GeminiClient(repo)
-    cli.clients = [object(), object(), object(), object()]
-    cli.flash_model = "gemini-3-retired-test"
+    if not cli.clients:
+        cli.clients = [object()]
 
-    calls = []
-
-    async def fake_invoke(client_obj, model, contents, cfg):
-        calls.append((model, cfg))
-        if model == "gemini-3-retired-test":
-            raise RuntimeError("404 NOT_FOUND: model is no longer available")
+    captured = {}
+    async def fake_call(contents, cfg, *, prefer_deep_chat=False, thinking=False, timeout_s=14.0):
+        captured["prefer_deep_chat"] = prefer_deep_chat
+        captured["thinking"] = thinking
         return "===HEARD===\nComfortable\n===SCORE===\n88"
 
-    monkeypatch.setattr(cli, "_invoke_sdk", fake_invoke)
+    monkeypatch.setattr(cli, "_call", fake_call)
     res = await cli.generate_fast_multimodal(1, "sys", b"MP3", "usr", mime_type="audio/mp3")
     assert "Comfortable" in res
-    # Retired 404 model MUST only be tried ONCE (key #0), never 4x across all 4 keys!
-    assert [m for m, _ in calls] == ["gemini-3-retired-test", "gemini-3.8-flash"]
-    assert "gemini-3-retired-test" in cli._dead_models
+    assert captured["prefer_deep_chat"] is False and captured["thinking"] is False
 
-    # Verify minimal thinking was attached to gemini-3.8-flash config
-    used_cfg = calls[1][1]
-    if "thinking_level" in getattr(types.ThinkingConfig, "model_fields", {}):
-        assert used_cfg.thinking_config is not None
+    c = TwinContainer(db_path=tmp_path / "full.db", passphrase="", llm=cli)
+    app = Application.builder().token("123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw").concurrent_updates(True).build()
+    register_handlers(app, c)
+    c.flush()

@@ -61,11 +61,11 @@ def gemini_model_chain(prefer_deep_chat: bool = False) -> list[str]:
     return lite_models + full_models
 
 
-def sanitize_gemini_model(model_name: str) -> str:
-    s = (model_name or "").strip().removeprefix("models/")
+def sanitize_gemini_model(name: str) -> str:
+    s = (name or "").strip().removeprefix("models/")
     if not s:
         return "gemini-3.8-flash"
-    if "flash-lite" in s and s.startswith(("gemini-2.", "gemini-1.")):
+    if "lite" in s and s.startswith(("gemini-2.", "gemini-1.")):
         return "gemini-3.5-flash-lite"
     if s.startswith(("gemini-2.", "gemini-1.")):
         return "gemini-3.8-flash"
@@ -73,10 +73,5 @@ def sanitize_gemini_model(model_name: str) -> str:
 
 
 for _k, _v in list(globals().items()):
-    if _k.isupper():
-        if isinstance(_v, str) and "gemini-" in _v:
-            globals()[_k] = sanitize_gemini_model(_v)
-        elif isinstance(_v, list) and any(isinstance(x, str) and "gemini-" in x for x in _v):
-            globals()[_k] = [sanitize_gemini_model(x) if isinstance(x, str) else x for x in _v]
-        elif isinstance(_v, tuple) and any(isinstance(x, str) and "gemini-" in x for x in _v):
-            globals()[_k] = tuple(sanitize_gemini_model(x) if isinstance(x, str) else x for x in _v)
+    if _k.isupper() and isinstance(_v, str) and _v.startswith(("gemini-2.", "gemini-1.", "models/gemini-2.")):
+        globals()[_k] = sanitize_gemini_model(_v)

@@ -58,7 +58,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
-          GEMINI_MODEL_CHAIN: "${{ vars.GEMINI_MODEL_CHAIN || 'gemini-3.5-flash-lite,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-3.8-flash' }}"
+          GEMINI_MODEL_CHAIN: "${{ vars.GEMINI_MODEL_CHAIN || 'gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.5-flash-lite,gemini-3.8-flash' }}"
           SNAPSHOT_PASSPHRASE: ${{ secrets.SNAPSHOT_PASSPHRASE }}
           ADMIN_USER_IDS: ${{ vars.ADMIN_USER_IDS }}
           SEL_SNAPSHOT_PUSH_MIN: ${{ vars.SEL_SNAPSHOT_PUSH_MIN }}
