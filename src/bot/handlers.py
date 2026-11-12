@@ -318,7 +318,6 @@ async def _deliver_lab_report(
     card_html = format_prosody_lab_html(report, pure_mode=pure_mode)
     kb = voice_lab_inline_kb(cid)
 
-    # 1. عرض بطاقة تقييم النطق فوراً دون انتظار توليد الصوت حتى لا يتأخر التقييم أبداً!
     sent = None
     if status_msg is not None and hasattr(status_msg, "edit_text"):
         try:
@@ -335,8 +334,7 @@ async def _deliver_lab_report(
         chat_message_id=getattr(sent, "message_id", None),
     )
 
-    # 2. إرفاق ملف المحاكاة الصوتي في وضع المختبر الصرف أو الإعادة فقط
-    if (pure_mode or report.is_retake) and target_spoken != "(spoken audio clip)":
+    if (pure_mode or report.is_retake) and not target_spoken.startswith("(voice clip"):
         mp3 = await synthesize_shadow_drill(drill_target or target_spoken)
         if mp3:
             buf = io.BytesIO(mp3)
@@ -975,15 +973,17 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         asyncio.create_task(
             refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False)
         )
-        # استجابة بصرية فورية خلال 0.2 ثانية تؤكد استلام الصوت وبدء فحص النطق
         status_msg = await msg.reply_text(
             "🎙️ <i>Listening &amp; assessing your pronunciation...</i>",
             parse_mode="HTML",
         )
+        lab_delivered = False
 
         try:
             tg_file = await v.get_file()
             raw = bytes(await tg_file.download_as_bytearray())
+            VOICE_CLIP_CACHE.stash(uid, "", raw, "")
+
             lab_st = c.repo.get_lab_state(uid)
             pure_or_retake = bool(lab_st.get("lab_mode") or lab_st.get("pending_retake"))
 
@@ -997,18 +997,19 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                         chat_message_id=getattr(msg, "message_id", None),
                         duration_s=dur,
                     ),
-                    timeout=28.0,
+                    timeout=32.0,
                 )
                 if report is None:
                     if hasattr(status_msg, "edit_text"):
                         await status_msg.edit_text(
-                            "Couldn't detect speech—try recording closer to the mic."
+                            "Couldn't detect clear speech—hold the mic a bit closer."
                         )
                     return
                 await _deliver_lab_report(
                     msg, c, uid, angle, report,
                     raw_audio=raw, pure_mode=True, status_msg=status_msg,
                 )
+                lab_delivered = True
                 return
 
             outcome, report = await asyncio.wait_for(
@@ -1017,31 +1018,36 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                     chat_message_id=getattr(msg, "message_id", None),
                     duration_s=dur, log_partner=False,
                 ),
-                timeout=28.0,
+                timeout=32.0,
             )
             if outcome.vault_celebrations:
                 await _react_quietly(msg, "🔥")
 
-            # تحديث الرسالة الفورية ببطاقة تقييم النطق أولاً ثم إرسال رد الشريك الصوتي مباشرة
             if report is not None:
                 await _deliver_lab_report(
                     msg, c, uid, outcome.angle, report,
                     raw_audio=raw, pure_mode=False, status_msg=status_msg,
                 )
+                lab_delivered = True
             elif hasattr(status_msg, "delete"):
                 try:
                     await status_msg.delete()
                 except Exception:
                     pass
 
-            await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
+            try:
+                await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
+            except Exception as p_exc:
+                logger.warning("Partner voice delivery skipped: %s", p_exc)
             asyncio.create_task(c.engine.maybe_sync_memory(uid))
         except Exception as exc:
             logger.error("Voice handler error: %s", exc, exc_info=exc)
+            if lab_delivered:
+                return
             err_txt = (
                 str(exc)
                 if isinstance(exc, (QuotaExceededError, LLMUnavailableError))
-                else "Voice analysis hit a brief timeout—send that clip once more."
+                else f"Audio check paused ({type(exc).__name__})—please send that clip once more."
             )
             if hasattr(status_msg, "edit_text"):
                 try:

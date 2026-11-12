@@ -46,7 +46,7 @@ def resolve_gemini_keys() -> list[str]:
 
 
 def gemini_model_chain(prefer_deep_chat: bool = False) -> list[str]:
-    raw = _env("GEMINI_MODEL_CHAIN", "gemini-2.5-flash,gemini-3.5-flash-lite,gemini-2.5-flash-lite,gemini-3.8-flash")
+    raw = _env("GEMINI_MODEL_CHAIN", "gemini-3.8-flash,gemini-3.5-flash-lite,gemini-3.5-flash-lite,gemini-3.8-flash")
     chain: list[str] = []
     for part in raw.split(","):
         m = part.strip()
@@ -59,3 +59,24 @@ def gemini_model_chain(prefer_deep_chat: bool = False) -> list[str]:
     lite_models = [m for m in chain if "lite" in m.lower()]
     full_models = [m for m in chain if "lite" not in m.lower()]
     return lite_models + full_models
+
+
+def sanitize_gemini_model(model_name: str) -> str:
+    s = (model_name or "").strip().removeprefix("models/")
+    if not s:
+        return "gemini-3.8-flash"
+    if "flash-lite" in s and s.startswith(("gemini-2.", "gemini-1.")):
+        return "gemini-3.5-flash-lite"
+    if s.startswith(("gemini-2.", "gemini-1.")):
+        return "gemini-3.8-flash"
+    return s
+
+
+for _k, _v in list(globals().items()):
+    if _k.isupper():
+        if isinstance(_v, str) and "gemini-" in _v:
+            globals()[_k] = sanitize_gemini_model(_v)
+        elif isinstance(_v, list) and any(isinstance(x, str) and "gemini-" in x for x in _v):
+            globals()[_k] = [sanitize_gemini_model(x) if isinstance(x, str) else x for x in _v]
+        elif isinstance(_v, tuple) and any(isinstance(x, str) and "gemini-" in x for x in _v):
+            globals()[_k] = tuple(sanitize_gemini_model(x) if isinstance(x, str) else x for x in _v)

@@ -107,8 +107,7 @@ def _gtts_sync_fallback(clean: str, rate: str) -> bytes | None:
             timeout=7,
         )
         return proc.stdout if (proc.returncode == 0 and proc.stdout) else raw_mp3
-    except Exception as exc:
-        logger.debug("gTTS fallback error: %s", exc)
+    except Exception:
         return None
 
 
@@ -127,9 +126,8 @@ async def synthesize_mp3(
         )
         if res:
             return res
-    except Exception as exc:
-        logger.debug("Edge TTS timeout/block (%s), using US fallback: %s", voice, exc)
-
+    except Exception:
+        pass
     return await asyncio.to_thread(_gtts_sync_fallback, clean, rate)
 
 
@@ -216,8 +214,8 @@ async def merge_mirror_clips(
         )
         if r.returncode == 0 and Path(p_out).stat().st_size > 300:
             return Path(p_out).read_bytes()
-    except Exception as exc:
-        logger.warning("Audio mirror stitch fallback: %s", exc)
+    except Exception:
+        pass
     finally:
         for pf in (p_usr, p_nat, p_out):
             if os.path.exists(pf):

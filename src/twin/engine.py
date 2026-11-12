@@ -13,7 +13,12 @@ from src.twin.corpus_guard import (
     has_contrived_buzz,
     scrub_contrived_english,
 )
-from src.voice.acoustics import AcousticMetrics, analyze_voice_bytes, compare_metrics
+from src.voice.acoustics import (
+    AcousticMetrics,
+    analyze_voice_bytes,
+    compare_metrics,
+    transcode_for_gemini,
+)
 
 ANGLE_META = {
     "casual_sharp": {
@@ -335,6 +340,7 @@ def _phrase_matched(phrase: str, text: str) -> bool:
 
 
 
+
 TAG_SPLIT_RE = re.compile(
     r"(?:^|\n)\s*(?:={2,}\s*)?"
     r"(HEARD|REPLY|SCORE|HABIT|MAP|SOUNDS|STRESS|RHYTHM|PEAK|GRAMMAR|RECAST|VERDICT)"
@@ -343,35 +349,19 @@ TAG_SPLIT_RE = re.compile(
 )
 
 FAST_TAGGED_AUDIT_FORMAT = (
-    "RETURN PLAIN TEXT USING THESE EXACT TAGS IN ORDER (NO MARKDOWN, NO JSON):\n"
-    "===HEARD===\n"
-    "[Exact verbatim words spoken in the audio; write [silence] ONLY if zero speech]\n"
-    "===REPLY===\n"
-    "[Your natural 1-2 sentence spoken US partner reply; write NONE in Pure Lab Mode]\n"
-    "===SCORE===\n"
-    "[Integer 20-99 for General American pronunciation accuracy]\n"
-    "===HABIT===\n"
-    "[One key: us_rhythm_linking | word_stress | flap_stop_t | nuclear_intonation | "
-    "fr_calque | ar_calque | irregular_past | uncountable_noun | stiff_register]\n"
-    "===MAP===\n"
-    "[REQUIRED General American pronunciation map of THEIR exact words using ˈCAPS "
-    "for stress, /ə/ for schwa, ‿ for linking, [ɾ] Flap-T, [t̚] Stop-T, | pause, ↘/↗]\n"
-    "===SOUNDS===\n"
-    "[REQUIRED specific word & phoneme audit: `word: [how it sounded] -> [US target]` "
-    "covering vowels, /ɹ/, /θ,ð/, [pʰ,tʰ,kʰ], dark /ɫ/, endings—or confirm clean sounds "
-    "+ 1 subtle native articulatory polish]\n"
-    "===STRESS===\n"
-    "[REQUIRED word stress placement & schwa /ə/ reduction assessment on their words]\n"
-    "===RHYTHM===\n"
-    "[REQUIRED connected speech, C-V linking, Flap-T [ɾ], Stop-T [t̚], and pitch tip]\n"
-    "===PEAK===\n"
-    "[Nuclear peak phrase with main stressed syllable in CAPS + ↘/↗]\n"
-    "===GRAMMAR===\n"
-    "[NONE if grammatical, else concise arrow fix]\n"
-    "===RECAST===\n"
-    "[NONE if grammatical, else plain natural spoken US phrasing]\n"
-    "===VERDICT===\n"
-    "[NONE unless A/B retake comparison applies]"
+    "RETURN PLAIN TEXT WITH THESE EXACT TAGS IN ORDER (1 concise line per tag, max 20 words each, NO JSON):\n"
+    "===HEARD===\n[Exact words spoken; write [silence] ONLY if zero speech]\n"
+    "===REPLY===\n[Natural 1-2 sentence spoken US reply; write NONE in Pure Lab Mode]\n"
+    "===SCORE===\n[Integer 20-99 for General American pronunciation]\n"
+    "===HABIT===\n[us_rhythm_linking | word_stress | flap_stop_t | nuclear_intonation | fr_calque | ar_calque | irregular_past | uncountable_noun | stiff_register]\n"
+    "===MAP===\n[US map of THEIR exact words: ˈCAPS stress, /ə/ schwa, ‿ link, [ɾ] Flap-T, [t̚] Stop-T, | pause, ↘/↗]\n"
+    "===SOUNDS===\n[Specific words & phonemes heard: `word: [heard] -> [US target]` or confirm clean sounds + 1 polish]\n"
+    "===STRESS===\n[Syllable stress placement & schwa /ə/ reduction on their words]\n"
+    "===RHYTHM===\n[Connected speech, C-V linking, Flap-T [ɾ], Stop-T [t̚], and intonation tip]\n"
+    "===PEAK===\n[Main stressed peak word in CAPS + ↘/↗]\n"
+    "===GRAMMAR===\n[NONE if grammatical, else concise arrow fix]\n"
+    "===RECAST===\n[NONE if grammatical, else plain spoken US sentence]\n"
+    "===VERDICT===\n[NONE unless A/B retake applies]"
 )
 
 
@@ -718,13 +708,16 @@ class EchoTwinEngine:
         log_partner: bool = False,
     ) -> tuple[TurnOutcome, VoiceLabReport | None]:
         async with self._lock(user_id):
-            dsp = await asyncio.to_thread(analyze_voice_bytes, audio_bytes, 0)
+            dsp, (fast_bytes, fast_mime) = await asyncio.gather(
+                asyncio.to_thread(analyze_voice_bytes, audio_bytes, 0),
+                asyncio.to_thread(transcode_for_gemini, audio_bytes, mime_type),
+            )
             u = self.repo.get_user(user_id)
             angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
             meta = ANGLE_META[angle]
             weekday = datetime.now(timezone.utc).strftime("%A")
             take2 = u["pending_take2"]
-            recent = self.repo.recent_turns(user_id, 8)
+            recent = self.repo.recent_turns(user_id, 6)
             due = self.repo.due_vault_phrases(user_id, 1)
             mem_blk, hab_blk = self._context_blocks(user_id)
             bot_t = [t["content"] for t in recent if t["role"] == "partner"]
@@ -738,8 +731,8 @@ class EchoTwinEngine:
             sys_lines = [
                 f"PART 1 — PARTNER ({meta['badge']}, {weekday}): {meta['voice_desc']}{mem_blk}",
                 SPOKEN_US_DNA,
-                "- Put a natural 1-2 sentence spoken US reply in ===REPLY===.",
-                "\nPART 2 — MANDATORY PRONUNCIATION & PROSODY EXAMINER (ASSESS 100% OF CLIPS):",
+                "- Write a natural 1-2 sentence spoken US reply in ===REPLY===.",
+                "\nPART 2 — MANDATORY PRONUNCIATION EXAMINER (ASSESS 100% OF CLIPS):",
                 PROSODY_AUDITOR_PROMPT,
                 hab_blk,
                 "\n" + FAST_TAGGED_AUDIT_FORMAT,
@@ -749,59 +742,33 @@ class EchoTwinEngine:
 
             hist = "\n".join(
                 f"{'You' if t['role'] == 'partner' else 'Speaker'}: {t['content']}"
-                for t in recent[-6:]
+                for t in recent[-5:]
             )
             retake_hint = (
                 f"PREVIOUS TAKE: \"{prev_recast or prev_target}\". "
-                "If repeated, fill ===VERDICT===; else write NONE."
+                "If repeated, fill ===VERDICT===; else NONE."
                 if (prev_recast or prev_target)
                 else "First take (===VERDICT=== NONE)."
             )
             usr_p = (
                 (f"RECENT DIALOGUE:\n{hist}\n\n" if hist else "")
                 + f"{dsp.to_prompt_summary()}\n{retake_hint}\n"
-                + f"Listen to this {duration_s:.0f}s voice clip and output the exact tags."
+                + f"Listen to this {duration_s:.0f}s clip and output the exact tags."
             )
 
             parsed: dict[str, str] = {}
-            if hasattr(self.llm, "generate_fast_multimodal"):
-                try:
-                    raw = await self.llm.generate_fast_multimodal(
-                        user_id, "\n".join(sys_lines), audio_bytes, usr_p, mime_type=mime_type
-                    )
-                    parsed = parse_tagged_voice_audit(raw)
-                except Exception:
-                    parsed = {}
-
-            if not parsed.get("heard") and hasattr(self.llm, "audit_voice_prosody"):
-                fb = HybridVoiceTurnOutput(
-                    verbatim_heard="",
-                    partner_reply="Got your voice note—let's check how that sounded.",
-                    phonetic_score=78,
+            try:
+                raw = await self.llm.generate_fast_multimodal(
+                    user_id, "\n".join(sys_lines), fast_bytes, usr_p, mime_type=fast_mime
                 )
-                s_res = await self.llm.audit_voice_prosody(
-                    user_id, "\n".join(sys_lines[:6]), audio_bytes, usr_p,
-                    HybridVoiceTurnOutput, fb, mime_type=mime_type,
-                )
-                parsed = {
-                    "heard": s_res.verbatim_heard,
-                    "reply": s_res.partner_reply,
-                    "score": str(s_res.phonetic_score),
-                    "habit": s_res.habit_key,
-                    "map": s_res.prosodic_map,
-                    "sounds": s_res.word_pronunciations,
-                    "stress": s_res.stress_and_schwa,
-                    "rhythm": s_res.prosody_fix,
-                    "peak": s_res.focus_stress,
-                    "grammar": s_res.grammar_fix,
-                    "recast": s_res.native_recast,
-                    "verdict": s_res.retake_verdict,
-                }
+                parsed = parse_tagged_voice_audit(raw)
+            except Exception as exc:
+                logger.warning("Fast multimodal fallback to DSP: %s", exc)
 
             heard_final = (parsed.get("heard") or "").strip()
             if heard_final.lower() in ("[silence]", "[inaudible]", "silence"):
                 segs = clean_partner_reply(
-                    parsed.get("reply") or "Didn't catch clear audio there—try once more?"
+                    parsed.get("reply") or "Didn't catch clear speech there—try once more?"
                 )
                 return TurnOutcome(
                     segs, "\n\n".join(segs), angle, meta["badge"], "", [], False, True, None
@@ -809,17 +776,17 @@ class EchoTwinEngine:
 
             if not heard_final:
                 if dsp.voiced_s < 0.20:
-                    segs = ["Couldn't hear speech on that clip—try holding the mic closer."]
+                    segs = ["Couldn't detect speech in that clip—hold the mic a bit closer."]
                     return TurnOutcome(
                         segs, segs[0], angle, meta["badge"], "", [], False, True, None
                     ), None
-                heard_final = "(spoken audio clip)"
+                heard_final = "(voice clip analyzed via acoustic DSP)"
                 parsed["sounds"] = (
-                    "Acoustic signal analyzed directly (transcript busy)—check nPVI & pitch meter above."
+                    "Acoustic waveform scored directly—send one more clip for word-by-word IPA."
                 )
 
             segs = clean_partner_reply(
-                parsed.get("reply") or "Got it—check your pronunciation breakdown right above."
+                parsed.get("reply") or "Got your note—check your pronunciation card above."
             )
             full = "\n\n".join(segs)
             repair = is_repair_request(heard_final)
@@ -858,8 +825,9 @@ class EchoTwinEngine:
         duration_s: float = 0.0,
     ) -> VoiceLabReport | None:
         clean_hint = transcript.strip() if transcript and transcript != "(voice note)" else ""
-        dsp = await asyncio.to_thread(
-            analyze_voice_bytes, audio_bytes, len(clean_hint.split())
+        dsp, (fast_bytes, fast_mime) = await asyncio.gather(
+            asyncio.to_thread(analyze_voice_bytes, audio_bytes, len(clean_hint.split())),
+            asyncio.to_thread(transcode_for_gemini, audio_bytes, mime_type),
         )
         u = self.repo.get_user(user_id)
         angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
@@ -880,34 +848,13 @@ class EchoTwinEngine:
             f"Hint: \"{clean_hint}\"\n{retake_txt}\nAudit every sound & rhythm detail now."
         )
         parsed: dict[str, str] = {}
-        if hasattr(self.llm, "generate_fast_multimodal"):
-            try:
-                raw = await self.llm.generate_fast_multimodal(
-                    user_id, sys_p, audio_bytes, usr_p, mime_type=mime_type
-                )
-                parsed = parse_tagged_voice_audit(raw)
-            except Exception:
-                parsed = {}
-
-        if not parsed.get("heard") and hasattr(self.llm, "audit_voice_prosody"):
-            fb = ProsodyAuditOutput(verbatim_heard=clean_hint, phonetic_score=78)
-            s_res = await self.llm.audit_voice_prosody(
-                user_id, PROSODY_AUDITOR_PROMPT, audio_bytes, usr_p,
-                ProsodyAuditOutput, fb, mime_type=mime_type,
+        try:
+            raw = await self.llm.generate_fast_multimodal(
+                user_id, sys_p, fast_bytes, usr_p, mime_type=fast_mime
             )
-            parsed = {
-                "heard": s_res.verbatim_heard or clean_hint,
-                "score": str(s_res.phonetic_score),
-                "habit": s_res.habit_key,
-                "map": s_res.prosodic_map,
-                "sounds": s_res.word_pronunciations or s_res.segmental_fix,
-                "stress": s_res.stress_and_schwa,
-                "rhythm": s_res.prosody_fix,
-                "peak": s_res.focus_stress,
-                "grammar": s_res.grammar_fix,
-                "recast": s_res.native_recast,
-                "verdict": s_res.retake_verdict,
-            }
+            parsed = parse_tagged_voice_audit(raw)
+        except Exception:
+            parsed = {}
 
         heard_final = (parsed.get("heard") or clean_hint).strip()
         if heard_final.lower() in ("[silence]", "[inaudible]", "silence"):
@@ -915,7 +862,7 @@ class EchoTwinEngine:
         if not heard_final:
             if dsp.voiced_s < 0.20:
                 return None
-            heard_final = "(spoken audio clip)"
+            heard_final = "(voice clip analyzed via acoustic DSP)"
 
         if log_learner_turn:
             self.repo.log_turn(

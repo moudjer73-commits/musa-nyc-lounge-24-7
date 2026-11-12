@@ -62,7 +62,7 @@ def _thinking_cfg(model_name: str):
         return None
     low = model_name.lower()
     try:
-        if low.startswith("gemini-2.5-flash"):
+        if low.startswith("gemini-3.8-flash"):
             return types.ThinkingConfig(thinking_budget=0)
         if low.startswith("gemini-3"):
             return types.ThinkingConfig(thinking_level="low")
@@ -104,112 +104,151 @@ class GeminiClient:
         self._no_thinking: set[tuple[int, str]] = set()
         self._cursor = 0
 
-    @staticmethod
-    def _build_sdk_client(key: str):
-        try:
-            return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=HTTP_TIMEOUT_MS))
-        except Exception:
-            return genai.Client(api_key=key)
-
-    @property
     def configured(self) -> bool:
         return bool(self.clients)
-
-    @staticmethod
-    async def _invoke(client_obj: Any, kwargs: dict[str, Any], timeout_s: float) -> Any:
-        aio = getattr(client_obj, "aio", None)
-        aio_models = getattr(aio, "models", None) if aio is not None else None
-        fn = getattr(aio_models, "generate_content", None) if aio_models is not None else None
-        coro = fn(**kwargs) if callable(fn) else asyncio.to_thread(client_obj.models.generate_content, **kwargs)
-        return await asyncio.wait_for(coro, timeout=timeout_s)
-
-    async def _call(
-        self,
-        contents: Any,
-        config: types.GenerateContentConfig | None = None,
-        *,
-        prefer_deep_chat: bool = True,
-        thinking: bool = True,
-        timeout_s: float = CALL_TIMEOUT_S,
-    ) -> str:
-        if not self.clients:
-            raise LLMUnavailableError("no_keys")
-        models = gemini_model_chain(prefer_deep_chat=prefer_deep_chat)
-        start = self._cursor % len(self.clients)
-        self._cursor += 1
-        dead_keys: set[int] = set()
-        overload_threshold = min(2, len(self.clients))
-        max_attempts = max(6, len(self.clients) * len(models))
-        attempts = 0
-        last_reason = ""
-
-        now0 = time.monotonic()
-        any_uncooled = any(now0 >= self._model_cooldown_until.get(m, 0.0) for m in models)
-
-        for model_name in models:
-            if any_uncooled and time.monotonic() < self._model_cooldown_until.get(model_name, 0.0):
-                continue
-            consec_overload = 0
-            for offset in range(len(self.clients)):
-                idx = (start + offset) % len(self.clients)
-                if idx in dead_keys or attempts >= max_attempts:
-                    continue
-                if time.monotonic() < self._cooldown_until.get((idx, model_name), 0.0):
-                    continue
-                if time.monotonic() - self._dead_pairs.get((idx, model_name), -DEAD_PAIR_TTL_S) < DEAD_PAIR_TTL_S:
-                    continue
-                attempts += 1
-                use_thinking = thinking and (idx, model_name) not in self._no_thinking
-                for _pass in (0, 1):
-                    try:
-                        cfg = _with_http_timeout(config, timeout_s)
-                        if use_thinking:
-                            tc = _thinking_cfg(model_name)
-                            if tc is not None and cfg is not None and hasattr(cfg, "model_copy"):
-                                cfg = cfg.model_copy(update={"thinking_config": tc})
-                        kwargs: dict[str, Any] = {"model": model_name, "contents": contents}
-                        if cfg is not None:
-                            kwargs["config"] = cfg
-                        resp = await self._invoke(self.clients[idx], kwargs, timeout_s)
-                        txt = getattr(resp, "text", None)
-                        if txt and txt.strip():
-                            return txt.strip()
-                        last_reason = f"empty:{model_name}"
-                        break
-                    except asyncio.TimeoutError:
-                        last_reason = f"timeout:{model_name}"
-                        consec_overload += 1
-                        self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_COOLDOWN_S
-                        break
-                    except Exception as exc:
-                        kind = _classify(exc)
-                        last_reason = f"{kind}:{_redact(str(exc))}"
-                        logger.warning("Gemini %s on %s (key #%d): %s", kind, model_name, idx, _redact(str(exc)))
-                        if use_thinking and _pass == 0 and _is_thinking_err(exc):
-                            self._no_thinking.add((idx, model_name))
-                            use_thinking = False
-                            continue
-                        if kind == "model":
-                            self._dead_pairs[(idx, model_name)] = time.monotonic()
-                        elif kind == "auth":
-                            dead_keys.add(idx)
-                        elif kind == "rate":
-                            cd = RATE_DAY_COOLDOWN_S if "day" in str(exc).lower() else RATE_MIN_COOLDOWN_S
-                            self._cooldown_until[(idx, model_name)] = time.monotonic() + cd
-                        elif kind == "transient":
-                            consec_overload += 1
-                            self._cooldown_until[(idx, model_name)] = time.monotonic() + TRANSIENT_COOLDOWN_S
-                            await asyncio.sleep(0.25)
-                        break
-                if consec_overload >= overload_threshold:
-                    self._model_cooldown_until[model_name] = time.monotonic() + OVERLOAD_MODEL_COOLDOWN_S
-                    break
-        raise LLMUnavailableError(last_reason)
 
     def _charge(self, user_id: int) -> None:
         ok, used = self.repo.check_and_increment_quota(user_id)
         if not ok:
             raise QuotaExceededError(f"Daily free limit reached ({used} turns). Fresh quota unlocks tomorrow UTC.")
+
+    PRIMARY_FLASH_MODELS = ("gemini-3.8-flash", "gemini-3.5-flash-lite")
+
+    def _apply_thinking_policy(
+        self,
+        base_cfg: types.GenerateContentConfig,
+        model_name: str,
+        want_thinking: bool,
+    ) -> types.GenerateContentConfig:
+        no_think = getattr(self, "_no_thinking_models", set())
+        if model_name in no_think or not hasattr(types, "ThinkingConfig"):
+            return base_cfg
+        fields = getattr(types.ThinkingConfig, "model_fields", {})
+        try:
+            tc = None
+            if model_name.startswith("gemini-3") and "thinking_level" in fields:
+                lvl = "LOW" if want_thinking else "MINIMAL"
+                if hasattr(types, "ThinkingLevel"):
+                    lvl = getattr(types.ThinkingLevel, lvl, lvl)
+                tc = types.ThinkingConfig(thinking_level=lvl)
+            elif not want_thinking and "thinking_budget" in fields:
+                tc = types.ThinkingConfig(thinking_budget=0)
+            if tc is not None and hasattr(base_cfg, "model_copy"):
+                return base_cfg.model_copy(update={"thinking_config": tc})
+        except Exception:
+            pass
+        return base_cfg
+
+    def _strip_thinking(self, cfg: types.GenerateContentConfig) -> types.GenerateContentConfig:
+        if hasattr(cfg, "model_copy"):
+            return cfg.model_copy(update={"thinking_config": None})
+        return cfg
+
+    def _candidate_models(self, prefer_deep_chat: bool = False) -> list[str]:
+        dead = getattr(self, "_dead_models", set())
+        lead_attr = "deep_model" if prefer_deep_chat else "flash_model"
+        raw_chain: list[str] = []
+        lead_val = getattr(self, lead_attr, "")
+        if isinstance(lead_val, str) and lead_val.startswith("gemini-3"):
+            raw_chain.append(lead_val)
+        for m in ("gemini-3.8-flash", "gemini-3.5-flash-lite"):
+            if m not in raw_chain:
+                raw_chain.append(m)
+        for attr in ("flash_model", "deep_model", "lite_model"):
+            val = getattr(self, attr, "")
+            if isinstance(val, str) and val.startswith("gemini-3") and val not in raw_chain:
+                raw_chain.append(val)
+        active = [m for m in raw_chain if m not in dead]
+        return active or ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+
+    async def _invoke_sdk(
+        self, client_obj: Any, model: str, contents: Any, cfg: types.GenerateContentConfig
+    ) -> str:
+        c = client_obj[1] if isinstance(client_obj, tuple) else client_obj
+        if hasattr(c, "aio") and hasattr(c.aio, "models"):
+            resp = await c.aio.models.generate_content(
+                model=model, contents=contents, config=cfg
+            )
+        else:
+            resp = await asyncio.to_thread(
+                c.models.generate_content, model=model, contents=contents, config=cfg
+            )
+        txt = getattr(resp, "text", None)
+        if txt:
+            return txt
+        cands = getattr(resp, "candidates", None) or []
+        for cand in cands:
+            content = getattr(cand, "content", None)
+            for p in (getattr(content, "parts", None) or []):
+                pt = getattr(p, "text", None)
+                if pt:
+                    return pt
+        return ""
+
+    async def _call(
+        self,
+        contents: Any,
+        cfg: types.GenerateContentConfig,
+        *,
+        prefer_deep_chat: bool = False,
+        thinking: bool = False,
+        timeout_s: float = 14.0,
+    ) -> str:
+        if not self.clients:
+            raise LLMUnavailableError("No Gemini API keys configured.")
+        if not hasattr(self, "_dead_models"):
+            self._dead_models: set[str] = set()
+        if not hasattr(self, "_no_thinking_models"):
+            self._no_thinking_models: set[str] = set()
+
+        n_keys = len(self.clients)
+        start_k = getattr(self, "_rr_idx", 0) % n_keys
+        self._rr_idx = (start_k + 1) % n_keys
+        last_err: Exception | None = None
+
+        for model in self._candidate_models(prefer_deep_chat=prefer_deep_chat):
+            eff_cfg = self._apply_thinking_policy(cfg, model, want_thinking=thinking)
+            for offset in range(n_keys):
+                k_idx = (start_k + offset) % n_keys
+                client_obj = self.clients[k_idx]
+                try:
+                    out = await asyncio.wait_for(
+                        self._invoke_sdk(client_obj, model, contents, eff_cfg),
+                        timeout=timeout_s,
+                    )
+                    if out and out.strip():
+                        return out
+                except asyncio.TimeoutError as tex:
+                    last_err = tex
+                    logger.warning("Gemini timeout on %s (key #%d, %.1fs)", model, k_idx, timeout_s)
+                    # Do not stall 4x on the same slow model—try at most 1 more key then failover to lite
+                    if offset >= 1:
+                        break
+                except Exception as exc:
+                    last_err = exc
+                    emsg = _redact(str(exc))
+                    up = emsg.upper()
+                    if "404" in up or "NOT_FOUND" in up or "NO LONGER AVAILABLE" in up:
+                        self._dead_models.add(model)
+                        logger.warning("Blacklisted retired model %s immediately: %s", model, emsg[:140])
+                        break
+                    if ("400" in up or "INVALID_ARGUMENT" in up) and getattr(eff_cfg, "thinking_config", None) is not None:
+                        self._no_thinking_models.add(model)
+                        eff_cfg = self._strip_thinking(eff_cfg)
+                        try:
+                            out2 = await asyncio.wait_for(
+                                self._invoke_sdk(client_obj, model, contents, eff_cfg),
+                                timeout=timeout_s,
+                            )
+                            if out2 and out2.strip():
+                                return out2
+                        except Exception as exc2:
+                            last_err = exc2
+                        continue
+                    logger.warning("Gemini retry on %s (key #%d): %s", model, k_idx, emsg[:160])
+                    continue
+
+        raise LLMUnavailableError(f"All Gemini 3.x keys busy ({_redact(str(last_err))[:120]}).")
 
     async def generate_text(
         self,
@@ -217,14 +256,25 @@ class GeminiClient:
         system_prompt: str,
         user_prompt: str,
         *,
-        temperature: float = 0.9,
+        temperature: float = 0.62,
         deep_chat: bool = True,
     ) -> str:
+        if not self.clients:
+            raise LLMUnavailableError("Gemini API keys are not configured.")
         self._charge(user_id)
-        cfg = types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature)
+        cfg = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=temperature,
+        )
         try:
-            return await self._call(user_prompt, cfg, prefer_deep_chat=deep_chat, thinking=True)
-        except LLMUnavailableError:
+            return await self._call(
+                user_prompt,
+                cfg,
+                prefer_deep_chat=deep_chat,
+                thinking=False,
+                timeout_s=14.0,
+            )
+        except Exception:
             self.repo.refund_quota(user_id)
             raise
 
@@ -248,40 +298,22 @@ class GeminiClient:
             response_schema=schema_cls,
             temperature=temperature,
         )
-        for _ in range(2):
-            try:
-                raw = await self._call(
-                    user_prompt, cfg, prefer_deep_chat=deep_chat, thinking=True, timeout_s=STRUCTURED_TIMEOUT_S
-                )
-                return schema_cls.model_validate_json(raw)
-            except LLMUnavailableError:
-                self.repo.refund_quota(user_id)
-                return fallback
-            except Exception as exc:
-                logger.warning("Structured parse warning: %s", _redact(str(exc)))
-        self.repo.refund_quota(user_id)
-        return fallback
-
-    async def generate_voice_turn(
-        self,
-        user_id: int,
-        system_prompt: str,
-        audio_bytes: bytes,
-        user_prompt: str,
-        *,
-        mime_type: str = "audio/ogg",
-        temperature: float = 0.82,
-    ) -> str:
-        self._charge(user_id)
-        part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
-        cfg = types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature)
         try:
-            return await self._call(
-                [part, user_prompt], cfg, prefer_deep_chat=True, thinking=True, timeout_s=AUDIO_TIMEOUT_S
+            raw = await self._call(
+                user_prompt,
+                cfg,
+                prefer_deep_chat=deep_chat,
+                thinking=False,
+                timeout_s=14.0,
             )
-        except LLMUnavailableError:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            return schema_cls.model_validate_json(cleaned)
+        except Exception as exc:
+            logger.warning("Structured output fallback: %s", _redact(str(exc)))
             self.repo.refund_quota(user_id)
-            raise
+            return fallback
 
     async def generate_fast_multimodal(
         self,
@@ -291,46 +323,42 @@ class GeminiClient:
         user_prompt: str,
         *,
         mime_type: str = "audio/ogg",
-        temperature: float = 0.3,
+        temperature: float = 0.25,
     ) -> str:
-        """Ultra-low-latency multimodal pass (zero JSON FSM lag, zero 400 errors)."""
         if not self.clients:
             raise LLMUnavailableError("Gemini API keys are not configured.")
         self._charge(user_id)
         part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
-        configs: list[types.GenerateContentConfig] = []
-        if hasattr(types, "ThinkingConfig"):
-            try:
-                configs.append(
-                    types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        temperature=temperature,
-                        thinking_config=types.ThinkingConfig(thinking_budget=0),
-                    )
-                )
-            except Exception:
-                pass
-        configs.append(
-            types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=temperature,
-            )
+        cfg = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=temperature,
         )
-        last_err: Exception | None = None
-        for cfg in configs:
-            try:
-                return await self._call(
-                    [part, user_prompt],
-                    cfg,
-                    prefer_deep_chat=True,
-                    thinking=False,
-                    timeout_s=18.0,
-                )
-            except Exception as exc:
-                last_err = exc
-                logger.warning("Fast multimodal retry: %s", _redact(str(exc)))
-        self.repo.refund_quota(user_id)
-        raise LLMUnavailableError(f"Voice analysis busy: {_redact(str(last_err))}")
+        try:
+            return await self._call(
+                [part, user_prompt],
+                cfg,
+                prefer_deep_chat=False,
+                thinking=False,
+                timeout_s=13.0,
+            )
+        except Exception as exc:
+            self.repo.refund_quota(user_id)
+            raise LLMUnavailableError(f"Voice analysis busy: {_redact(str(exc))}") from exc
+
+    async def generate_voice_turn(
+        self,
+        user_id: int,
+        system_prompt: str,
+        audio_bytes: bytes,
+        user_prompt: str,
+        *,
+        mime_type: str = "audio/ogg",
+        temperature: float = 0.5,
+    ) -> str:
+        return await self.generate_fast_multimodal(
+            user_id, system_prompt, audio_bytes, user_prompt,
+            mime_type=mime_type, temperature=temperature,
+        )
 
     async def audit_voice_prosody(
         self,
@@ -347,51 +375,38 @@ class GeminiClient:
             return fallback
         self._charge(user_id)
         part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
-        base_kw: dict[str, Any] = {
-            "system_instruction": system_prompt,
-            "response_mime_type": "application/json",
-            "response_schema": schema_cls,
-            "temperature": 0.15,
-        }
-        configs: list[types.GenerateContentConfig] = []
-        if hasattr(types, "ThinkingConfig"):
-            try:
-                tk_kw = dict(base_kw)
-                tk_kw["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-                configs.append(types.GenerateContentConfig(**tk_kw))
-            except Exception:
-                pass
-        configs.append(types.GenerateContentConfig(**base_kw))
-        for cfg in configs:
-            try:
-                raw = await self._call(
-                    [part, user_prompt],
-                    cfg,
-                    prefer_deep_chat=True,
-                    thinking=False,
-                    timeout_s=18.0,
-                )
-                cleaned = raw.strip()
-                if cleaned.startswith("```"):
-                    cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-                return schema_cls.model_validate_json(cleaned)
-            except Exception as exc:
-                logger.warning("Structured audio retry: %s", _redact(str(exc)))
-        self.repo.refund_quota(user_id)
-        return fallback
-
-    async def transcribe_voice(self, user_id: int, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
-        self._charge(user_id)
-        prompt = (
-            "Transcribe this spoken audio verbatim. Preserve natural contractions, hesitations, "
-            "any grammar or preposition slips, and any Arabic or French words spoken mid-sentence "
-            "exactly as uttered—never auto-correct or polish. Return ONLY the transcript."
+        cfg = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            response_mime_type="application/json",
+            response_schema=schema_cls,
+            temperature=0.15,
         )
-        part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
         try:
-            return await self._call(
-                [part, prompt], prefer_deep_chat=False, thinking=True, timeout_s=AUDIO_TIMEOUT_S
+            raw = await self._call(
+                [part, user_prompt],
+                cfg,
+                prefer_deep_chat=False,
+                thinking=False,
+                timeout_s=14.0,
             )
-        except LLMUnavailableError:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            return schema_cls.model_validate_json(cleaned)
+        except Exception as exc:
+            logger.warning("Structured audio fallback: %s", _redact(str(exc)))
             self.repo.refund_quota(user_id)
-            raise
+            return fallback
+
+    async def transcribe_voice(
+        self, user_id: int, audio_bytes: bytes, *, mime_type: str = "audio/ogg"
+    ) -> str:
+        raw = await self.generate_fast_multimodal(
+            user_id,
+            "Transcribe the exact English words spoken. Write [silence] if empty.",
+            audio_bytes,
+            "Transcribe verbatim:",
+            mime_type=mime_type,
+            temperature=0.1,
+        )
+        return raw.strip()

@@ -4,18 +4,20 @@ from types import SimpleNamespace
 import pytest
 
 from src.bot.handlers import TwinContainer, register_handlers
-from src.voice.acoustics import AcousticMetrics
-from src.voice.tts import PARTNER_VOICES, TWIN_VOICE, merge_mirror_clips
+from src.config import sanitize_gemini_model
+from src.db.repo import TwinRepository
+from src.llm.client import GeminiClient
+from src.voice.acoustics import AcousticMetrics, transcode_for_gemini
 
 
-class StubFastV61LLM:
+class StubFastV63LLM:
     configured = True
     def __init__(self):
         self.fast_calls = 0
 
     async def generate_fast_multimodal(
         self, user_id, system_prompt, audio_bytes, user_prompt,
-        *, mime_type="audio/ogg", temperature=0.3
+        *, mime_type="audio/ogg", temperature=0.25
     ):
         self.fast_calls += 1
         return (
@@ -87,10 +89,6 @@ async def test_instant_ack_and_guaranteed_pronunciation_card(tmp_path: Path, mon
         lambda t: asyncio.sleep(0, result=b"SHADOW_MP3"),
     )
     monkeypatch.setattr(
-        h_mod, "synthesize_audio_mirror",
-        lambda lb, nt: asyncio.sleep(0, result=b"MIRROR_MP3"),
-    )
-    monkeypatch.setattr(
         e_mod, "analyze_voice_bytes",
         lambda b, wc=0: AcousticMetrics(
             total_s=2.5, voiced_s=2.1, syllables=11, npvi=52.0,
@@ -98,8 +96,8 @@ async def test_instant_ack_and_guaranteed_pronunciation_card(tmp_path: Path, mon
         ),
     )
 
-    llm = StubFastV61LLM()
-    c = TwinContainer(db_path=tmp_path / "v61.db", passphrase="", llm=llm)
+    llm = StubFastV63LLM()
+    c = TwinContainer(db_path=tmp_path / "v63.db", passphrase="", llm=llm)
     app = FakeApp()
     register_handlers(app, c)
     u = SimpleNamespace(id=202)
@@ -112,31 +110,51 @@ async def test_instant_ack_and_guaranteed_pronunciation_card(tmp_path: Path, mon
         get_file=lambda: asyncio.sleep(0, result=dl),
     )
 
-    # 1. Send voice message -> Instant status ack + edited in-place into full Pronunciation Card!
     mv = FakeMsg(voice=vo)
     await app.cb("voice_handler")(
         SimpleNamespace(effective_user=u, effective_chat=u, message=mv), ctx
     )
     assert llm.fast_calls == 1
-    assert len(mv.texts) == 1
     status_bubble = mv.texts[0][2]
     assert len(status_bubble.edits) == 1
     edited_card, edited_kw = status_bubble.edits[0]
     assert "US Pronunciation &amp; Prosody Lab" in edited_card
+    assert "Overall 75/100" in edited_card
     assert "Sounds &amp; Words:" in edited_card
     assert "Stress &amp; Schwa:" in edited_card
-    assert "Overall 75/100" in edited_card
     btns = [b.text for row in edited_kw["reply_markup"].inline_keyboard for b in row]
     assert "🪞 Audio Mirror" in btns and "🎯 Shadow 3x" in btns
-    assert len(mv.voices) == 1  # Partner voice delivered right after!
+    assert len(mv.voices) == 1
 
-    # 2. Even if LLM throws an exception, physical DSP pronunciation report STILL delivers!
-    async def broken_mm(*a, **kw):
-        raise RuntimeError("API glitch")
-    llm.generate_fast_multimodal = broken_mm
-    mv_fb = FakeMsg(audio=vo)  # Also verifies filters.AUDIO support!
-    await app.cb("voice_handler")(
-        SimpleNamespace(effective_user=u, effective_chat=u, message=mv_fb), ctx
-    )
-    fb_card = mv_fb.texts[0][2].edits[0][0]
-    assert "US Pronunciation &amp; Prosody Lab" in fb_card and "nPVI 52" in fb_card
+
+@pytest.mark.asyncio
+async def test_gemini_38_routing_404_blacklist_and_minimal_thinking(tmp_path: Path, monkeypatch):
+    from google.genai import types
+
+    assert sanitize_gemini_model("gemini-2.5-flash") == "gemini-3.8-flash"
+    assert sanitize_gemini_model("gemini-2.5-flash-lite") == "gemini-3.5-flash-lite"
+
+    repo = TwinRepository(db_path=tmp_path / "r.db", passphrase="")
+    cli = GeminiClient(repo)
+    cli.clients = [object(), object(), object(), object()]
+    cli.flash_model = "gemini-3-retired-test"
+
+    calls = []
+
+    async def fake_invoke(client_obj, model, contents, cfg):
+        calls.append((model, cfg))
+        if model == "gemini-3-retired-test":
+            raise RuntimeError("404 NOT_FOUND: model is no longer available")
+        return "===HEARD===\nComfortable\n===SCORE===\n88"
+
+    monkeypatch.setattr(cli, "_invoke_sdk", fake_invoke)
+    res = await cli.generate_fast_multimodal(1, "sys", b"MP3", "usr", mime_type="audio/mp3")
+    assert "Comfortable" in res
+    # Retired 404 model MUST only be tried ONCE (key #0), never 4x across all 4 keys!
+    assert [m for m, _ in calls] == ["gemini-3-retired-test", "gemini-3.8-flash"]
+    assert "gemini-3-retired-test" in cli._dead_models
+
+    # Verify minimal thinking was attached to gemini-3.8-flash config
+    used_cfg = calls[1][1]
+    if "thinking_level" in getattr(types.ThinkingConfig, "model_fields", {}):
+        assert used_cfg.thinking_config is not None

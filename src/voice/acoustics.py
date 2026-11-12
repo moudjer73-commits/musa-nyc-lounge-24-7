@@ -302,3 +302,24 @@ def analyze_pcm_samples(pcm: np.ndarray, word_count: int = 0) -> AcousticMetrics
 def analyze_voice_bytes(audio_bytes: bytes, word_count: int = 0) -> AcousticMetrics:
     pcm = _decode_pcm16(audio_bytes)
     return AcousticMetrics() if pcm is None else analyze_pcm_samples(pcm, word_count=word_count)
+
+
+def transcode_for_gemini(audio_bytes: bytes, mime_type: str = "audio/ogg") -> tuple[bytes, str]:
+    if not audio_bytes or not shutil.which("ffmpeg"):
+        return audio_bytes, mime_type
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                "-i", "pipe:0", "-vn", "-ac", "1", "-ar", "16000",
+                "-b:a", "32k", "-f", "mp3", "pipe:1",
+            ],
+            input=audio_bytes,
+            capture_output=True,
+            timeout=5,
+        )
+        if proc.returncode == 0 and len(proc.stdout) > 256:
+            return proc.stdout, "audio/mp3"
+    except Exception:
+        pass
+    return audio_bytes, mime_type
