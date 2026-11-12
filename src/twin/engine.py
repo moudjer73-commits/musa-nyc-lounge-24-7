@@ -971,27 +971,34 @@ class EchoTwinEngine:
 
     # ================= PILLAR 2: GENERATIVE LEXICAL FRAMES & PUSHED OUTPUT =================
     def start_frame_challenge(self, user_id: int) -> dict:
-        u = self.repo.get_user(user_id)
-        angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
+        u = dict(self.repo.get_user(user_id))
+        angle = u.get("angle") if u.get("angle") in ANGLE_META else "casual_sharp"
         due = self.repo.due_vault_phrases(user_id, 2)
         if due:
-            ph = due[0]["phrase"]
-            frame_lbl, pat = derive_frame_pattern(ph)
-            item = {
-                "angle": angle,
-                "vault_phrase": ph,
-                "frame": frame_lbl,
-                "regex": pat,
-                "example": due[0].get("context_example") or f"In practice, {ph} really shapes the outcome.",
-                "why": "Active Recall from your personal Vault—use it flexibly in a fresh sentence!",
-                "prompt": f"Respond to {ANGLE_META[angle]['name']} in 2–3 spoken sentences on any current project or idea, weaving in \"{ph}\" naturally.",
-            }
-        else:
-            same = [x for x in SPOKEN_FRAME_BANK if x["angle"] == angle] or SPOKEN_FRAME_BANK
-            chosen = random.choice(same)
-            item = dict(chosen, vault_phrase="")
-        self.repo.set_active_studio(user_id, "frame_push", json.dumps(item))
-        return item
+            d0 = dict(due[0])
+            ph = d0.get("phrase", "")
+            if ph:
+                frame_lbl, pat = derive_frame_pattern(ph)
+                ctx_ex = (
+                    d0.get("context_example")
+                    or d0.get("context")
+                    or f"In practice, {ph} really shapes the outcome."
+                )
+                item = {
+                    "angle": angle,
+                    "vault_phrase": ph,
+                    "frame": frame_lbl,
+                    "regex": pat,
+                    "example": ctx_ex,
+                    "why": "Active Recall from your personal Vault—use it flexibly in a fresh sentence!",
+                    "prompt": f"Respond to {ANGLE_META[angle]['name']} in 2–3 spoken sentences on any current project or idea, weaving in \"{ph}\" naturally.",
+                }
+                self.repo.set_active_studio(user_id, "frame_push", json.dumps(item))
+                return item
+        same = [x for x in SPOKEN_FRAME_BANK if x["angle"] == angle] or SPOKEN_FRAME_BANK
+        chosen = dict(random.choice(same), vault_phrase="")
+        self.repo.set_active_studio(user_id, "frame_push", json.dumps(chosen))
+        return chosen
 
     async def evaluate_frame_response(
         self,
@@ -1275,21 +1282,31 @@ class EchoTwinEngine:
 
     # ================= BONUS: PERSONALIZED HABIT REMEDIAL SYNTHESIZER =================
     async def build_remedial_drill(self, user_id: int) -> tuple[str, str, str]:
-        habits = self.repo.top_habits(user_id, limit=3)
-        if not habits:
-            return self.pick_prosody_drill(user_id, "linking")
-        h_desc = "; ".join(
-            f"{HABIT_LABELS.get(h['habit_key'], h['habit_key'])} (e.g. {h['last_example']})"
-            for h in habits
-        )
-        sys_p = (
-            "Create ONE natural, plain 12-18 word spoken American sentence that simultaneously "
-            "trains the learner's recurring weak spots.\n" + SPOKEN_US_DNA + "\n"
-            "Return plain tags:\n===SENTENCE===\n[Plain spoken US sentence]\n"
-            "===MAP===\n[US prosodic map with ˈCAPS, /ə/, ‿, [ɾ], [t̚], ↘]\n"
-            "===FOCUS===\n[1-line articulatory & grammatical focus note]"
-        )
         try:
+            habits = self.repo.top_habits(user_id, limit=3)
+            if not habits:
+                return self.pick_prosody_drill(user_id, "linking")
+            parts: list[str] = []
+            for h in habits:
+                hd = dict(h)
+                hk = hd.get("habit_key", "")
+                lbl = hd.get("label") or HABIT_LABELS.get(hk, hk or "US Prosody")
+                ex = (
+                    hd.get("last_example")
+                    or hd.get("example")
+                    or hd.get("last_fix")
+                    or hd.get("fix")
+                    or ""
+                )
+                parts.append(f"{lbl} ({ex[:50]})" if ex else lbl)
+            h_desc = "; ".join(parts)
+            sys_p = (
+                "Create ONE natural, plain 12-18 word spoken American sentence that simultaneously "
+                "trains the learner's recurring weak spots.\n" + SPOKEN_US_DNA + "\n"
+                "Return plain tags:\n===SENTENCE===\n[Plain spoken US sentence]\n"
+                "===MAP===\n[US prosodic map with ˈCAPS, /ə/, ‿, [ɾ], [t̚], ↘]\n"
+                "===FOCUS===\n[1-line articulatory & grammatical focus note]"
+            )
             raw = await self.llm.generate_text(
                 user_id, sys_p, f"Top recurring habits: {h_desc}", temperature=0.35, deep_chat=False
             )
@@ -1297,7 +1314,7 @@ class EchoTwinEngine:
             sent = scrub_contrived_english(kv["sentence"])
             if sent and len(sent.split()) >= 5:
                 mp = kv["map"] or sent
-                fc = kv["focus"] or f"Targets: {h_desc[:100]}"
+                fc = kv["focus"] or f"Targets: {h_desc[:95]}"
                 self.repo.save_lab_baseline(user_id, sent, sent, "", arm_retake=True)
                 return sent, mp, fc
         except Exception:

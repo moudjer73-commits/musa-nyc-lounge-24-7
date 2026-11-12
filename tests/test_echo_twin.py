@@ -235,3 +235,32 @@ async def test_gemini_38_routing_and_real_container_init(tmp_path: Path, monkeyp
     app = Application.builder().token("123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw").concurrent_updates(True).build()
     register_handlers(app, c)
     c.flush()
+
+
+@pytest.mark.asyncio
+async def test_all_studio_buttons_habit_cure_and_expired_callback(tmp_path: Path, monkeypatch):
+    from src.bot import handlers as h_mod
+
+    monkeypatch.setattr(h_mod, "synthesize_ear_clip", lambda t, angle="casual_sharp", slow=False: asyncio.sleep(0, result=b"EAR_MP3"))
+    monkeypatch.setattr(h_mod, "synthesize_shadow_drill", lambda t: asyncio.sleep(0, result=b"CURE_MP3"))
+
+    llm = StubV70LLM()
+    c = TwinContainer(db_path=tmp_path / "cure.db", passphrase="", llm=llm)
+    app = FakeApp()
+    register_handlers(app, c)
+    u = SimpleNamespace(id=404)
+    ctx = SimpleNamespace(args=[], bot=None)
+
+    # Seed real recurring habits in DB so build_remedial_drill exercises top_habits dict keys!
+    c.repo.record_habit_hit(404, "word_stress", "participate", "stress 2nd syllable")
+    c.repo.record_habit_hit(404, "us_rhythm_linking", "hold off on", "link C-V smoothly")
+
+    # Simulate an EXPIRED Telegram callback query (raises RuntimeError/BadRequest on q.answer)
+    async def expired_answer(*a, **k):
+        raise RuntimeError("BadRequest: Query is too old and response timeout expired")
+
+    for act in ("remedial", "ear", "ear_slow", "ear_reveal", "frame", "prag", "into", "mono", "spark", "pulse", "exit"):
+        qm = FakeMsg()
+        q = SimpleNamespace(data=f"studio:{act}", message=qm, answer=expired_answer)
+        await app.cb("studio_cb")(SimpleNamespace(effective_user=u, callback_query=q), ctx)
+        assert len(qm.texts) + len(qm.voices) >= 1, f"Button studio:{act} produced no output!"

@@ -46,7 +46,7 @@ def resolve_gemini_keys() -> list[str]:
 
 
 def gemini_model_chain(prefer_deep_chat: bool = False) -> list[str]:
-    raw = _env("GEMINI_MODEL_CHAIN", "gemini-3.8-flash,gemini-3.5-flash-lite,gemini-3.5-flash-lite,gemini-3.8-flash")
+    raw = _env("GEMINI_MODEL_CHAIN", "gemini-3.8-flash,gemini-3.8-flash,gemini-3.8-flash,gemini-3.8-flash")
     chain: list[str] = []
     for part in raw.split(","):
         m = part.strip()
@@ -66,7 +66,7 @@ def sanitize_gemini_model(name: str) -> str:
     if not s:
         return "gemini-3.8-flash"
     if "lite" in s and s.startswith(("gemini-2.", "gemini-1.")):
-        return "gemini-3.5-flash-lite"
+        return "gemini-3.8-flash"
     if s.startswith(("gemini-2.", "gemini-1.")):
         return "gemini-3.8-flash"
     return s

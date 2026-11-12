@@ -373,15 +373,71 @@ async def _react_quietly(message, emoji: str) -> None:
             pass
 
 
+async def _safe_q_answer(q, text: str = "", show_alert: bool = False) -> None:
+    try:
+        if text:
+            await _safe_q_answer(q, text, show_alert=show_alert)
+        else:
+            await _safe_q_answer(q)
+    except Exception as exc:
+        logger.debug("Callback answer skipped (expired/network): %s", exc)
+
+
+async def _safe_send_voice(
+    msg,
+    mp3_bytes: bytes | None,
+    filename: str,
+    caption_html: str = "",
+    reply_markup=None,
+):
+    kb = reply_markup or STUDIO_KB
+    if not mp3_bytes:
+        if caption_html:
+            return await msg.reply_text(
+                caption_html[:4000], parse_mode="HTML", reply_markup=kb
+            )
+        return None
+
+    # إذا كان الوصف طويلاً نرسله نصاً أولاً ثم المقطع الصوتي لتفادي حد 1024 حرفاً في تليجرام
+    if caption_html and len(caption_html) > 940:
+        await msg.reply_text(caption_html[:4000], parse_mode="HTML")
+        caption_html = ""
+
+    kw = {"reply_markup": kb}
+    if caption_html:
+        kw["caption"] = caption_html
+        kw["parse_mode"] = "HTML"
+
+    try:
+        buf = io.BytesIO(mp3_bytes)
+        buf.name = filename
+        return await msg.reply_voice(voice=buf, **kw)
+    except Exception as v_exc:
+        logger.warning("reply_voice fallback to audio/text: %s", v_exc)
+        if hasattr(msg, "reply_audio"):
+            try:
+                buf2 = io.BytesIO(mp3_bytes)
+                buf2.name = filename
+                return await msg.reply_audio(audio=buf2, **kw)
+            except Exception as a_exc:
+                logger.warning("reply_audio fallback to text: %s", a_exc)
+        if caption_html:
+            return await msg.reply_text(
+                caption_html[:4000], parse_mode="HTML", reply_markup=kb
+            )
+        return None
+
+
 async def _edit_or_reply(msg, status_msg, text_html: str, kb: InlineKeyboardMarkup):
+    safe_html = text_html[:4000]
     if status_msg is not None and hasattr(status_msg, "edit_text"):
         try:
             return await status_msg.edit_text(
-                text_html, parse_mode="HTML", reply_markup=kb
+                safe_html, parse_mode="HTML", reply_markup=kb
             )
         except Exception:
             pass
-    return await msg.reply_text(text_html, parse_mode="HTML", reply_markup=kb)
+    return await msg.reply_text(safe_html, parse_mode="HTML", reply_markup=kb)
 
 
 async def _deliver_coach_card(
@@ -484,17 +540,13 @@ async def _send_mirror_reply(
             reply_markup=STUDIO_KB,
         )
         return False
-    buf = io.BytesIO(mirror_mp3)
-    buf.name = "audio_mirror.mp3"
     cap = (
         "🪞 <b>Audio Mirror (Your Voice ➔ Native US)</b>\n"
         "<i>1️⃣ Your normalized take ➔ 2️⃣ General American target</i>\n"
         f"🇺🇸 <code>{html.escape(target_txt[:220])}</code>\n"
         "🎙️ <i>Record a retake right after to score your Before/After delta!</i>"
     )
-    await reply_target.reply_voice(
-        voice=buf, caption=cap, parse_mode="HTML", reply_markup=STUDIO_KB
-    )
+    await _safe_send_voice(reply_target, mirror_mp3, "audio_mirror.mp3", cap, STUDIO_KB)
     return True
 
 
@@ -531,11 +583,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             "(watch eroded modals &amp; dropped /h/ or /t/):</i>"
         )
         if mp3:
-            buf = io.BytesIO(mp3)
-            buf.name = "ear_decode.mp3"
-            await reply_msg.reply_voice(
-                voice=buf, caption=cap, parse_mode="HTML", reply_markup=kb
-            )
+            await _safe_send_voice(reply_msg, mp3, "ear_decode.mp3", cap, kb)
         else:
             await reply_msg.reply_text(
                 cap + "\n⚠️ <i>Audio busy—tap 🐢 Slow (-15%) to play clip.</i>",
@@ -632,10 +680,8 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             "🎙️ <i>Listen to the 3 beats, then record this line for an A/B score!</i>"
         )
         if drill_mp3:
-            buf = io.BytesIO(drill_mp3)
-            buf.name = "habit_cure.mp3"
-            await reply_msg.reply_voice(
-                voice=buf, caption=cap, parse_mode="HTML", reply_markup=voice_lab_inline_kb(cid)
+            await _safe_send_voice(
+                reply_msg, drill_mp3, "habit_cure.mp3", cap, voice_lab_inline_kb(cid)
             )
         else:
             await reply_msg.reply_text(
@@ -648,7 +694,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         msg = getattr(update, "effective_message", None)
         if msg:
             is_q = isinstance(err, (QuotaExceededError, LLMUnavailableError))
-            txt = str(err) if is_q else "Hit a brief snag—send that again."
+            txt = str(err) if is_q else f"Hit a brief snag ({type(err).__name__})—tap or send again."
             try:
                 await msg.reply_text(txt, reply_markup=STUDIO_KB)
             except Exception:
@@ -912,7 +958,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         if data == "lab:toggle":
             cur = bool(c.repo.get_lab_state(uid).get("lab_mode"))
             now_on = c.repo.set_lab_mode(uid, not cur)
-            await q.answer("Pure Prosody Lab: ON" if now_on else "Single-Call Hybrid: ON")
+            await _safe_q_answer(q, "Pure Prosody Lab: ON" if now_on else "Single-Call Hybrid: ON")
             try:
                 await q.edit_message_text(
                     _lab_status_text(now_on),
@@ -923,13 +969,13 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                 pass
             return
         if data == "lab:mirror":
-            await q.answer("Building side-by-side Audio Mirror...")
+            await _safe_q_answer(q, "Building side-by-side Audio Mirror...")
             await _send_mirror_reply(q.message, c, uid)
             return
         if data.startswith("lab:drill:"):
             cat = data.split(":", 2)[2]
             c.repo.clear_active_studio(uid)
-            await q.answer("Generating 3-beat US prosody drill...")
+            await _safe_q_answer(q, "Generating 3-beat US prosody drill...")
             sentence, p_map, focus_note = c.engine.pick_prosody_drill(uid, cat)
             cid = _stash_card(sentence, sentence)
             drill_mp3 = await synthesize_shadow_drill(sentence)
@@ -941,10 +987,8 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                 "🎙️ <i>Listen to the 3 beats, then record this line to score your rhythm!</i>"
             )
             if drill_mp3:
-                buf = io.BytesIO(drill_mp3)
-                buf.name = "lab_drill.mp3"
-                await q.message.reply_voice(
-                    voice=buf, caption=cap, parse_mode="HTML", reply_markup=voice_lab_inline_kb(cid)
+                await _safe_send_voice(
+                    q.message, drill_mp3, "lab_drill.mp3", cap, voice_lab_inline_kb(cid)
                 )
             else:
                 await q.message.reply_text(
@@ -959,15 +1003,15 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         act = (q.data or "").split(":", 1)[1]
 
         if act == "ear":
-            await q.answer("Playing fast connected US clip...")
+            await _safe_q_answer(q, "Playing fast connected US clip...")
             await _launch_ear_studio(q.message, uid)
         elif act == "ear_slow":
             st = c.repo.get_studio_state(uid)
             if st.get("active_mode") != "ear_decode" or not st.get("mode_payload"):
-                await q.answer("Launching a fresh clip...")
+                await _safe_q_answer(q, "Launching a fresh clip...")
                 await _launch_ear_studio(q.message, uid)
                 return
-            await q.answer("Generating -15% slow replay...")
+            await _safe_q_answer(q, "Generating -15% slow replay...")
             item = json.loads(st["mode_payload"])
             mp3 = await synthesize_ear_clip(item["full"], angle=item["angle"], slow=True)
             if mp3:
@@ -981,9 +1025,9 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         elif act == "ear_reveal":
             st = c.repo.get_studio_state(uid)
             if not st.get("mode_payload"):
-                await q.answer("No active clip.")
+                await _safe_q_answer(q, "No active clip.")
                 return
-            await q.answer("Revealed!")
+            await _safe_q_answer(q, "Revealed!")
             item = json.loads(st["mode_payload"])
             c.repo.clear_active_studio(uid)
             cid = _stash_card(item["full"], item["full"])
@@ -999,45 +1043,45 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                 reply_markup=studio_result_kb(cid, "studio:ear", "👂 Next Ear Clip"),
             )
         elif act == "frame":
-            await q.answer("Loading spoken lexical frame...")
+            await _safe_q_answer(q, "Loading spoken lexical frame...")
             await _launch_frame_studio(q.message, uid)
         elif act == "prag":
-            await q.answer("Loading pragmatic scenario...")
+            await _safe_q_answer(q, "Loading pragmatic scenario...")
             await _launch_prag_studio(q.message, uid)
         elif act == "into":
-            await q.answer("Loading subtext intonation drill...")
+            await _safe_q_answer(q, "Loading subtext intonation drill...")
             await _launch_into_studio(q.message, uid)
         elif act == "into_retry":
-            await q.answer("Re-armed! Record your voice take.")
+            await _safe_q_answer(q, "Re-armed! Record your voice take.")
             await _launch_into_studio(q.message, uid, item=_LAST_INTO.get(uid))
         elif act == "mono":
-            await q.answer("Loading 60s discourse prompt...")
+            await _safe_q_answer(q, "Loading 60s discourse prompt...")
             await _launch_mono_studio(q.message, uid)
         elif act == "remedial":
-            await q.answer("Synthesizing drill from your Habit Radar...")
+            await _safe_q_answer(q, "Synthesizing drill from your Habit Radar...")
             c.repo.clear_active_studio(uid)
             await _launch_remedial_drill(q.message, uid)
         elif act == "exit":
             c.repo.clear_active_studio(uid)
-            await q.answer("Exited studio.")
+            await _safe_q_answer(q, "Exited studio.")
             u = c.repo.get_user(uid)
             meta = ANGLE_META.get(u["angle"], ANGLE_META["casual_sharp"])
             await _send_safe(
                 q.message, f"✅ Back in live conversation with {meta['name']} ({meta['badge']})."
             )
         elif act == "spark":
-            await q.answer("Launching live scenario...")
+            await _safe_q_answer(q, "Launching live scenario...")
             await _send_spark_to(q.message, uid)
         elif act == "mirror":
-            await q.answer("Stitching Audio Mirror...")
+            await _safe_q_answer(q, "Stitching Audio Mirror...")
             await _send_mirror_reply(q.message, c, uid)
         elif act == "shadow":
             st = c.repo.get_lab_state(uid)
             tgt = st.get("recast_text") or st.get("target_text") or c.repo.last_learner_turn(uid)
             if not tgt:
-                await q.answer("Send a voice note or message first!", show_alert=True)
+                await _safe_q_answer(q, "Send a voice note or message first!", show_alert=True)
                 return
-            await q.answer("Building 3-beat US shadow drill...")
+            await _safe_q_answer(q, "Building 3-beat US shadow drill...")
             c.repo.arm_lab_retake(uid, tgt)
             mp3 = await synthesize_shadow_drill(tgt)
             if mp3:
@@ -1052,14 +1096,14 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                     voice=buf, caption=cap, parse_mode="HTML", reply_markup=STUDIO_KB
                 )
         elif act == "pulse":
-            await q.answer()
+            await _safe_q_answer(q)
             await _send_safe(q.message, await _build_pulse_text(uid))
 
     async def partner_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
         if not q or not update.effective_user:
             return
-        await q.answer()
+        await _safe_q_answer(q)
         uid = update.effective_user.id
         c.repo.clear_active_studio(uid)
         target = (q.data or "").split(":", 1)[1]
@@ -1083,7 +1127,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             return
         parts = (q.data or "").split(":", 2)
         if len(parts) < 3:
-            await q.answer()
+            await _safe_q_answer(q)
             return
         _, action, cid = parts
         uid = update.effective_user.id
@@ -1094,7 +1138,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
 
         if action == "save":
             c.repo.save_vault_phrase(uid, chunk, native_line[:160])
-            await q.answer(f"Saved frame: {chunk}")
+            await _safe_q_answer(q, f"Saved frame: {chunk}")
             has_voice = getattr(q.message, "voice", None) is not None
             is_vl = ("Pronunciation" in msg_body) or ("US Map:" in msg_body)
             n_kb = voice_lab_inline_kb(cid, True) if is_vl else coach_inline_kb(cid, not has_voice, True)
@@ -1103,11 +1147,11 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             except Exception:
                 pass
         elif action == "mirror":
-            await q.answer("Stitching Your Voice ➔ Native US...")
+            await _safe_q_answer(q, "Stitching Your Voice ➔ Native US...")
             await _send_mirror_reply(q.message, c, uid, cid=cid, custom_text=native_line or chunk)
         elif action == "retake":
             c.repo.arm_lab_retake(uid, native_line or chunk)
-            await q.answer("Retake armed! Record your voice note now.")
+            await _safe_q_answer(q, "Retake armed! Record your voice note now.")
             await q.message.reply_text(
                 "🎙️ <b>A/B Retake Armed</b>\n"
                 "Record this line in your natural voice (focus on linking &amp; schwa):\n"
@@ -1116,11 +1160,11 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                 reply_markup=STUDIO_KB,
             )
         elif action == "reg":
-            await q.answer("Checking real US registers...")
+            await _safe_q_answer(q, "Checking real US registers...")
             regs = await c.engine.explain_registers(uid, native_line or chunk)
             await _send_safe(q.message, f"🪜 3 Spoken US Registers:\n{regs}")
         elif action == "drill":
-            await q.answer("Building 3-beat US shadow drill...")
+            await _safe_q_answer(q, "Building 3-beat US shadow drill...")
             c.repo.arm_lab_retake(uid, native_line or chunk)
             drill_mp3 = await synthesize_shadow_drill(chunk or native_line)
             if drill_mp3:
@@ -1139,7 +1183,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
                     "Audio unavailable right now—try again shortly.", reply_markup=STUDIO_KB
                 )
         elif action == "tts":
-            await q.answer("Generating US audio...")
+            await _safe_q_answer(q, "Generating US audio...")
             mp3 = await synthesize_twin_voice(native_line or chunk)
             if mp3:
                 buf = io.BytesIO(mp3)
@@ -1154,7 +1198,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         q = update.callback_query
         if not q or not update.effective_user:
             return
-        await q.answer()
+        await _safe_q_answer(q)
         uid = update.effective_user.id
         act = (q.data or "").split(":", 1)[1]
         if act == "chat":
@@ -1169,7 +1213,7 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             )
         elif act == "all":
             erased = await asyncio.to_thread(c.repo.purge_user, uid)
-            c.repo.clear_active_studio(uid)
+            c.repo.delete_studio_state(uid)
             if c.passphrase:
                 await asyncio.to_thread(
                     export_encrypted_snapshot, c.db_path, c.snapshot_path, c.passphrase, True

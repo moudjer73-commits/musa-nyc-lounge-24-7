@@ -7,6 +7,10 @@ from src.db.engine import db_session, export_encrypted_snapshot
 ANGLES = ("casual_sharp", "exec_clock", "seminar_skeptic")
 
 HABIT_LABELS: dict[str, str] = {
+    "discourse_staging": "Spoken discourse framing",
+    "contrastive_pitch": "Contrastive focus & fall-rise tone",
+    "pragmatic_bluntness": "Pragmatic hedging & diplomacy",
+    "weak_form_erosion": "Weak-form & schwa erosion",
     "irregular_past": "Irregular past verbs",
     "uncountable_noun": "Uncountable nouns",
     "tense_aspect": "US tense & time markers",
@@ -333,6 +337,12 @@ class TwinRepository:
                 "updated_at = excluded.updated_at",
                 (user_id, mode, payload, time.time()),
             )
+        self._sync()
+
+    def delete_studio_state(self, user_id: int) -> None:
+        with db_session(self.db_path) as conn:
+            self._ensure_studio_table(conn)
+            conn.execute("DELETE FROM twin_studio_state WHERE user_id = ?", (user_id,))
         self._sync()
 
     def clear_active_studio(self, user_id: int) -> None:
