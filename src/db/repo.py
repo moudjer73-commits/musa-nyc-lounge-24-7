@@ -303,6 +303,41 @@ class TwinRepository:
             conn.execute("UPDATE twin_lab_state SET pending_retake = 0, updated_at = ? WHERE user_id = ?", (time.time(), user_id))
         self._sync()
 
+    def _ensure_studio_table(self, conn) -> None:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS twin_studio_state ("
+            "user_id INTEGER PRIMARY KEY, "
+            "active_mode TEXT NOT NULL DEFAULT '', "
+            "mode_payload TEXT NOT NULL DEFAULT '', "
+            "updated_at REAL NOT NULL)"
+        )
+
+    def get_studio_state(self, user_id: int) -> dict:
+        with db_session(self.db_path) as conn:
+            self._ensure_studio_table(conn)
+            row = conn.execute(
+                "SELECT * FROM twin_studio_state WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if row:
+                return dict(row)
+        return {"user_id": user_id, "active_mode": "", "mode_payload": ""}
+
+    def set_active_studio(self, user_id: int, mode: str, payload: str = "") -> None:
+        with db_session(self.db_path) as conn:
+            self._ensure_studio_table(conn)
+            conn.execute(
+                "INSERT INTO twin_studio_state (user_id, active_mode, mode_payload, updated_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET "
+                "active_mode = excluded.active_mode, "
+                "mode_payload = excluded.mode_payload, "
+                "updated_at = excluded.updated_at",
+                (user_id, mode, payload, time.time()),
+            )
+        self._sync()
+
+    def clear_active_studio(self, user_id: int) -> None:
+        self.set_active_studio(user_id, "", "")
+
     def purge_user(self, user_id: int) -> bool:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         deleted = 0

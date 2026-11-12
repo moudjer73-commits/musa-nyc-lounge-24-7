@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     llm_calls INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, usage_date)
 );
+
+CREATE TABLE IF NOT EXISTS twin_studio_state (
+    user_id INTEGER PRIMARY KEY,
+    active_mode TEXT NOT NULL DEFAULT '',
+    mode_payload TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL
+);
 """
 
 _SNAPSHOT_V2_MAGIC = b"SELSNAP2"

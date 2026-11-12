@@ -230,3 +230,11 @@ async def synthesize_audio_mirror(
     if not native_mp3:
         return None
     return await merge_mirror_clips(learner_bytes, native_mp3)
+
+
+async def synthesize_ear_clip(
+    text: str, angle: str = "casual_sharp", slow: bool = False
+) -> bytes | None:
+    voice, _, pitch = PARTNER_VOICES.get(angle, PARTNER_VOICES["casual_sharp"])
+    rate = "-15%" if slow else "+14%"
+    return await synthesize_mp3(text, voice=voice, rate=rate, pitch=pitch)

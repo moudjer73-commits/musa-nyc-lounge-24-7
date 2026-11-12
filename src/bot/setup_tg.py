@@ -17,13 +17,17 @@ FULL_DESCRIPTION = (
 )
 COMMANDS = [
     {"command": "start", "description": "Open studio & refresh keyboard"},
+    {"command": "studios", "description": "5-Pillar C1/C2 US Linguistics Studios"},
     {"command": "lab", "description": "US Prosody Lab, Audio Mirror & drills"},
-    {"command": "studios", "description": "Open US speaking & listening studios"},
-    {"command": "mirror", "description": "Hear your last voice side-by-side with US"},
-    {"command": "shadow", "description": "3-beat connected US shadowing drill"},
+    {"command": "ear", "description": "Fast US speech perceptual ear decoder"},
+    {"command": "frame", "description": "Spoken US lexical & grammar frame push"},
+    {"command": "pragmatics", "description": "Diplomatic pushback & hedging studio"},
+    {"command": "tone", "description": "Contrastive stress & Fall-Rise subtext"},
+    {"command": "monologue", "description": "60s discourse & 3-thirds stamina lab"},
+    {"command": "mirror", "description": "Hear your voice stitched next to US"},
     {"command": "partner", "description": "Switch partner (Malik, Claire, Vance)"},
-    {"command": "vault", "description": "Habit radar, saved chunks & pulse"},
-    {"command": "reset", "description": "Fresh topic or erase my history"},
+    {"command": "vault", "description": "Habit radar, saved frames & pulse"},
+    {"command": "reset", "description": "Fresh chat or erase stored history"},
 ]
 _REFRESHED_CHATS: set[int] = set()
 

@@ -323,3 +323,83 @@ def transcode_for_gemini(audio_bytes: bytes, mime_type: str = "audio/ogg") -> tu
     except Exception:
         pass
     return audio_bytes, mime_type
+
+
+@dataclass
+class MonologueArc:
+    overall: AcousticMetrics
+    open_third: AcousticMetrics
+    mid_third: AcousticMetrics
+    close_third: AcousticMetrics
+    stamina_flag: str = "steady_stamina"
+
+    def arc_badge(self) -> str:
+        s1 = self.open_third.prosody_score
+        s2 = self.mid_third.prosody_score
+        s3 = self.close_third.prosody_score
+        if s1 == 0 or s3 == 0:
+            return self.overall.lab_meter_line()
+        tag = (
+            "⚠️ late fatigue"
+            if ("decay" in self.stamina_flag or "spike" in self.stamina_flag)
+            else "✅ steady stamina"
+        )
+        return (
+            f"Stamina {s1}➔{s2}➔{s3}/100 ({tag}) · "
+            f"nPVI {self.overall.npvi:.0f} · {self.overall.articulation_wpm:.0f} WPM"
+        )
+
+    def thirds_breakdown(self) -> str:
+        o, m, c = self.open_third, self.mid_third, self.close_third
+        if o.voiced_s < 0.3 or c.voiced_s < 0.3:
+            return f"• Clip Meter: {self.overall.lab_meter_line()}"
+        return (
+            f"• Open  1/3: Score {o.prosody_score} · nPVI {o.npvi:.0f} · Pauses {o.pause_ratio*100:.0f}%\n"
+            f"• Mid   1/3: Score {m.prosody_score} · nPVI {m.npvi:.0f} · Pauses {m.pause_ratio*100:.0f}%\n"
+            f"• Close 1/3: Score {c.prosody_score} · nPVI {c.npvi:.0f} · Pauses {c.pause_ratio*100:.0f}% ({c.boundary_tone})"
+        )
+
+    def to_prompt_summary(self) -> str:
+        return (
+            f"{self.overall.to_prompt_summary()}\n"
+            f"STAMINA THIRDS: Open(score={self.open_third.prosody_score}, nPVI={self.open_third.npvi:.0f}, "
+            f"pauses={self.open_third.pause_ratio*100:.0f}%) -> "
+            f"Mid(score={self.mid_third.prosody_score}, nPVI={self.mid_third.npvi:.0f}, "
+            f"pauses={self.mid_third.pause_ratio*100:.0f}%) -> "
+            f"Close(score={self.close_third.prosody_score}, nPVI={self.close_third.npvi:.0f}, "
+            f"pauses={self.close_third.pause_ratio*100:.0f}%, end={self.close_third.boundary_tone}) | "
+            f"stamina_diagnosis={self.stamina_flag}"
+        )
+
+
+def analyze_monologue_pcm(pcm: np.ndarray, word_count: int = 0) -> MonologueArc:
+    overall = analyze_pcm_samples(pcm, word_count=word_count)
+    if len(pcm) < SAMPLE_RATE * 3:
+        e = AcousticMetrics()
+        return MonologueArc(overall, e, e, e, "short_clip")
+
+    third = len(pcm) // 3
+    wc3 = max(1, word_count // 3) if word_count >= 3 else 0
+    t1 = analyze_pcm_samples(pcm[:third], wc3)
+    t2 = analyze_pcm_samples(pcm[third : 2 * third], wc3)
+    t3 = analyze_pcm_samples(pcm[2 * third :], wc3)
+
+    flags: list[str] = []
+    if t1.npvi >= 42 and t3.npvi > 0 and (t1.npvi - t3.npvi) >= 12:
+        flags.append("final_third_rhythm_decay")
+    if (t3.pause_ratio - t1.pause_ratio) >= 0.14 or t3.mid_pauses >= t1.mid_pauses + 2:
+        flags.append("late_hesitation_spike")
+    if t1.pitch_span_st >= 4.0 and 0 < t3.pitch_span_st <= 2.4:
+        flags.append("closing_pitch_flattening")
+
+    return MonologueArc(
+        overall, t1, t2, t3, "; ".join(flags) if flags else "steady_stamina"
+    )
+
+
+def analyze_monologue_bytes(audio_bytes: bytes, word_count: int = 0) -> MonologueArc:
+    pcm = _decode_pcm16(audio_bytes)
+    if pcm is None:
+        e = AcousticMetrics()
+        return MonologueArc(e, e, e, e, "unavailable")
+    return analyze_monologue_pcm(pcm, word_count=word_count)

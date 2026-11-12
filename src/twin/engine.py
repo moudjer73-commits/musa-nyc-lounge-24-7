@@ -1,4 +1,4 @@
-import asyncio, random, re
+import asyncio, json, random, re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pydantic import BaseModel
@@ -13,8 +13,19 @@ from src.twin.corpus_guard import (
     has_contrived_buzz,
     scrub_contrived_english,
 )
+from src.twin.linguistics_bank import (
+    EAR_DECODER_BANK,
+    INTONATION_SUBTEXT_BANK,
+    MONOLOGUE_PROMPTS,
+    PRAGMATIC_SCENARIOS,
+    SPOKEN_FRAME_BANK,
+    derive_frame_pattern,
+    normalize_ear_tokens,
+)
 from src.voice.acoustics import (
     AcousticMetrics,
+    MonologueArc,
+    analyze_monologue_bytes,
     analyze_voice_bytes,
     compare_metrics,
     transcode_for_gemini,
@@ -136,14 +147,51 @@ AI_OPENERS_RE = re.compile(
     re.IGNORECASE,
 )
 COACH_SPLIT_RE = re.compile(r"\n*={2,}\s*COACH\s*={2,}\s*\n*", re.IGNORECASE)
-VOICE_HEARD_RE = re.compile(
-    r"={2,}\s*HEARD\s*={2,}\s*(.*?)\s*={2,}\s*REPLY\s*={2,}\s*(.*)",
-    re.IGNORECASE | re.DOTALL,
-)
 PURE_GREETING_RE = re.compile(
-    r"^(?:hi|hey|hello|yo|hey there|hi there|good morning|good evening|thanks|thank you|great thank you|ok|okay|cool|nice)[!.?,\s]*$",
+    r"^(?:hi|hey|hello|yo|hey there|hi there|good morning|good evening|thanks|thank you|ok|okay|cool|nice)[!.?,\s]*$",
     re.IGNORECASE,
 )
+GENERIC_TAG_RE = re.compile(
+    r"(?:^|\n)\s*(?:={2,}\s*)?([A-Z_]{3,16})(?:\s*={2,}|\s*:)\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_field(val: str) -> str:
+    v = (val or "").strip().strip('"“”')
+    return "" if v.upper() in ("", "NONE", "N/A", "FALSE") else v
+
+
+def parse_kv_tags(raw: str, keys: tuple[str, ...]) -> dict[str, str]:
+    out = {k.lower(): "" for k in keys}
+    if not raw or not raw.strip():
+        return out
+    allowed = set(out.keys())
+    parts = GENERIC_TAG_RE.split(raw.strip())
+    if len(parts) < 3:
+        first_k = keys[0].lower()
+        out[first_k] = raw.strip().splitlines()[0][:260]
+        return out
+    for idx in range(1, len(parts) - 1, 2):
+        k = parts[idx].strip().lower()
+        if k in allowed:
+            out[k] = _clean_field(parts[idx + 1])
+    return out
+
+
+def parse_tagged_voice_audit(raw: str) -> dict[str, str]:
+    d = parse_kv_tags(
+        raw,
+        (
+            "HEARD", "REPLY", "SCORE", "HABIT", "MAP", "SOUNDS",
+            "STRESS", "RHYTHM", "PEAK", "GRAMMAR", "RECAST", "VERDICT",
+        ),
+    )
+    if not d["score"]:
+        d["score"] = "78"
+    if not d["habit"]:
+        d["habit"] = "us_rhythm_linking"
+    return d
 
 
 class HybridVoiceTurnOutput(BaseModel):
@@ -231,6 +279,63 @@ class VoiceLabReport:
 
 
 @dataclass
+class EarEvalResult:
+    target_full: str
+    user_heard: str
+    prosodic_map: str
+    erosion_rule: str
+    accuracy_pct: int
+    missed_words: list[str]
+    caught_weak_forms: bool
+    voice_feedback: str = ""
+
+
+@dataclass
+class FrameEvalResult:
+    frame_label: str
+    used_flexibly: bool
+    heard_or_text: str
+    feedback: str
+    native_model: str
+    prosody_note: str = ""
+    vault_advanced: bool = False
+
+
+@dataclass
+class PragmaticEvalResult:
+    move_name: str
+    score: int
+    heard_or_text: str
+    calibration_note: str
+    native_recast: str
+    key_frame: str
+    prosody_note: str = ""
+
+
+@dataclass
+class IntonationEvalResult:
+    target_sentence: str
+    target_intent: str
+    blueprint: str
+    subtext_landed: bool
+    score: int
+    dsp_line: str
+    pitch_feedback: str
+
+
+@dataclass
+class MonologueReport:
+    verbatim_heard: str
+    arc: MonologueArc
+    overall_score: int
+    discourse_feedback: str
+    stamina_feedback: str
+    sounds_feedback: str
+    tight_us_20s: str
+    key_chunk: str
+
+
+@dataclass
 class TurnOutcome:
     segments: list[str]
     full_reply: str
@@ -245,37 +350,48 @@ class TurnOutcome:
 
 def clean_partner_reply(raw: str) -> list[str]:
     cleaned = []
-    for p in raw.split("---"):
+    for p in (raw or "").split("---"):
         s = re.sub(r"\*\*(.*?)\*\*", r"\1", p.strip())
         s = re.sub(r"(?m)^\s*[-*•#]+\s+", "", s)
         s = re.sub(r"\s{2,}", " ", AI_OPENERS_RE.sub("", s).strip())
         s = scrub_contrived_english(s)
         if s:
             cleaned.append(s)
-    return cleaned or ["Sorry, lost my train of thought—say that one more time?"]
-
-
-def _clean_field(val: str) -> str:
-    v = val.strip().strip('"“”')
-    return "" if v.upper() in ("", "NONE", "N/A", "FALSE") else v
+    return cleaned or ["Got it—say that one more time?"]
 
 
 def _word_overlap_ratio(a: str, b: str) -> float:
-    wa = set(re.findall(r"[a-z']+", a.lower()))
-    wb = set(re.findall(r"[a-z']+", b.lower()))
+    wa = set(re.findall(r"[a-z']+", (a or "").lower()))
+    wb = set(re.findall(r"[a-z']+", (b or "").lower()))
     if len(wa) < 2 or len(wb) < 2:
         return 1.0 if (wa and wa == wb) else 0.0
     return len(wa & wb) / float(min(len(wa), len(wb)))
 
 
-def infer_habit_key(learner_text: str, fix_summary: str, rhythm_tip: str, raw_habit: str) -> str:
-    cand = raw_habit.strip().lower().replace(" ", "_")
+def _phrase_matched(phrase: str, text: str) -> bool:
+    low = (text or "").lower()
+    if phrase.lower() in low:
+        return True
+    _, pat = derive_frame_pattern(phrase)
+    if pat and re.search(pat, low):
+        return True
+    toks = [w for w in re.findall(r"[a-z']+", phrase.lower()) if len(w) > 2]
+    if len(toks) >= 3:
+        hits = sum(1 for t in toks if re.search(r"\b" + re.escape(t[:4]), low))
+        return hits >= len(toks) - 1
+    return False
+
+
+def infer_habit_key(
+    learner_text: str, fix_summary: str, rhythm_tip: str, raw_habit: str
+) -> str:
+    cand = (raw_habit or "").strip().lower().replace(" ", "_")
     if cand in HABIT_LABELS:
         return cand
     low_t = learner_text.lower()
-    if re.search(r"\b(?:buyed|goed|wented|teached|thinked|catched|bringed|finded|knowed|selled|telled)\b", low_t):
+    if re.search(r"\b(?:buyed|goed|wented|teached|thinked|catched|bringed|finded)\b", low_t):
         return "irregular_past"
-    if re.search(r"\bmany\s+(?:fruit|fruits|information|advice|furniture|equipment|work|research)\b|\b(?:informations|advices|researches)\b", low_t):
+    if re.search(r"\bmany\s+(?:fruit|fruits|information|advice|equipment|research)\b|\b(?:informations|advices|researches)\b", low_t):
         return "uncountable_noun"
     for _, _, tag in scan_transfers(learner_text):
         if "fr" in tag:
@@ -288,7 +404,7 @@ def infer_habit_key(learner_text: str, fix_summary: str, rhythm_tip: str, raw_ha
 
 
 def parse_reply_and_coach(raw: str) -> tuple[list[str], GhostTwinAnalysis | None]:
-    parts = COACH_SPLIT_RE.split(raw.strip(), maxsplit=1)
+    parts = COACH_SPLIT_RE.split((raw or "").strip(), maxsplit=1)
     segs = clean_partner_reply(parts[0])
     if len(parts) < 2:
         return segs, None
@@ -319,103 +435,29 @@ def parse_reply_and_coach(raw: str) -> tuple[list[str], GhostTwinAnalysis | None
     )
 
 
-def parse_voice_turn_output(raw: str) -> tuple[str, list[str], GhostTwinAnalysis | None]:
-    m = VOICE_HEARD_RE.search(raw.strip())
-    if m:
-        heard = m.group(1).strip().strip('"“”')
-        segs, coach = parse_reply_and_coach(m.group(2))
-        return heard, segs, coach
-    segs, coach = parse_reply_and_coach(raw)
-    return "", segs, coach
-
-
-def _phrase_matched(phrase: str, text: str) -> bool:
-    low = text.lower()
-    if phrase.lower() in low:
-        return True
-    toks = [w for w in re.findall(r"[a-z']+", phrase.lower()) if len(w) > 2]
-    if len(toks) >= 3:
-        return sum(1 for t in toks if re.search(r"\b" + re.escape(t[:5]), low)) >= len(toks) - 1
-    return False
-
-
-
-
-TAG_SPLIT_RE = re.compile(
-    r"(?:^|\n)\s*(?:={2,}\s*)?"
-    r"(HEARD|REPLY|SCORE|HABIT|MAP|SOUNDS|STRESS|RHYTHM|PEAK|GRAMMAR|RECAST|VERDICT)"
-    r"(?:\s*={2,}|\s*:)\s*",
-    re.IGNORECASE,
+PROSODY_AUDITOR_PROMPT = (
+    "You are an elite General American English Phonetics & Suprasegmental Prosody Examiner.\n"
+    "MANDATORY MISSION: Assess pronunciation on 100% of recordings—WHATEVER the speaker says.\n"
+    "1. Anchor `MAP`, `SOUNDS`, `STRESS`, and `RHYTHM` strictly to THEIR exact spoken words in `HEARD`.\n"
+    "2. Check vowels (/ɪ/ vs /iː/, /æ/, /ʌ/, r-colored /ɝ,ɚ/), consonants (US /ɹ/, /θ,ð/, [pʰ,tʰ,kʰ], dark /ɫ/), "
+    "syllable stress (watch French final-syllable shifts & compressed syllables like com-for-ta-ble -> ˈKʌMF-tər-bəl), "
+    "schwa /ə/ reduction, Flap-T [ɾ], Stop-T [t̚], C-V linking ‿, and nuclear intonation (↘ vs ↘↗)."
 )
 
 FAST_TAGGED_AUDIT_FORMAT = (
-    "RETURN PLAIN TEXT WITH THESE EXACT TAGS IN ORDER (1 concise line per tag, max 20 words each, NO JSON):\n"
+    "RETURN PLAIN TEXT WITH THESE EXACT TAGS IN ORDER (1 concise line per tag, NO JSON):\n"
     "===HEARD===\n[Exact words spoken; write [silence] ONLY if zero speech]\n"
     "===REPLY===\n[Natural 1-2 sentence spoken US reply; write NONE in Pure Lab Mode]\n"
     "===SCORE===\n[Integer 20-99 for General American pronunciation]\n"
-    "===HABIT===\n[us_rhythm_linking | word_stress | flap_stop_t | nuclear_intonation | fr_calque | ar_calque | irregular_past | uncountable_noun | stiff_register]\n"
+    "===HABIT===\n[us_rhythm_linking | word_stress | flap_stop_t | nuclear_intonation | weak_form_erosion | fr_calque | ar_calque | stiff_register]\n"
     "===MAP===\n[US map of THEIR exact words: ˈCAPS stress, /ə/ schwa, ‿ link, [ɾ] Flap-T, [t̚] Stop-T, | pause, ↘/↗]\n"
-    "===SOUNDS===\n[Specific words & phonemes heard: `word: [heard] -> [US target]` or confirm clean sounds + 1 polish]\n"
-    "===STRESS===\n[Syllable stress placement & schwa /ə/ reduction on their words]\n"
+    "===SOUNDS===\n[Specific words & phonemes: `word: [heard] -> [US target]` or confirm clean sounds + 1 native polish]\n"
+    "===STRESS===\n[Primary stress placement & schwa /ə/ reduction on their words]\n"
     "===RHYTHM===\n[Connected speech, C-V linking, Flap-T [ɾ], Stop-T [t̚], and intonation tip]\n"
-    "===PEAK===\n[Main stressed peak word in CAPS + ↘/↗]\n"
+    "===PEAK===\n[Main nuclear stressed word in CAPS + ↘/↗]\n"
     "===GRAMMAR===\n[NONE if grammatical, else concise arrow fix]\n"
     "===RECAST===\n[NONE if grammatical, else plain spoken US sentence]\n"
     "===VERDICT===\n[NONE unless A/B retake applies]"
-)
-
-
-def parse_tagged_voice_audit(raw: str) -> dict[str, str]:
-    out = {
-        "heard": "", "reply": "", "score": "78", "habit": "us_rhythm_linking",
-        "map": "", "sounds": "", "stress": "", "rhythm": "",
-        "peak": "", "grammar": "", "recast": "", "verdict": "",
-    }
-    if not raw or not raw.strip():
-        return out
-    parts = TAG_SPLIT_RE.split(raw.strip())
-    if len(parts) < 3:
-        out["heard"] = raw.strip().splitlines()[0][:240]
-        return out
-    for idx in range(1, len(parts) - 1, 2):
-        k = parts[idx].strip().lower()
-        v = _clean_field(parts[idx + 1])
-        if k in out:
-            out[k] = v
-    return out
-
-
-PROSODY_AUDITOR_PROMPT = (
-    "You are an elite General American English Phonetics & Suprasegmental Prosody Examiner.\n"
-    "MANDATORY MISSION: Assess the speaker's pronunciation on 100% of recordings—WHATEVER they say "
-    "(1 single test word, a greeting like 'Hey how are you', a question, reading aloud, or free speech).\n"
-    "CRITICAL SCIENTIFIC RULES:\n"
-    "1. ASSESS THEIR EXACT SPOKEN WORDS: Anchor `prosodic_map`, `word_pronunciations`, `stress_and_schwa`, "
-    "and `prosody_fix` strictly to the actual words in `verbatim_heard`—NEVER skip assessment and NEVER "
-    "replace their sentence before diagnosing how they pronounced their own words!\n"
-    "2. `verbatim_heard`: Exact words heard in the audio (write `[silence]` ONLY if zero speech is audible).\n"
-    "3. `phonetic_score`: 0-100 General American pronunciation accuracy score based on vowel quality, "
-    "consonants, word stress, schwa reduction, and connected speech.\n"
-    "4. `prosodic_map` (REQUIRED, NEVER EMPTY): Render THEIR exact spoken words as a General American "
-    "pronunciation map using ˈCAPS on stressed syllables, /ə/ (or tə, ə, fər, kən) on reduced vowels, "
-    "‿ for linking, [ɾ] for Flap-T, [t̚] for unreleased Stop-T, | for pauses, and ↘/↗ for pitch.\n"
-    "5. `word_pronunciations` (REQUIRED, NEVER EMPTY): Audit specific words & phonemes heard in the clip:\n"
-    "   - Pinpoint any non-native vowel (/ɪ/ vs /iː/, /æ/ vs /ɑ/, /ʌ/, /oʊ/, r-colored /ɝ, ɚ/), consonant "
-    "(American /ɹ/, /θ, ð/, [pʰ, tʰ, kʰ] aspiration, dark /ɫ/, -ed/-s endings, silent letters), or accented word "
-    "using `word: [how it sounded] -> [US target]`.\n"
-    "   - If every single phoneme was pronounced cleanly, explicitly confirm which US sounds landed well AND "
-    "give 1 subtle native articulatory polish on their words.\n"
-    "6. `stress_and_schwa` (REQUIRED, NEVER EMPTY): Evaluate primary syllable stress placement (watch for "
-    "French/Arabic stress shifts or extra syllables like com-for-ta-ble -> ˈKʌMF-tər-bəl) and vowel reduction to /ə/.\n"
-    "7. `prosody_fix` (REQUIRED, NEVER EMPTY): Concrete connected-speech, Flap-T [ɾ], Stop-T [t̚], C-V linking, "
-    "and intonation feedback grounded in both the audio and DSP telemetry.\n"
-    "8. `focus_stress`: Peak stressed word/syllable in CAPS + pitch arrow (e.g. 'ˈHOW's it ˈGO-ing ↘').\n"
-    "9. `shadow_chunk`: The exact 1-9 word phrase from their recording (with grammar fixed ONLY if broken) "
-    "so they can shadow native US pronunciation of what they just said.\n"
-    "10. `grammar_fix` & `native_recast`: Leave `grammar_fix` EMPTY if their English words were grammatical! "
-    "Only fill `grammar_fix` and `native_recast` if there was a real grammar/idiom error.\n"
-    "11. `has_findings`: Set true if ANY phonetic, stress, schwa, or rhythm improvement exists (`phonetic_score < 94`).\n"
-    "12. If A/B RETAKE context matches, fill `retake_verdict` with a concrete 1-sentence comparison."
 )
 
 
@@ -436,14 +478,19 @@ class EchoTwinEngine:
                 hits.append(item["phrase"])
         return hits
 
-    def _apply_habit_tracking(self, uid: int, learner_text: str, coach: GhostTwinAnalysis | None, repair: bool) -> None:
+    def _apply_habit_tracking(
+        self, uid: int, learner_text: str, coach: GhostTwinAnalysis | None, repair: bool
+    ) -> None:
         if repair or PURE_GREETING_RE.match(learner_text.strip()):
             return
         if coach is not None:
-            h_key = infer_habit_key(learner_text, coach.fix_summary, coach.rhythm_tip, coach.habit_key)
+            h_key = infer_habit_key(
+                learner_text, coach.fix_summary, coach.rhythm_tip, coach.habit_key
+            )
             coach.habit_key = h_key
             lbl, hits = self.repo.record_habit_hit(
-                uid, h_key, learner_text[:120], coach.fix_summary or coach.rhythm_tip or coach.native_take[:120]
+                uid, h_key, learner_text[:120],
+                coach.fix_summary or coach.rhythm_tip or coach.native_take[:120],
             )
             if hits >= 2:
                 coach.habit_badge = f"Habit #{hits}: {lbl}"
@@ -456,7 +503,7 @@ class EchoTwinEngine:
     def _context_blocks(self, uid: int) -> tuple[str, str]:
         mem_text, _ = self.repo.get_memory(uid)
         habits = self.repo.top_habits(uid, limit=3)
-        mem_blk = f"\nKNOWN SPEAKER CONTEXT (use naturally only when relevant):\n{mem_text}" if mem_text else ""
+        mem_blk = f"\nKNOWN SPEAKER CONTEXT:\n{mem_text}" if mem_text else ""
         hab_blk = (
             "\nRECURRING HABITS RADAR: "
             + "; ".join(f"{h['habit_key']} ({h['hits']}x)" for h in habits)
@@ -465,7 +512,9 @@ class EchoTwinEngine:
         )
         return mem_blk, hab_blk
 
-    def _sys_prompt(self, uid: int, angle: str, text: str, recent: list[dict], due: list[dict], take2: str, repair: bool) -> str:
+    def _sys_prompt(
+        self, uid: int, angle: str, text: str, recent: list[dict], due: list[dict], take2: str, repair: bool
+    ) -> str:
         meta = ANGLE_META.get(angle, ANGLE_META["casual_sharp"])
         weekday = datetime.now(timezone.utc).strftime("%A")
         wc = len(text.split())
@@ -477,58 +526,72 @@ class EchoTwinEngine:
         r = [
             f"{meta['voice_desc']} (Today is {weekday}.){mem_blk}",
             SPOKEN_US_DNA,
-            "- Match the speaker's length and energy: if they wrote 1-6 words, reply in 1 plain sentence (6-16 words).",
-            "- Plain text only in your character reply (no bold, no bullets, no grammar commentary).",
+            "- Match the speaker's length and energy; plain text only in your character reply.",
         ]
         if repair:
-            r.append("- PRAGMATIC REPAIR: Explain warmly in plain US English ('Oh my bad—I just meant...') and keep rolling.")
+            r.append("- PRAGMATIC REPAIR: Clarify warmly in plain US English ('Oh my bad—I just meant...').")
         elif two_q:
-            r.append("- Your last two replies ended with questions: respond with a grounded take WITHOUT ending with a question.")
+            r.append("- End with a grounded observation WITHOUT asking a question.")
         if detect_code_switch(text) and not repair:
-            r.append("- L1 BRIDGE: Answer naturally AND include the exact plain spoken US idiom in [square brackets].")
+            r.append("- L1 BRIDGE: Include the exact plain spoken US expression in [square brackets].")
         if take2 and not repair:
-            r.append(f"- TAKE 2 RETRY: Briefly note in 3-6 words what sounded cleaner ({take2}), then continue.")
+            r.append(f"- TAKE 2 RETRY: Briefly acknowledge cleaner phrasing ({take2}) and continue.")
         for v in (due[:1] if not repair else []):
             if int(v["stage"]) == 0:
                 r.append(f"- STEALTH MODEL: Only if natural, use '{v['phrase']}' once.")
             else:
-                r.append(f"- STEALTH BAIT: Create a natural opening for '{v['phrase']}' without saying it yourself.")
+                r.append(f"- STEALTH BAIT: Create a natural opening for '{v['phrase']}' without saying it.")
 
         if ECHO_TWIN_ENABLED and not repair and not PURE_GREETING_RE.match(text.strip()) and wc >= 2:
-            hint = f" (Pre-detected slips you MUST fix: {'; '.join(s + ' -> ' + u for s, u, _ in transfers)})" if transfers else ""
-            allow_t2 = (wc >= 28 or len(transfers) >= 2) and not take2
-            t2_line = "TAKE2: [1-sentence retry challenge ONLY if major, else NONE]" if allow_t2 else "TAKE2: NONE"
+            hint = f" (Fix slips: {'; '.join(s + '->' + u for s, u, _ in transfers)})" if transfers else ""
             r.append(
-                f"\nSILENT COACH CHECK (APPEND AFTER YOUR CHARACTER REPLY):{hab_blk}"
-                f"\nInspect LATEST SPEAKER MESSAGE for US English accuracy & genuine spoken naturalness.{hint}"
-                "\n- Ignore casual texting punctuation/capitalization."
-                "\n- If ALREADY 100% grammatically accurate AND natural spoken US English, do NOT append anything."
-                "\n- Otherwise append:\n===COACH==="
-                "\nHABIT: [irregular_past | uncountable_noun | tense_aspect | article_prep | fr_calque | ar_calque | stiff_register]"
-                "\nFIX: [concise arrow fixes]"
-                "\nUS: [plainest natural sentence a real American says out loud—zero slang/buzzwords]"
-                "\nCHUNK: [reusable 2-5 word everyday US chunk]"
-                "\nWHY: [2-5 word tag]"
-                f"\n{t2_line}"
+                f"\nSILENT COACH CHECK (APPEND AFTER REPLY):{hab_blk}\n"
+                f"Inspect speaker's English accuracy & spoken US naturalness (spoken grammar & discourse frames).{hint}\n"
+                "- If already 100% natural spoken US English, append NOTHING.\n"
+                "- Else append:\n===COACH===\n"
+                "HABIT: [fr_calque | ar_calque | stiff_register | discourse_staging | irregular_past | uncountable_noun]\n"
+                "FIX: [concise arrow fix]\n"
+                "US: [plainest natural spoken US sentence—zero buzzwords]\n"
+                "CHUNK: [reusable 2-5 word spoken US frame]\n"
+                "WHY: [2-5 word tag]\nTAKE2: NONE"
             )
         return "\n".join(r)
 
     async def respond_turn(
-        self, user_id: int, learner_text: str, *, chat_message_id: int | None = None, is_voice: bool = False, duration_s: float = 0.0, log_partner: bool = True
+        self,
+        user_id: int,
+        learner_text: str,
+        *,
+        chat_message_id: int | None = None,
+        is_voice: bool = False,
+        duration_s: float = 0.0,
+        log_partner: bool = True,
     ) -> TurnOutcome:
         async with self._lock(user_id):
             u = self.repo.get_user(user_id)
             angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
-            take2, recent, due = u["pending_take2"], self.repo.recent_turns(user_id, 12), self.repo.due_vault_phrases(user_id, 1)
+            take2 = u["pending_take2"]
+            recent = self.repo.recent_turns(user_id, 10)
+            due = self.repo.due_vault_phrases(user_id, 1)
             repair = is_repair_request(learner_text)
             sys_p = self._sys_prompt(user_id, angle, learner_text, recent, due, take2, repair)
-            hist = "\n".join(f"{'You' if t['role']=='partner' else 'Speaker'}: {t['content']}" for t in recent[-10:])
-            usr_p = f"RECENT DIALOGUE:\n{hist}\n\nLATEST SPEAKER MESSAGE: {learner_text}\nYour reply:" if hist else f"LATEST SPEAKER MESSAGE: {learner_text}\nYour reply:"
+            hist = "\n".join(
+                f"{'You' if t['role'] == 'partner' else 'Speaker'}: {t['content']}"
+                for t in recent[-8:]
+            )
+            usr_p = (
+                f"RECENT DIALOGUE:\n{hist}\n\nLATEST SPEAKER MESSAGE: {learner_text}\nYour reply:"
+                if hist
+                else f"LATEST SPEAKER MESSAGE: {learner_text}\nYour reply:"
+            )
             raw = await self.llm.generate_text(user_id, sys_p, usr_p, temperature=0.62, deep_chat=True)
             segs, inline_coach = parse_reply_and_coach(raw)
             full = "\n\n".join(segs)
             vhits = self.detect_vault_hits(user_id, learner_text)
-            self.repo.log_turn(user_id, "learner", angle, learner_text, chat_message_id=chat_message_id, is_voice=is_voice, duration_s=duration_s)
+            self.repo.log_turn(
+                user_id, "learner", angle, learner_text,
+                chat_message_id=chat_message_id, is_voice=is_voice, duration_s=duration_s,
+            )
             if log_partner:
                 self.repo.log_turn(user_id, "partner", angle, full)
             if take2:
@@ -536,54 +599,10 @@ class EchoTwinEngine:
             if due and int(due[0]["stage"]) == 0 and due[0]["phrase"].lower() in full.lower():
                 self.repo.mark_vault_hit(user_id, due[0]["phrase"])
             self._apply_habit_tracking(user_id, learner_text, inline_coach, repair)
-            return TurnOutcome(segs, full, angle, ANGLE_META[angle]["badge"], learner_text, vhits, bool(take2), repair, inline_coach)
-
-    async def respond_voice_turn(
-        self, user_id: int, audio_bytes: bytes, *, mime_type: str = "audio/ogg", chat_message_id: int | None = None, duration_s: float = 0.0, log_partner: bool = True
-    ) -> TurnOutcome:
-        async with self._lock(user_id):
-            u = self.repo.get_user(user_id)
-            angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
-            meta = ANGLE_META[angle]
-            weekday = datetime.now(timezone.utc).strftime("%A")
-            take2, recent, due = u["pending_take2"], self.repo.recent_turns(user_id, 12), self.repo.due_vault_phrases(user_id, 1)
-            mem_blk, hab_blk = self._context_blocks(user_id)
-            bot_t = [t["content"] for t in recent if t["role"] == "partner"]
-            two_q = len(bot_t) >= 2 and all(x.rstrip().endswith("?") for x in bot_t[-2:])
-
-            rules = [
-                f"{meta['voice_desc']} (Today is {weekday}.){mem_blk}",
-                SPOKEN_US_DNA,
-                "MULTIMODAL SPOKEN TURN: Listen to the speaker's voice note and reply naturally in 1-2 crisp spoken US sentences.",
-                "- If they asked what you meant, clarify warmly in plain US English.",
-                "- If they spoke a single test word or read a practice sentence out loud, acknowledge it briefly and naturally.",
-            ]
-            if two_q:
-                rules.append("- Your last two replies ended with questions: land a statement WITHOUT ending with a question.")
-            rules.append(
-                f"\nOUTPUT FORMAT:{hab_blk}"
-                "\n===HEARD===\n[Exact verbatim transcript; write [silence] ONLY if zero speech is audible]"
-                "\n===REPLY===\n[Your natural in-character spoken US reply]"
-                "\n===COACH===\nNONE"
+            return TurnOutcome(
+                segs, full, angle, ANGLE_META[angle]["badge"],
+                learner_text, vhits, bool(take2), repair, inline_coach,
             )
-            hist = "\n".join(f"{'You' if t['role']=='partner' else 'Speaker'}: {t['content']}" for t in recent[-10:])
-            usr_p = f"RECENT DIALOGUE:\n{hist}\n\nListen to the voice note ({duration_s:.0f}s) and respond." if hist else f"Listen to the voice note ({duration_s:.0f}s) and respond."
-            raw = await self.llm.generate_voice_turn(user_id, "\n".join(rules), audio_bytes, usr_p, mime_type=mime_type, temperature=0.62)
-            heard, segs, _ = parse_voice_turn_output(raw)
-            full = "\n\n".join(segs)
-            if heard.lower() in ("[inaudible]", "[silence]", "inaudible", "silence"):
-                return TurnOutcome(segs, full, angle, meta["badge"], "", [], False, True, None)
-            transcript = heard or "(voice note)"
-            repair = is_repair_request(transcript)
-            vhits = self.detect_vault_hits(user_id, transcript) if heard else []
-            self.repo.log_turn(user_id, "learner", angle, transcript, chat_message_id=chat_message_id, is_voice=True, duration_s=duration_s)
-            if log_partner:
-                self.repo.log_turn(user_id, "partner", angle, full, is_voice=True)
-            if take2:
-                self.repo.set_pending_take2(user_id, "")
-            if due and int(due[0]["stage"]) == 0 and due[0]["phrase"].lower() in full.lower():
-                self.repo.mark_vault_hit(user_id, due[0]["phrase"])
-            return TurnOutcome(segs, full, angle, meta["badge"], transcript, vhits, bool(take2), repair, None)
 
     def _finalize_lab_report(
         self,
@@ -745,8 +764,7 @@ class EchoTwinEngine:
                 for t in recent[-5:]
             )
             retake_hint = (
-                f"PREVIOUS TAKE: \"{prev_recast or prev_target}\". "
-                "If repeated, fill ===VERDICT===; else NONE."
+                f"PREVIOUS TAKE: \"{prev_recast or prev_target}\". If repeated, fill ===VERDICT===; else NONE."
                 if (prev_recast or prev_target)
                 else "First take (===VERDICT=== NONE)."
             )
@@ -762,28 +780,20 @@ class EchoTwinEngine:
                     user_id, "\n".join(sys_lines), fast_bytes, usr_p, mime_type=fast_mime
                 )
                 parsed = parse_tagged_voice_audit(raw)
-            except Exception as exc:
-                logger.warning("Fast multimodal fallback to DSP: %s", exc)
+            except Exception:
+                parsed = {}
 
             heard_final = (parsed.get("heard") or "").strip()
             if heard_final.lower() in ("[silence]", "[inaudible]", "silence"):
-                segs = clean_partner_reply(
-                    parsed.get("reply") or "Didn't catch clear speech there—try once more?"
-                )
-                return TurnOutcome(
-                    segs, "\n\n".join(segs), angle, meta["badge"], "", [], False, True, None
-                ), None
+                segs = clean_partner_reply("Didn't catch clear speech there—try once more?")
+                return TurnOutcome(segs, segs[0], angle, meta["badge"], "", [], False, True, None), None
 
             if not heard_final:
                 if dsp.voiced_s < 0.20:
                     segs = ["Couldn't detect speech in that clip—hold the mic a bit closer."]
-                    return TurnOutcome(
-                        segs, segs[0], angle, meta["badge"], "", [], False, True, None
-                    ), None
+                    return TurnOutcome(segs, segs[0], angle, meta["badge"], "", [], False, True, None), None
                 heard_final = "(voice clip analyzed via acoustic DSP)"
-                parsed["sounds"] = (
-                    "Acoustic waveform scored directly—send one more clip for word-by-word IPA."
-                )
+                parsed["sounds"] = "Acoustic waveform scored directly—send one more clip for word-by-word IPA."
 
             segs = clean_partner_reply(
                 parsed.get("reply") or "Got your note—check your pronunciation card above."
@@ -876,6 +886,424 @@ class EchoTwinEngine:
             prev_target, prev_recast, prev_dsp, force_retake=is_retake,
         )
 
+    # ================= PILLAR 1: PERCEPTUAL EAR DECODER =================
+    def start_ear_challenge(self, user_id: int) -> dict:
+        u = self.repo.get_user(user_id)
+        pref = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
+        st = self.repo.get_studio_state(user_id)
+        last_full = ""
+        if st.get("mode_payload"):
+            try:
+                last_full = json.loads(st["mode_payload"]).get("full", "")
+            except Exception:
+                pass
+        pool = [x for x in EAR_DECODER_BANK if x["full"] != last_full] or EAR_DECODER_BANK
+        same = [x for x in pool if x["angle"] == pref]
+        chosen = random.choice(same if (same and random.random() < 0.6) else pool)
+        self.repo.set_active_studio(user_id, "ear_decode", json.dumps(chosen))
+        return chosen
+
+    def _grade_ear_text(self, item: dict, attempt_text: str, voice_note: str = "") -> EarEvalResult:
+        target = item["full"]
+        ref_toks = normalize_ear_tokens(target)
+        usr_toks = normalize_ear_tokens(attempt_text)
+        bag = list(usr_toks)
+        matched = 0
+        missed: list[str] = []
+        for t in ref_toks:
+            if t in bag:
+                bag.remove(t)
+                matched += 1
+            else:
+                missed.append(t)
+        acc = int(round(100.0 * matched / max(1, len(ref_toks))))
+        weak_list = [w.lower() for w in item.get("weak", [])]
+        caught_weak = all(w in usr_toks for w in weak_list)
+        if not caught_weak:
+            self.repo.record_habit_hit(user_id=0, habit_key="weak_form_erosion", example=attempt_text[:90], fix=item["rule"][:110]) if False else None
+        return EarEvalResult(
+            target_full=target,
+            user_heard=attempt_text.strip(),
+            prosodic_map=item["map"],
+            erosion_rule=item["rule"],
+            accuracy_pct=acc,
+            missed_words=missed,
+            caught_weak_forms=caught_weak,
+            voice_feedback=voice_note,
+        )
+
+    def evaluate_ear_text(self, user_id: int, attempt_text: str) -> EarEvalResult | None:
+        st = self.repo.get_studio_state(user_id)
+        if st.get("active_mode") != "ear_decode" or not st.get("mode_payload"):
+            return None
+        item = json.loads(st["mode_payload"])
+        res = self._grade_ear_text(item, attempt_text)
+        if not res.caught_weak_forms:
+            self.repo.record_habit_hit(
+                user_id, "weak_form_erosion", attempt_text[:100], item["rule"][:110]
+            )
+        self.repo.clear_active_studio(user_id)
+        self.repo.save_lab_baseline(user_id, item["full"], item["full"], "", arm_retake=True)
+        return res
+
+    async def evaluate_ear_voice(
+        self, user_id: int, audio_bytes: bytes, mime_type: str = "audio/ogg"
+    ) -> EarEvalResult | None:
+        st = self.repo.get_studio_state(user_id)
+        if st.get("active_mode") != "ear_decode" or not st.get("mode_payload"):
+            return None
+        item = json.loads(st["mode_payload"])
+        fast_b, fast_m = await asyncio.to_thread(transcode_for_gemini, audio_bytes, mime_type)
+        sys_p = (
+            "Transcribe exact words heard in ===HEARD=== and give 1 crisp sentence on how well "
+            "the speaker linked & reduced vowels compared to General American in ===LINKING===."
+        )
+        usr_p = f"Reference sentence attempted: \"{item['full']}\"\nOutput ===HEARD=== and ===LINKING===."
+        raw = await self.llm.generate_fast_multimodal(
+            user_id, sys_p, fast_b, usr_p, mime_type=fast_m
+        )
+        kv = parse_kv_tags(raw, ("HEARD", "LINKING"))
+        heard = kv["heard"] or "(inaudible)"
+        res = self._grade_ear_text(item, heard, voice_note=kv["linking"])
+        self.repo.clear_active_studio(user_id)
+        self.repo.save_lab_baseline(user_id, item["full"], item["full"], "", arm_retake=True)
+        return res
+
+    # ================= PILLAR 2: GENERATIVE LEXICAL FRAMES & PUSHED OUTPUT =================
+    def start_frame_challenge(self, user_id: int) -> dict:
+        u = self.repo.get_user(user_id)
+        angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
+        due = self.repo.due_vault_phrases(user_id, 2)
+        if due:
+            ph = due[0]["phrase"]
+            frame_lbl, pat = derive_frame_pattern(ph)
+            item = {
+                "angle": angle,
+                "vault_phrase": ph,
+                "frame": frame_lbl,
+                "regex": pat,
+                "example": due[0].get("context_example") or f"In practice, {ph} really shapes the outcome.",
+                "why": "Active Recall from your personal Vault—use it flexibly in a fresh sentence!",
+                "prompt": f"Respond to {ANGLE_META[angle]['name']} in 2–3 spoken sentences on any current project or idea, weaving in \"{ph}\" naturally.",
+            }
+        else:
+            same = [x for x in SPOKEN_FRAME_BANK if x["angle"] == angle] or SPOKEN_FRAME_BANK
+            chosen = random.choice(same)
+            item = dict(chosen, vault_phrase="")
+        self.repo.set_active_studio(user_id, "frame_push", json.dumps(item))
+        return item
+
+    async def evaluate_frame_response(
+        self,
+        user_id: int,
+        *,
+        text_input: str = "",
+        audio_bytes: bytes = b"",
+        mime_type: str = "audio/ogg",
+    ) -> FrameEvalResult | None:
+        st = self.repo.get_studio_state(user_id)
+        if st.get("active_mode") != "frame_push" or not st.get("mode_payload"):
+            return None
+        item = json.loads(st["mode_payload"])
+        sys_p = (
+            "You are a COCA Spoken American English Lexical-Frame & Spoken-Grammar Coach.\n"
+            + SPOKEN_US_DNA
+            + "\nReturn plain text tags:\n"
+            "===HEARD===\n[Exact transcript if audio, else echo user text]\n"
+            "===USED===\n[YES if they deployed the target lexical frame grammatically & naturally, else NO]\n"
+            "===FEEDBACK===\n[1-2 crisp sentences on how natural their slot-filling & spoken grammar sounded]\n"
+            "===MODEL===\n[Plain, idiomatic spoken US version of THEIR exact thought using the target frame]\n"
+            "===PROSODY===\n[If audio: 1 sentence on linking/stress across the frame; else NONE]"
+        )
+        usr_ctx = (
+            f"Target Frame: {item['frame']}\nPrompt: {item['prompt']}\n"
+            + (f"User wrote: \"{text_input}\"" if text_input else "Listen to the attached voice response.")
+        )
+        if audio_bytes:
+            fb, fm = await asyncio.to_thread(transcode_for_gemini, audio_bytes, mime_type)
+            raw = await self.llm.generate_fast_multimodal(user_id, sys_p, fb, usr_ctx, mime_type=fm)
+        else:
+            raw = await self.llm.generate_text(user_id, sys_p, usr_ctx, temperature=0.25, deep_chat=False)
+
+        kv = parse_kv_tags(raw, ("HEARD", "USED", "FEEDBACK", "MODEL", "PROSODY"))
+        utterance = kv["heard"] or text_input.strip()
+        regex_hit = bool(re.search(item["regex"], utterance.lower())) if item.get("regex") else False
+        used_ok = (kv["used"].upper().startswith("Y")) or regex_hit
+        advanced = False
+        if used_ok and item.get("vault_phrase"):
+            self.repo.mark_vault_hit(user_id, item["vault_phrase"])
+            advanced = True
+        elif not used_ok:
+            self.repo.record_habit_hit(user_id, "discourse_staging", utterance[:100], item["frame"])
+
+        model_clean = scrub_contrived_english(kv["model"] or item["example"])
+        self.repo.clear_active_studio(user_id)
+        self.repo.save_lab_baseline(user_id, utterance, model_clean, "", arm_retake=False)
+        return FrameEvalResult(
+            frame_label=item["frame"],
+            used_flexibly=used_ok,
+            heard_or_text=utterance,
+            feedback=kv["feedback"] or "Keep the frame unstressed and put nuclear weight on your new content noun/verb.",
+            native_model=model_clean,
+            prosody_note=kv["prosody"],
+            vault_advanced=advanced,
+        )
+
+    # ================= PILLAR 3: INTERACTIONAL PRAGMATICS LAB =================
+    def start_pragmatic_scenario(self, user_id: int) -> dict:
+        u = self.repo.get_user(user_id)
+        angle = u["angle"] if u["angle"] in ANGLE_META else "exec_clock"
+        same = [x for x in PRAGMATIC_SCENARIOS if x["angle"] == angle]
+        chosen = random.choice(same or PRAGMATIC_SCENARIOS)
+        self.repo.set_active_studio(user_id, "pragmatics", json.dumps(chosen))
+        return chosen
+
+    async def evaluate_pragmatic_response(
+        self,
+        user_id: int,
+        *,
+        text_input: str = "",
+        audio_bytes: bytes = b"",
+        mime_type: str = "audio/ogg",
+    ) -> PragmaticEvalResult | None:
+        st = self.repo.get_studio_state(user_id)
+        if st.get("active_mode") != "pragmatics" or not st.get("mode_payload"):
+            return None
+        sc = json.loads(st["mode_payload"])
+        sys_p = (
+            "You are an Interactional Pragmatics Coach for C1/C2 Spoken American English.\n"
+            "Watch for L1 Arabic/French pragmatic transfer (overly blunt directness, stiff formal clichés like "
+            "'With respect I disagree', or over-apologetic softening).\n"
+            + SPOKEN_US_DNA
+            + "\nReturn plain text tags:\n"
+            "===HEARD===\n[Exact transcript if audio, else user text]\n"
+            "===SCORE===\n[0-100 pragmatic calibration score]\n"
+            "===NOTE===\n[1-2 crisp sentences evaluating hedging, concession-before-pushback, and register tone]\n"
+            "===RECAST===\n[How a sharp, diplomatic native American says THEIR exact response in 1-2 sentences]\n"
+            "===FRAME===\n[Reusable 3-6 word pragmatic opener/hedge from RECAST]\n"
+            "===PROSODY===\n[If audio: 1 sentence on tone warmth, pace & pitch hedging; else NONE]"
+        )
+        usr_ctx = (
+            f"Move: {sc['move']}\nSituation: {sc['situation']}\nGoal: {sc['goal']}\n"
+            + (f"User said: \"{text_input}\"" if text_input else "Evaluate the attached voice response.")
+        )
+        if audio_bytes:
+            fb, fm = await asyncio.to_thread(transcode_for_gemini, audio_bytes, mime_type)
+            raw = await self.llm.generate_fast_multimodal(user_id, sys_p, fb, usr_ctx, mime_type=fm)
+        else:
+            raw = await self.llm.generate_text(user_id, sys_p, usr_ctx, temperature=0.25, deep_chat=False)
+
+        kv = parse_kv_tags(raw, ("HEARD", "SCORE", "NOTE", "RECAST", "FRAME", "PROSODY"))
+        try:
+            sc_num = max(25, min(99, int(re.findall(r"\d+", kv["score"] or "80")[0])))
+        except Exception:
+            sc_num = 80
+        utterance = kv["heard"] or text_input.strip()
+        recast = scrub_contrived_english(kv["recast"] or utterance)
+        frame = scrub_contrived_english(kv["frame"] or "Fair point, though my one worry is")
+        if sc_num < 82:
+            self.repo.record_habit_hit(user_id, "pragmatic_bluntness", utterance[:100], frame)
+        self.repo.clear_active_studio(user_id)
+        self.repo.save_lab_baseline(user_id, utterance, recast, "", arm_retake=False)
+        return PragmaticEvalResult(
+            move_name=sc["move"],
+            score=sc_num,
+            heard_or_text=utterance,
+            calibration_note=kv["note"] or "Solid pragmatic stance—soften the pivot with a brief concession first.",
+            native_recast=recast,
+            key_frame=frame,
+            prosody_note=kv["prosody"],
+        )
+
+    # ================= PILLAR 4: PRAGMATIC INTONATION & CONTRASTIVE FOCUS =================
+    def start_intonation_drill(self, user_id: int) -> dict:
+        chosen = random.choice(INTONATION_SUBTEXT_BANK)
+        self.repo.set_active_studio(user_id, "intonation", json.dumps(chosen))
+        return chosen
+
+    async def evaluate_intonation_voice(
+        self, user_id: int, audio_bytes: bytes, mime_type: str = "audio/ogg"
+    ) -> IntonationEvalResult | None:
+        st = self.repo.get_studio_state(user_id)
+        if st.get("active_mode") != "intonation" or not st.get("mode_payload"):
+            return None
+        item = json.loads(st["mode_payload"])
+        dsp, (fb, fm) = await asyncio.gather(
+            asyncio.to_thread(analyze_voice_bytes, audio_bytes, len(item["sentence"].split())),
+            asyncio.to_thread(transcode_for_gemini, audio_bytes, mime_type),
+        )
+        sys_p = (
+            "You are an American English Suprasegmental Intonation & Contrastive Focus Examiner.\n"
+            "Listen carefully to WHERE the speaker placed the nuclear pitch peak and HOW their final boundary tone moved.\n"
+            "Return plain text tags:\n"
+            "===LANDED===\n[YES if their nuclear stress placement & boundary contour conveyed the target subtext, else NO]\n"
+            "===SCORE===\n[25-99 intonation subtext accuracy]\n"
+            "===FEEDBACK===\n[2 crisp sentences: which word sounded loudest/highest in their clip vs target, and how to shape the ending pitch]"
+        )
+        usr_p = (
+            f"Sentence: \"{item['sentence']}\"\n"
+            f"Target Subtext: {item['intent']}\n"
+            f"Target Blueprint: {item['blueprint']} ({item['coach_rule']})\n"
+            f"DSP Telemetry: {dsp.to_prompt_summary()}\nAudit nuclear focus & pitch contour now."
+        )
+        raw = await self.llm.generate_fast_multimodal(user_id, sys_p, fb, usr_p, mime_type=fm)
+        kv = parse_kv_tags(raw, ("LANDED", "SCORE", "FEEDBACK"))
+        landed = kv["landed"].upper().startswith("Y")
+        try:
+            sc_num = max(25, min(99, int(re.findall(r"\d+", kv["score"] or "76")[0])))
+        except Exception:
+            sc_num = 76
+        if not landed:
+            self.repo.record_habit_hit(
+                user_id, "contrastive_pitch", item["sentence"], item["coach_rule"][:110]
+            )
+            self.repo.save_lab_baseline(
+                user_id, item["sentence"], item["sentence"], dsp.to_json(), arm_retake=False
+            )
+        else:
+            self.repo.clear_active_studio(user_id)
+            self.repo.save_lab_baseline(
+                user_id, item["sentence"], item["sentence"], dsp.to_json(), arm_retake=False
+            )
+        dsp_line = (
+            f"Pitch Span {dsp.pitch_span_st:.1f}st · Contrast {dsp.stress_contrast_db:.1f}dB · "
+            f"End {dsp.boundary_tone}"
+        )
+        return IntonationEvalResult(
+            target_sentence=item["sentence"],
+            target_intent=item["intent"],
+            blueprint=item["blueprint"],
+            subtext_landed=landed,
+            score=sc_num,
+            dsp_line=dsp_line,
+            pitch_feedback=kv["feedback"] or item["coach_rule"],
+        )
+
+    # ================= PILLAR 5: 60s EXTENDED DISCOURSE & SPOKEN GRAMMAR =================
+    def start_monologue_prompt(self, user_id: int) -> tuple[str, str, str]:
+        u = self.repo.get_user(user_id)
+        angle = u["angle"] if u["angle"] in ANGLE_META else "seminar_skeptic"
+        prompt = random.choice(MONOLOGUE_PROMPTS[angle])
+        self.repo.set_active_studio(
+            user_id, "monologue", json.dumps({"angle": angle, "prompt": prompt})
+        )
+        return angle, ANGLE_META[angle]["badge"], prompt
+
+    async def evaluate_monologue_voice(
+        self,
+        user_id: int,
+        audio_bytes: bytes,
+        *,
+        mime_type: str = "audio/ogg",
+        chat_message_id: int | None = None,
+        duration_s: float = 0.0,
+    ) -> MonologueReport | None:
+        arc, (fb, fm) = await asyncio.gather(
+            asyncio.to_thread(analyze_monologue_bytes, audio_bytes, 0),
+            asyncio.to_thread(transcode_for_gemini, audio_bytes, mime_type),
+        )
+        st = self.repo.get_studio_state(user_id)
+        prompt_used = ""
+        if st.get("mode_payload"):
+            try:
+                prompt_used = json.loads(st["mode_payload"]).get("prompt", "")
+            except Exception:
+                pass
+        u = self.repo.get_user(user_id)
+        angle = u["angle"] if u["angle"] in ANGLE_META else "seminar_skeptic"
+
+        sys_p = (
+            "You are an elite C1/C2 Spoken American Discourse & Prosodic Stamina Coach.\n"
+            + SPOKEN_US_DNA
+            + "\nReturn plain text tags:\n"
+            "===HEARD===\n[Verbatim transcript of their monologue]\n"
+            "===SCORE===\n[25-99 overall spoken C1/C2 effectiveness]\n"
+            "===DISCOURSE===\n[Evaluate spoken grammar: topic fronting ('The catch is...'), natural self-repair, concession bridges ('That said,') vs stiff written connectors]\n"
+            "===STAMINA===\n[How their rhythm, vowel reduction & pacing held up across Opening 1/3 -> Middle 1/3 -> Closing 1/3]\n"
+            "===SOUNDS===\n[Top 2 specific word stress / vowel / linking fixes heard in the clip]\n"
+            "===US20S===\n[Crisp, punchy 3-sentence (20-second) native spoken American distillation of THEIR exact argument—zero buzzwords]\n"
+            "===CHUNK===\n[Best 3-6 word spoken discourse frame from US20S]"
+        )
+        usr_p = (
+            f"Register: {ANGLE_META[angle]['badge']}\nPrompt: \"{prompt_used}\"\n"
+            f"{arc.to_prompt_summary()}\nDuration: {duration_s:.0f}s. Audit extended monologue now."
+        )
+        raw = await self.llm.generate_fast_multimodal(user_id, sys_p, fb, usr_p, mime_type=fm)
+        kv = parse_kv_tags(
+            raw, ("HEARD", "SCORE", "DISCOURSE", "STAMINA", "SOUNDS", "US20S", "CHUNK")
+        )
+        heard = kv["heard"].strip()
+        if not heard or heard.lower() in ("[silence]", "[inaudible]"):
+            return None
+
+        wc = len(heard.split())
+        if wc > 0 and arc.overall.voiced_s >= 0.5:
+            arc.overall.articulation_wpm = round((wc / arc.overall.voiced_s) * 60.0, 1)
+
+        try:
+            p_sc = max(25, min(99, int(re.findall(r"\d+", kv["score"] or "80")[0])))
+        except Exception:
+            p_sc = 80
+
+        overall = (
+            int(round(0.60 * p_sc + 0.40 * arc.overall.prosody_score))
+            if arc.overall.voiced_s >= 1.0 and arc.overall.prosody_score > 0
+            else p_sc
+        )
+        arc.overall.prosody_score = overall
+        us20 = scrub_contrived_english(kv["us20s"] or heard[:260])
+        chunk = scrub_contrived_english(kv["chunk"] or " ".join(us20.split()[:5]))
+
+        self.repo.clear_active_studio(user_id)
+        self.repo.log_turn(
+            user_id, "learner", angle, heard,
+            chat_message_id=chat_message_id, is_voice=True, duration_s=duration_s,
+        )
+        self.repo.save_lab_baseline(
+            user_id, heard[:260], us20[:260], arc.overall.to_json(), arm_retake=False
+        )
+        return MonologueReport(
+            verbatim_heard=heard,
+            arc=arc,
+            overall_score=overall,
+            discourse_feedback=kv["discourse"] or "Use spoken pivots ('That said,', 'The catch is') instead of bookish transitions.",
+            stamina_feedback=kv["stamina"] or "Keep stretching stressed content vowels through the closing third.",
+            sounds_feedback=kv["sounds"] or "Maintain schwa reduction on unstressed function words.",
+            tight_us_20s=us20,
+            key_chunk=chunk,
+        )
+
+    # ================= BONUS: PERSONALIZED HABIT REMEDIAL SYNTHESIZER =================
+    async def build_remedial_drill(self, user_id: int) -> tuple[str, str, str]:
+        habits = self.repo.top_habits(user_id, limit=3)
+        if not habits:
+            return self.pick_prosody_drill(user_id, "linking")
+        h_desc = "; ".join(
+            f"{HABIT_LABELS.get(h['habit_key'], h['habit_key'])} (e.g. {h['last_example']})"
+            for h in habits
+        )
+        sys_p = (
+            "Create ONE natural, plain 12-18 word spoken American sentence that simultaneously "
+            "trains the learner's recurring weak spots.\n" + SPOKEN_US_DNA + "\n"
+            "Return plain tags:\n===SENTENCE===\n[Plain spoken US sentence]\n"
+            "===MAP===\n[US prosodic map with ˈCAPS, /ə/, ‿, [ɾ], [t̚], ↘]\n"
+            "===FOCUS===\n[1-line articulatory & grammatical focus note]"
+        )
+        try:
+            raw = await self.llm.generate_text(
+                user_id, sys_p, f"Top recurring habits: {h_desc}", temperature=0.35, deep_chat=False
+            )
+            kv = parse_kv_tags(raw, ("SENTENCE", "MAP", "FOCUS"))
+            sent = scrub_contrived_english(kv["sentence"])
+            if sent and len(sent.split()) >= 5:
+                mp = kv["map"] or sent
+                fc = kv["focus"] or f"Targets: {h_desc[:100]}"
+                self.repo.save_lab_baseline(user_id, sent, sent, "", arm_retake=True)
+                return sent, mp, fc
+        except Exception:
+            pass
+        return self.pick_prosody_drill(user_id, "stress")
+
     def pick_prosody_drill(self, user_id: int, category: str = "linking") -> tuple[str, str, str]:
         pool = LAB_DRILL_BANK.get(category) or LAB_DRILL_BANK["linking"]
         sentence, p_map, focus_note = random.choice(pool)
@@ -890,15 +1318,17 @@ class EchoTwinEngine:
             return False
         learner_lines = [
             t["content"] for t in self.repo.recent_turns(user_id, 16)
-            if t["role"] == "learner" and t["content"] != "(voice note)"
+            if t["role"] == "learner" and not t["content"].startswith("(voice")
         ]
         if len(learner_lines) < 3:
             return False
         sys_p = (
-            "Extract up to 5 ultra-concise bullet points ('• ...') capturing durable context about this speaker "
-            "(work/research themes, interests, projects). Merge with existing notes, plain text only, max 70 words."
+            "Extract up to 5 concise bullet points ('• ...') of durable context about this speaker. "
+            "Merge with existing notes, plain text only, max 70 words."
         )
-        usr_p = f"Existing memory:\n{old_mem or '(none)'}\n\nRecent speaker lines:\n" + "\n".join(f"- {ln}" for ln in learner_lines[-8:])
+        usr_p = f"Existing:\n{old_mem or '(none)'}\n\nRecent:\n" + "\n".join(
+            f"- {ln}" for ln in learner_lines[-8:]
+        )
         try:
             merged = await self.llm.generate_text(user_id, sys_p, usr_p, temperature=0.2, deep_chat=False)
             if merged and merged.strip():
@@ -927,36 +1357,34 @@ class EchoTwinEngine:
             new_a = self.repo.cycle_angle(user_id)
             meta = ANGLE_META[new_a]
             last_l = next(
-                (t["content"] for t in reversed(self.repo.recent_turns(user_id, 10))
-                 if t["role"] == "learner" and not PURE_GREETING_RE.match(t["content"].strip()) and len(t["content"].split()) >= 2),
+                (
+                    t["content"] for t in reversed(self.repo.recent_turns(user_id, 10))
+                    if t["role"] == "learner"
+                    and not PURE_GREETING_RE.match(t["content"].strip())
+                    and len(t["content"].split()) >= 2
+                ),
                 "",
             )
             if not last_l:
                 return ShiftOutcome(new_a, meta["badge"], meta["name"], meta["opener"])
             sys_p = (
                 f"{meta['voice_desc']}\n\n{SPOKEN_US_DNA}\n\n{REGISTER_CORPUS_RULES}\n\n"
-                "TASK FOR LIVE REGISTER SHIFT:\n"
-                f"1. `reframed_user_point`: How a native American naturally expresses the speaker's exact point in {meta['badge']}. "
-                "NEVER invent fake corporate/academic jargon! If everyday speech stays identical, set `same_across_registers=true`.\n"
-                "2. `partner_reply`: Respond naturally in character (1-2 crisp spoken sentences).\n"
+                f"1. `reframed_user_point`: How a native American expresses the speaker's exact point in {meta['badge']}. "
+                "If everyday speech stays identical, set `same_across_registers=true`.\n"
+                "2. `partner_reply`: Reply naturally in character (1-2 crisp sentences).\n"
                 "3. `key_chunk`: Reusable 2-5 word spoken US chunk."
             )
             fallback = ShiftTurnOutput(partner_reply=meta["opener"])
             res = await self.llm.generate_structured(
-                user_id, sys_p, f"Speaker's last message: \"{last_l}\"", ShiftTurnOutput, fallback, deep_chat=True, temperature=0.25
+                user_id, sys_p, f"Speaker's last message: \"{last_l}\"",
+                ShiftTurnOutput, fallback, deep_chat=True, temperature=0.25,
             )
-            if has_contrived_buzz(f"{res.reframed_user_point} {res.partner_reply}"):
-                res = await self.llm.generate_structured(
-                    user_id,
-                    sys_p + "\nCRITICAL: Strip ALL buzzwords, slang, or stiff thesaurus words. Plain spoken US words only.",
-                    f"Speaker's last message: \"{last_l}\"",
-                    ShiftTurnOutput,
-                    res,
-                    deep_chat=True,
-                    temperature=0.15,
-                )
             reframed = scrub_contrived_english(res.reframed_user_point)
-            reply_clean = " ".join(clean_partner_reply(res.partner_reply)) if res.partner_reply.strip() else meta["opener"]
+            reply_clean = (
+                " ".join(clean_partner_reply(res.partner_reply))
+                if res.partner_reply.strip()
+                else meta["opener"]
+            )
             return ShiftOutcome(
                 angle=new_a,
                 badge=meta["badge"],
@@ -969,41 +1397,32 @@ class EchoTwinEngine:
 
     async def explain_registers(self, user_id: int, target_text: str) -> str:
         clean_in = target_text.strip()
-        sys_p = "You are a corpus-grounded American English pragmatics specialist (COCA Spoken standard).\n\n" + REGISTER_CORPUS_RULES
+        sys_p = (
+            "You are a corpus-grounded American English pragmatics specialist (COCA Spoken).\n\n"
+            + REGISTER_CORPUS_RULES
+        )
         usr_p = (
-            f"Utterance: \"{clean_in}\"\n\n"
-            "Give authentic spoken American phrasing across Everyday, Workplace, and Seminar settings:\n"
-            "- Fix any grammar or L1 slip first.\n"
-            "- NEVER invent thesaurus differences! If Americans use the exact same plain words, set is_register_neutral=true.\n"
-            "- In `pragmatic_note`, explain in 1 short plain sentence what actually shifts (or why it stays plain)."
+            f"Utterance: \"{clean_in}\"\n"
+            "Give authentic spoken US phrasing across Everyday, Workplace, and Seminar settings. "
+            "Never invent thesaurus jargon; if plain words stay identical, set is_register_neutral=true."
         )
         fallback = RegisterBreakdown(
             is_register_neutral=True,
             casual_us=clean_in,
             work_us=clean_in,
             seminar_us=clean_in,
-            pragmatic_note="Everyday spoken US phrasing stays plain across registers.",
+            pragmatic_note="Plain spoken US phrasing works naturally across settings.",
         )
         res = await self.llm.generate_structured(
             user_id, sys_p, usr_p, RegisterBreakdown, fallback, deep_chat=True, temperature=0.25
         )
-        if has_contrived_buzz(f"{res.casual_us} {res.work_us} {res.seminar_us}"):
-            res = await self.llm.generate_structured(
-                user_id,
-                sys_p + "\nCRITICAL: Zero corporate clichés, zero slang, zero stiff written words ('procure', 'utilize', 'produce').",
-                usr_p,
-                RegisterBreakdown,
-                res,
-                deep_chat=True,
-                temperature=0.15,
-            )
         cas = scrub_contrived_english(res.casual_us or clean_in)
         wrk = scrub_contrived_english(res.work_us or cas)
         sem = scrub_contrived_english(res.seminar_us or wrk)
-        note = scrub_contrived_english(res.pragmatic_note or "Shifts via tone and hedging, never fancy vocabulary.")
+        note = scrub_contrived_english(res.pragmatic_note)
         if res.is_register_neutral:
             return f"• Everyday: \"{cas}\"\n• Workplace: \"{wrk}\"\n• Seminar: \"{sem}\"\n💡 Real US usage: {note}"
-        return f"• Everyday (Malik): \"{cas}\"\n• Workplace (Claire): \"{wrk}\"\n• Seminar (Prof. Vance): \"{sem}\"\n💡 What actually shifts: {note}"
+        return f"• Everyday (Malik): \"{cas}\"\n• Workplace (Claire): \"{wrk}\"\n• Seminar (Prof. Vance): \"{sem}\"\n💡 What shifts: {note}"
 
     async def coach_on_demand(self, user_id: int, learner_text: str) -> GhostTwinAnalysis | None:
         if not learner_text.strip():
@@ -1011,14 +1430,20 @@ class EchoTwinEngine:
         u = self.repo.get_user(user_id)
         angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
         transfers = scan_transfers(learner_text)
-        hint = "Slips spotted: " + "; ".join(f"{s}->{up}" for s, up, _ in transfers) if transfers else "Give the plainest spoken US phrasing."
+        hint = (
+            "Slips spotted: " + "; ".join(f"{s}->{up}" for s, up, _ in transfers)
+            if transfers
+            else "Give the plainest spoken US phrasing & spoken grammar frame."
+        )
         sys_p = (
             "You are a corpus-grounded spoken American English coach.\n"
             + SPOKEN_US_DNA
             + "\nSet should_intervene=true and fill habit_key, fix_summary, rhythm_tip, native_take, key_chunk, why_tag."
         )
         usr_p = f"Context: {ANGLE_META[angle]['badge']}\n{hint}\nUser said: {learner_text}"
-        res = await self.llm.generate_structured(user_id, sys_p, usr_p, GhostTwinAnalysis, GhostTwinAnalysis(), deep_chat=True, temperature=0.25)
+        res = await self.llm.generate_structured(
+            user_id, sys_p, usr_p, GhostTwinAnalysis, GhostTwinAnalysis(), deep_chat=True, temperature=0.25
+        )
         res.native_take = scrub_contrived_english(res.native_take)
         res.key_chunk = scrub_contrived_english(res.key_chunk)
         if not res.native_take:
