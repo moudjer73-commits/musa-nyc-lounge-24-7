@@ -104,6 +104,7 @@ class GeminiClient:
         self._no_thinking: set[tuple[int, str]] = set()
         self._cursor = 0
 
+    @property
     def configured(self) -> bool:
         return bool(self.clients)
 
