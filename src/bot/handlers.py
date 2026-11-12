@@ -112,7 +112,7 @@ def extract_stealable_chunk(text: str) -> str:
 
 
 def _strip_coach_headers(raw_body: str) -> str:
-    skip_prefixes = ("👥", "🎯", "🎙️", "🔬", "📐", "📈", "🗺️", "📊", "🗣️", "🔗", "🔁", "⚡", "🎧", "🔑", "🪜", "• ")
+    skip_prefixes = ("👥", "🎯", "🎙️", "🔬", "📐", "📈", "👂", "🗺️", "📊", "🗣️", "🔗", "🔁", "⚡", "🎧", "🔑", "🪜", "• ")
     lines = [ln for ln in raw_body.splitlines() if not ln.startswith(skip_prefixes)]
     joined = " ".join(lines).strip().lstrip("🇺🇸 ").strip().strip('"')
     return joined or raw_body.strip()
@@ -120,8 +120,8 @@ def _strip_coach_headers(raw_body: str) -> str:
 
 def format_prosody_lab_html(report: VoiceLabReport, *, pure_mode: bool = False) -> str:
     a = report.audit
-    header = "🔬 <b>US Prosody Lab — A/B Retake</b>" if report.is_retake else (
-        "🔬 <b>US Prosody Lab · Studio Analysis</b>" if pure_mode else "🔬 <b>US Prosody Lab</b>"
+    header = "🔬 <b>US Pronunciation &amp; Prosody — A/B Retake</b>" if report.is_retake else (
+        "🔬 <b>US Pronunciation &amp; Prosody Lab</b>"
     )
     lines = [header]
     if report.delta_block:
@@ -133,20 +133,24 @@ def format_prosody_lab_html(report: VoiceLabReport, *, pure_mode: bool = False) 
         lines.append(f"✅ <b>Verdict:</b> {html.escape(a.retake_verdict)}")
     if report.habit_badge:
         lines.append(f"🔁 <b>{html.escape(report.habit_badge)}</b>")
+    if a.verbatim_heard:
+        lines.append(f"👂 <b>Heard:</b> \"{html.escape(a.verbatim_heard)}\"")
     if a.prosodic_map:
-        lines.append(f"🗺️ <b>Map:</b> <code>{html.escape(a.prosodic_map)}</code>")
-    if a.grammar_fix:
-        lines.append(f"⚡ <b>Phrasing:</b> <code>{html.escape(a.grammar_fix)}</code>")
-    if a.segmental_fix:
-        lines.append(f"🗣️ <b>Sounds &amp; Stress:</b> {html.escape(a.segmental_fix)}")
+        lines.append(f"🗺️ <b>US Map:</b> <code>{html.escape(a.prosodic_map)}</code>")
+    sounds_line = a.word_pronunciations or a.segmental_fix
+    if sounds_line:
+        lines.append(f"🗣️ <b>Sounds &amp; Words:</b> {html.escape(sounds_line)}")
+    if a.stress_and_schwa:
+        lines.append(f"🎯 <b>Stress &amp; Schwa:</b> {html.escape(a.stress_and_schwa)}")
     if a.prosody_fix:
-        lines.append(f"🔗 <b>Flow &amp; Linking:</b> {html.escape(a.prosody_fix)}")
+        lines.append(f"🔗 <b>Rhythm &amp; Linking:</b> {html.escape(a.prosody_fix)}")
     if a.focus_stress:
-        lines.append(f"🎯 <b>Peak:</b> <code>{html.escape(a.focus_stress)}</code>")
-    if a.native_recast:
-        lines.append(f"🇺🇸 \"{html.escape(a.native_recast)}\"")
+        lines.append(f"🔊 <b>Peak:</b> <code>{html.escape(a.focus_stress)}</code>")
+    if a.grammar_fix:
+        lines.append(f"⚡ <b>Wording Fix:</b> <code>{html.escape(a.grammar_fix)}</code>")
+        if a.native_recast:
+            lines.append(f"🇺🇸 \"{html.escape(a.native_recast)}\"")
     return "\n".join(lines)
-
 
 class TwinContainer:
     def __init__(self, db_path=DB_PATH, snapshot_path=SNAPSHOT_PATH, passphrase=SNAPSHOT_PASSPHRASE, llm=None) -> None:
@@ -204,28 +208,28 @@ async def _deliver_coach_card(message, c: TwinContainer, uid: int, ghost: GhostT
 
 
 async def _deliver_lab_report(msg, c: TwinContainer, uid: int, angle: str, report: VoiceLabReport, *, pure_mode: bool = False) -> None:
-    recast = report.audit.native_recast.strip() or report.audit.verbatim_heard
-    drill_target = report.audit.shadow_chunk.strip() or extract_stealable_chunk(recast)
-    cid = _stash_card(recast, drill_target)
+    a = report.audit
+    target_spoken = a.native_recast.strip() if (a.grammar_fix.strip() and a.native_recast.strip()) else (a.verbatim_heard.strip() or a.native_recast.strip())
+    drill_target = a.shadow_chunk.strip() or target_spoken
+    cid = _stash_card(target_spoken, drill_target)
     card_html = format_prosody_lab_html(report, pure_mode=pure_mode)
 
     if pure_mode or report.is_retake:
-        mp3 = await synthesize_shadow_drill(drill_target or recast)
+        mp3 = await synthesize_shadow_drill(drill_target or target_spoken)
     else:
-        mp3 = await synthesize_twin_voice(recast) if len(recast) <= 650 else None
+        mp3 = await synthesize_twin_voice(target_spoken) if len(target_spoken) <= 650 else None
 
-    if mp3 and len(card_html) <= 960:
+    if mp3 and len(card_html) <= 950:
         buf = io.BytesIO(mp3)
-        buf.name = "prosody_lab.mp3"
+        buf.name = "us_pronunciation.mp3"
         sent = await msg.reply_voice(voice=buf, caption=card_html, parse_mode="HTML", reply_markup=voice_lab_inline_kb(cid))
     else:
         sent = await msg.reply_text(card_html, parse_mode="HTML", reply_markup=voice_lab_inline_kb(cid))
         if mp3:
             buf = io.BytesIO(mp3)
-            buf.name = "prosody_lab.mp3"
+            buf.name = "us_pronunciation.mp3"
             await msg.reply_voice(voice=buf, reply_markup=STUDIO_KB)
     c.repo.log_turn(uid, "ghost", angle, drill_target, chat_message_id=getattr(sent, "message_id", None))
-
 
 def _lab_status_text(lab_on: bool) -> str:
     mode_desc = (
@@ -573,18 +577,20 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
             sent = await _send_safe(msg, seg)
             c.repo.log_turn(uid, "partner", outcome.angle, seg, chat_message_id=getattr(sent, "message_id", None))
 
-    async def _prosody_lab_worker(msg, uid: int, raw_audio: bytes, outcome) -> None:
+    async def _prosody_lab_worker(msg, uid: int, raw_audio: bytes, mime_type: str, dur: float, outcome) -> None:
         try:
-            report = await c.engine.run_deep_prosody_audit(uid, raw_audio, outcome.transcript)
+            report = await c.engine.run_deep_prosody_audit(
+                uid, raw_audio, outcome.transcript, mime_type=mime_type, duration_s=dur
+            )
             if report is not None:
                 await _deliver_lab_report(msg, c, uid, outcome.angle, report, pure_mode=False)
                 return
         except Exception as exc:
             logger.warning("Deep prosody audit fallback: %s", exc)
-        if outcome.transcript and outcome.transcript != "(voice note)" and not outcome.was_repair:
+        if outcome.transcript and outcome.transcript != "(voice note)":
             cid = _stash_card(outcome.transcript, extract_stealable_chunk(outcome.transcript))
             await msg.reply_text(
-                f"🔬 <b>US Prosody Lab</b>\n🇺🇸 \"{html.escape(outcome.transcript)}\"",
+                f"🔬 <b>US Pronunciation Lab</b>\n👂 \"{html.escape(outcome.transcript)}\"",
                 parse_mode="HTML",
                 reply_markup=voice_lab_inline_kb(cid),
             )
@@ -658,8 +664,9 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         v = msg.voice
         dur = float(getattr(v, "duration", 0) or 0)
         size = int(getattr(v, "file_size", 0) or 0)
+        mime_type = getattr(v, "mime_type", None) or "audio/ogg"
         if dur > 180 or size > 8_000_000:
-            await _send_safe(msg, "Keep voice notes under 3 minutes so acoustic analysis stays fast and sharp!")
+            await _send_safe(msg, "Keep voice notes under 3 minutes so phonetic analysis stays fast and sharp!")
             return
         chat_id = update.effective_chat.id if update.effective_chat else uid
         asyncio.create_task(refresh_chat_menu_once(getattr(context, "bot", None), chat_id, force=False))
@@ -670,32 +677,34 @@ def register_handlers(app: Application, c: TwinContainer) -> None:
         lab_st = c.repo.get_lab_state(uid)
         pure_or_retake = bool(lab_st.get("lab_mode") or lab_st.get("pending_retake"))
 
-        # Pure Prosody Lab Mode OR Armed A/B Retake -> Direct clinical Prosody Lab pass (zero partner chit-chat!)
         if pure_or_retake:
             angle = c.repo.get_user(uid)["angle"]
             report = await asyncio.wait_for(
                 c.engine.run_deep_prosody_audit(
-                    uid, raw, "", force_retake=bool(lab_st.get("pending_retake")),
+                    uid, raw, "", mime_type=mime_type,
+                    force_retake=bool(lab_st.get("pending_retake")),
                     log_learner_turn=True, chat_message_id=getattr(msg, "message_id", None), duration_s=dur,
                 ),
                 timeout=45.0,
             )
             if report is None:
-                await _send_safe(msg, "Couldn't catch clear speech on that clip—try recording a bit closer to the mic.")
+                await _send_safe(msg, "Couldn't detect speech in that clip—try recording closer to the mic.")
                 return
             await _deliver_lab_report(msg, c, uid, angle, report, pure_mode=True)
             return
 
-        # Hybrid Mode -> Natural Partner voice reply + Full 4-Layer Prosody Lab Card underneath
         outcome = await asyncio.wait_for(
-            c.engine.respond_voice_turn(uid, raw, chat_message_id=getattr(msg, "message_id", None), duration_s=dur, log_partner=False),
+            c.engine.respond_voice_turn(
+                uid, raw, mime_type=mime_type,
+                chat_message_id=getattr(msg, "message_id", None), duration_s=dur, log_partner=False,
+            ),
             timeout=45.0,
         )
         if outcome.vault_celebrations:
             await _react_quietly(msg, "🔥")
         await _deliver_partner_voice_or_text(msg, uid, outcome, is_voice=True)
-        if not outcome.was_repair:
-            asyncio.create_task(_prosody_lab_worker(msg, uid, raw, outcome))
+        # Unconditional pronunciation assessment whatever the speaker said in the recording
+        asyncio.create_task(_prosody_lab_worker(msg, uid, raw, mime_type, dur, outcome))
         asyncio.create_task(c.engine.maybe_sync_memory(uid))
 
     async def reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

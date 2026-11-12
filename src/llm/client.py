@@ -283,28 +283,58 @@ class GeminiClient:
             self.repo.refund_quota(user_id)
             raise
 
-    async def audit_voice_prosody(self, user_id: int, system_prompt: str, audio_bytes: bytes, user_prompt: str, schema_cls: Type[T], fallback: T, *, mime_type: str = 'audio/ogg') -> T:
+    async def audit_voice_prosody(
+        self,
+        user_id: int,
+        system_prompt: str,
+        audio_bytes: bytes,
+        user_prompt: str,
+        schema_cls: Type[T],
+        fallback: T,
+        *,
+        mime_type: str = "audio/ogg",
+    ) -> T:
         if not self.clients:
             return fallback
         self._charge(user_id)
         part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
-        kw: dict[str, Any] = {'system_instruction': system_prompt, 'response_mime_type': 'application/json', 'response_schema': schema_cls, 'temperature': 0.15}
-        if hasattr(types, 'ThinkingConfig'):
+        base_kw: dict[str, Any] = {
+            "system_instruction": system_prompt,
+            "response_mime_type": "application/json",
+            "response_schema": schema_cls,
+            "temperature": 0.15,
+        }
+        configs: list[tuple[types.GenerateContentConfig, bool]] = []
+        if hasattr(types, "ThinkingConfig"):
             try:
-                kw['thinking_config'] = types.ThinkingConfig(thinking_budget=1024)
+                tk_kw = dict(base_kw)
+                tk_kw["thinking_config"] = types.ThinkingConfig(thinking_budget=512)
+                configs.append((types.GenerateContentConfig(**tk_kw), False))
             except Exception:
                 pass
-        cfg = types.GenerateContentConfig(**kw)
-        try:
-            raw = await self._call([part, user_prompt], cfg, prefer_deep_chat=True, thinking=False, timeout_s=AUDIO_TIMEOUT_S)
-            return schema_cls.model_validate_json(raw)
-        except LLMUnavailableError:
-            self.repo.refund_quota(user_id)
-            return fallback
-        except Exception as exc:
-            logger.warning('Prosody audit fallback: %s', _redact(str(exc)))
-            self.repo.refund_quota(user_id)
-            return fallback
+        configs.append((types.GenerateContentConfig(**base_kw), True))
+
+        last_err: Exception | None = None
+        for cfg, fast_think in configs:
+            try:
+                raw = await self._call(
+                    [part, user_prompt],
+                    cfg,
+                    prefer_deep_chat=True,
+                    thinking=fast_think,
+                    timeout_s=AUDIO_TIMEOUT_S,
+                )
+                cleaned = raw.strip()
+                if cleaned.startswith("```"):
+                    cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                return schema_cls.model_validate_json(cleaned)
+            except Exception as exc:
+                last_err = exc
+                logger.warning("Prosody audit attempt retry: %s", _redact(str(exc)))
+
+        logger.warning("Prosody audit exhausted retries: %s", _redact(str(last_err)))
+        self.repo.refund_quota(user_id)
+        return fallback
 
     async def transcribe_voice(self, user_id: int, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
         self._charge(user_id)

@@ -34,8 +34,8 @@ ANGLE_META = {
         "opener": "Hey—got a few minutes before my next meeting. What are you working on?",
         "voice_desc": (
             "You are Claire, a sharp, grounded American colleague talking 1-on-1. "
-            "Speak plain, direct workplace English—zero MBA buzzwords ('synergy', 'circle back', 'bandwidth'). "
-            "Use natural phrasing like 'What's the main holdup?', 'Let's hold off for now', 'My only worry is...'."
+            "Speak plain, direct workplace English—zero MBA buzzwords ('synergy', 'circle back'). "
+            "Use natural phrasing like 'What's the main holdup?', 'Let's hold off for now'."
         ),
     },
     "seminar_skeptic": {
@@ -46,14 +46,14 @@ ANGLE_META = {
         "voice_desc": (
             "You are Nolan Vance, an American political-science professor in office hours. "
             "Speak authentic SPOKEN academic US English: contractions always, plain verbs ('holds up', "
-            "'plays out', 'comes down to') paired with sharp analytical thinking—never stiff journal prose."
+            "'plays out', 'comes down to') paired with sharp analytical thinking—never stiff prose."
         ),
     },
 }
 
 SPARK_BANK = {
     "casual_sharp": [
-        "A friend keeps canceling twenty minutes before you're supposed to meet up, then texts 'my bad, crazy week.' Do you say something or let it fade?",
+        "A friend keeps canceling twenty minutes before meeting up, then texts 'my bad, crazy week.' Do you say something or let it fade?",
         "Do you actually get more done working outside the house, or is it mostly just a change of scenery?",
         "What's something everyone around you seems hyped about lately that you're still not sold on?",
         "If you get a rare day with zero obligations, do you like having a plan or just winging it?",
@@ -67,7 +67,7 @@ SPARK_BANK = {
     "seminar_skeptic": [
         "People love claiming digital platforms make local government more accountable, but where does that usually break down on the ground?",
         "Here's a pushback I hear a lot: public consultations mostly amplify the loudest five percent of residents. How do you get around that?",
-        "When a city policy works well in places like Barcelona or Tallinn, what usually trips it up when someone tries copying it elsewhere?",
+        "When a city policy works well in Barcelona or Tallinn, what usually trips it up when someone tries copying it elsewhere?",
         "If a skeptical reviewer asks what your actual causal mechanism is—not just the broad theory—how do you explain it in three plain sentences?",
     ],
 }
@@ -87,19 +87,19 @@ LAB_DRILL_BANK = {
         (
             "What did you end up getting at the market?",
             "ˈWʌDʒ-ə ˈEND‿up ˈGEɾ-ɪŋ | ət̚ ðə ˈMAR-kɪt̚ ↘",
-            "Palatalize 'What did you' -> [wʌdʒə]; Stop-T [t̚] on 'at' and 'market'; falling WH-tone ↘.",
+            "Palatalize 'What did you' -> [wʌdʒə]; Stop-T [t̚] on 'at' and 'market'; falling tone ↘.",
         ),
     ],
     "stress": [
         (
             "How does that actually hold up at the municipal level?",
             "ˈHOW dəz ðæt̚ ˈAC-tʃu-ə-li ˈHOLD‿ˈUP | ət̚ ðə myu-ˈNI-sə-pəl ˈLE-vəl ↘",
-            "Stress 2nd syllable in mu-NI-ci-pal (crush remaining vowels to /ə/); avoid French-style final stress.",
+            "Stress 2nd syllable in mu-NI-ci-pal (crush remaining vowels to /ə/).",
         ),
         (
             "Local officials want to participate, but the budget isn't there.",
             "ˈLO-kəl ə-ˈFI-ʃəlz ˈWAN-ə pɑr-ˈTI-sə-peɪt̚ | bət̚ ðə ˈBUD-dʒɪt̚ ˈIZ-ənt ˈTHERE ↘",
-            "Stress par-TI-ci-pate & ə-FFI-cials; crush 'officials/participate/but' unstressed syllables to schwa.",
+            "Stress par-TI-ci-pate & ə-FFI-cials; reduce unstressed vowels to schwa /ə/.",
         ),
         (
             "It comes down to whether citizens actually trust the process.",
@@ -111,17 +111,17 @@ LAB_DRILL_BANK = {
         (
             "It looks great on paper, though it's tough to pull off.",
             "ɪt̚ ˈLOOKS ˈGREAT ɑn ˈPA-pər ↗ | ðoʊ ɪts ˈTOUGH tə ˈPULL‿ˈOFF ↘",
-            "Continuation rise ↗ on 'PA-per' (unfinished thought), then decisive pitch fall ↘ on 'OFF'.",
+            "Continuation rise ↗ on 'PA-per', then decisive pitch fall ↘ on 'OFF'.",
         ),
         (
             "I didn't say the policy failed—I said the timing was off.",
             "I ˈDID-ənt ˈSAY ðə ˈPA-lə-si ˈFAILED ↗ | I ˈSAID ðə ˈTI-mɪŋ wəz ˈOFF ↘",
-            "Contrastive nuclear peaks on PA-licy FAILED vs TI-ming OFF ↘; crush 'was' -> /wəz/.",
+            "Contrastive nuclear peaks on PA-licy FAILED vs TI-ming OFF ↘.",
         ),
         (
             "My main worry isn't the technology, it's the follow-through.",
             "my ˈMAIN ˈWOR-ri ˈIZ-ənt ðə tɛk-ˈNA-lə-dʒi ↗ | ɪts ðə ˈFA-loʊ-θru ↘",
-            "Hold slight rise ↗ after tech-NO-lo-gy, then drop pitch cleanly through FOL-low-through ↘.",
+            "Slight rise ↗ after tech-NO-lo-gy, then clean pitch fall through FOL-low-through ↘.",
         ),
     ],
 }
@@ -143,9 +143,12 @@ PURE_GREETING_RE = re.compile(
 
 class ProsodyAuditOutput(BaseModel):
     verbatim_heard: str = ""
+    phonetic_score: int = 80
     has_findings: bool = True
     habit_key: str = "us_rhythm_linking"
     prosodic_map: str = ""
+    word_pronunciations: str = ""
+    stress_and_schwa: str = ""
     segmental_fix: str = ""
     prosody_fix: str = ""
     focus_stress: str = ""
@@ -199,6 +202,7 @@ class VoiceLabReport:
     audit: ProsodyAuditOutput
     dsp: AcousticMetrics
     dsp_badge: str
+    overall_score: int = 80
     habit_badge: str = ""
     delta_block: str = ""
     is_retake: bool = False
@@ -237,8 +241,8 @@ def _clean_field(val: str) -> str:
 def _word_overlap_ratio(a: str, b: str) -> float:
     wa = set(re.findall(r"[a-z']+", a.lower()))
     wb = set(re.findall(r"[a-z']+", b.lower()))
-    if len(wa) < 3 or len(wb) < 3:
-        return 0.0
+    if len(wa) < 2 or len(wb) < 2:
+        return 1.0 if (wa and wa == wb) else 0.0
     return len(wa & wb) / float(min(len(wa), len(wb)))
 
 
@@ -314,24 +318,36 @@ def _phrase_matched(phrase: str, text: str) -> bool:
 
 
 PROSODY_AUDITOR_PROMPT = (
-    "You are a clinical & studio American English Suprasegmental Prosody Coach working with an advanced "
-    "Maghrebi Arabic / French-bilingual researcher.\n"
+    "You are an elite General American English Phonetics & Suprasegmental Prosody Examiner.\n"
+    "MANDATORY MISSION: Assess the speaker's pronunciation on 100% of recordings—WHATEVER they say "
+    "(1 single test word, a greeting like 'Hey how are you', a question, reading aloud, or free speech).\n"
     "CRITICAL SCIENTIFIC RULES:\n"
-    "1. Diagnose STRICTLY what is physically audible in the attached recording + the Praat-style DSP telemetry—NEVER invent errors from your suggested recast.\n"
-    "2. Provide `verbatim_heard`: exact words spoken in the audio.\n"
-    "3. Build `prosodic_map`: render the target natural US sentence as an immediate visual performance score using:\n"
-    "   - CAPS + primary stress mark ˈ on stressed syllables (e.g. ˈPICKED, mu-ˈNI-sə-pəl)\n"
-    "   - ‿ for consonant-to-vowel/glide linking (e.g. picked‿up‿ə)\n"
-    "   - /ə/ or phonetic respelling for crushed function words (tə, ə, fər, kən, ən)\n"
-    "   - [ɾ] for intervocalic Flap-T and [t̚] for unreleased Stop-T where relevant\n"
-    "   - | for thought-group pauses and ↘ / ↗ for boundary pitch direction.\n"
-    "4. `segmental_fix`: ONLY if audible, pinpoint lexical stress shifts (e.g. French L2 final-syllable stress like de-ve-LOP -> de-ˈVEL-əp), unreduced full vowels that need schwa /ə/, /p/-/b/, alveolar /t,d/, or American /ɹ/. Leave empty if clean.\n"
-    "5. `prosody_fix`: Concrete connected-speech & rhythm instruction tied to their nPVI, stress contrast dB, pause ratio, Flap-T [ɾ], Stop-T [t̚], or C-V linking.\n"
-    "6. `focus_stress`: The 2-5 word nuclear peak phrase with the single peak syllable in CAPS + pitch arrow (e.g. 'BUNCH of FRUIT ↘').\n"
-    "7. `native_recast`: Plain, authentic spoken American phrasing of their exact thought (ZERO slang, ZERO corporate/academic thesaurus words).\n"
-    "8. `shadow_chunk`: Best 4-9 word phrase from `native_recast` for 3-beat shadowing.\n"
-    "9. `habit_key`: Choose ONE from [us_rhythm_linking, word_stress, flap_stop_t, nuclear_intonation, fr_calque, ar_calque, irregular_past, uncountable_noun, stiff_register].\n"
-    "10. If this is an A/B RETAKE, fill `retake_verdict` with a 1-sentence concrete comparison of what sounded more American on this take."
+    "1. ASSESS THEIR EXACT SPOKEN WORDS: Anchor `prosodic_map`, `word_pronunciations`, `stress_and_schwa`, "
+    "and `prosody_fix` strictly to the actual words in `verbatim_heard`—NEVER skip assessment and NEVER "
+    "replace their sentence before diagnosing how they pronounced their own words!\n"
+    "2. `verbatim_heard`: Exact words heard in the audio (write `[silence]` ONLY if zero speech is audible).\n"
+    "3. `phonetic_score`: 0-100 General American pronunciation accuracy score based on vowel quality, "
+    "consonants, word stress, schwa reduction, and connected speech.\n"
+    "4. `prosodic_map` (REQUIRED, NEVER EMPTY): Render THEIR exact spoken words as a General American "
+    "pronunciation map using ˈCAPS on stressed syllables, /ə/ (or tə, ə, fər, kən) on reduced vowels, "
+    "‿ for linking, [ɾ] for Flap-T, [t̚] for unreleased Stop-T, | for pauses, and ↘/↗ for pitch.\n"
+    "5. `word_pronunciations` (REQUIRED, NEVER EMPTY): Audit specific words & phonemes heard in the clip:\n"
+    "   - Pinpoint any non-native vowel (/ɪ/ vs /iː/, /æ/ vs /ɑ/, /ʌ/, /oʊ/, r-colored /ɝ, ɚ/), consonant "
+    "(American /ɹ/, /θ, ð/, [pʰ, tʰ, kʰ] aspiration, dark /ɫ/, -ed/-s endings, silent letters), or accented word "
+    "using `word: [how it sounded] -> [US target]`.\n"
+    "   - If every single phoneme was pronounced cleanly, explicitly confirm which US sounds landed well AND "
+    "give 1 subtle native articulatory polish on their words.\n"
+    "6. `stress_and_schwa` (REQUIRED, NEVER EMPTY): Evaluate primary syllable stress placement (watch for "
+    "French/Arabic stress shifts or extra syllables like com-for-ta-ble -> ˈKʌMF-tər-bəl) and vowel reduction to /ə/.\n"
+    "7. `prosody_fix` (REQUIRED, NEVER EMPTY): Concrete connected-speech, Flap-T [ɾ], Stop-T [t̚], C-V linking, "
+    "and intonation feedback grounded in both the audio and DSP telemetry.\n"
+    "8. `focus_stress`: Peak stressed word/syllable in CAPS + pitch arrow (e.g. 'ˈHOW's it ˈGO-ing ↘').\n"
+    "9. `shadow_chunk`: The exact 1-9 word phrase from their recording (with grammar fixed ONLY if broken) "
+    "so they can shadow native US pronunciation of what they just said.\n"
+    "10. `grammar_fix` & `native_recast`: Leave `grammar_fix` EMPTY if their English words were grammatical! "
+    "Only fill `grammar_fix` and `native_recast` if there was a real grammar/idiom error.\n"
+    "11. `has_findings`: Set true if ANY phonetic, stress, schwa, or rhythm improvement exists (`phonetic_score < 94`).\n"
+    "12. If A/B RETAKE context matches, fill `retake_verdict` with a concrete 1-sentence comparison."
 )
 
 
@@ -372,10 +388,10 @@ class EchoTwinEngine:
     def _context_blocks(self, uid: int) -> tuple[str, str]:
         mem_text, _ = self.repo.get_memory(uid)
         habits = self.repo.top_habits(uid, limit=3)
-        mem_blk = f"\nKNOWN SPEAKER CONTEXT (use naturally only when relevant, never recite):\n{mem_text}" if mem_text else ""
+        mem_blk = f"\nKNOWN SPEAKER CONTEXT (use naturally only when relevant):\n{mem_text}" if mem_text else ""
         hab_blk = (
             "\nRECURRING HABITS RADAR: "
-            + "; ".join(f"{h['habit_key']} ({h['hits']}x, e.g. '{h['last_example']}')" for h in habits)
+            + "; ".join(f"{h['habit_key']} ({h['hits']}x)" for h in habits)
             if habits
             else ""
         )
@@ -401,7 +417,7 @@ class EchoTwinEngine:
         elif two_q:
             r.append("- Your last two replies ended with questions: respond with a grounded take WITHOUT ending with a question.")
         if detect_code_switch(text) and not repair:
-            r.append("- L1 BRIDGE: Answer naturally AND include the exact plain spoken US idiom in [square brackets] inside your reply.")
+            r.append("- L1 BRIDGE: Answer naturally AND include the exact plain spoken US idiom in [square brackets].")
         if take2 and not repair:
             r.append(f"- TAKE 2 RETRY: Briefly note in 3-6 words what sounded cleaner ({take2}), then continue.")
         for v in (due[:1] if not repair else []):
@@ -470,13 +486,15 @@ class EchoTwinEngine:
             rules = [
                 f"{meta['voice_desc']} (Today is {weekday}.){mem_blk}",
                 SPOKEN_US_DNA,
-                "MULTIMODAL SPOKEN TURN: Listen to the speaker's voice note and reply naturally in 1-2 crisp spoken US sentences (plain text only).",
+                "MULTIMODAL SPOKEN TURN: Listen to the speaker's voice note and reply naturally in 1-2 crisp spoken US sentences.",
+                "- If they asked what you meant, clarify warmly in plain US English.",
+                "- If they spoke a single test word or read a practice sentence out loud, acknowledge it briefly and naturally.",
             ]
             if two_q:
                 rules.append("- Your last two replies ended with questions: land a statement WITHOUT ending with a question.")
             rules.append(
                 f"\nOUTPUT FORMAT:{hab_blk}"
-                "\n===HEARD===\n[Exact verbatim transcript; write [inaudible] ONLY if silent]"
+                "\n===HEARD===\n[Exact verbatim transcript; write [silence] ONLY if zero speech is audible]"
                 "\n===REPLY===\n[Your natural in-character spoken US reply]"
                 "\n===COACH===\nNONE"
             )
@@ -485,7 +503,7 @@ class EchoTwinEngine:
             raw = await self.llm.generate_voice_turn(user_id, "\n".join(rules), audio_bytes, usr_p, mime_type=mime_type, temperature=0.62)
             heard, segs, _ = parse_voice_turn_output(raw)
             full = "\n\n".join(segs)
-            if heard.lower() in ("[inaudible]", "[silence]", "inaudible"):
+            if heard.lower() in ("[inaudible]", "[silence]", "inaudible", "silence"):
                 return TurnOutcome(segs, full, angle, meta["badge"], "", [], False, True, None)
             transcript = heard or "(voice note)"
             repair = is_repair_request(transcript)
@@ -511,7 +529,8 @@ class EchoTwinEngine:
         chat_message_id: int | None = None,
         duration_s: float = 0.0,
     ) -> VoiceLabReport | None:
-        wc_init = len(transcript.split()) if transcript and transcript != "(voice note)" else 0
+        clean_hint = transcript.strip() if transcript and transcript != "(voice note)" else ""
+        wc_init = len(clean_hint.split()) if clean_hint else 0
         dsp = await asyncio.to_thread(analyze_voice_bytes, audio_bytes, wc_init)
 
         u = self.repo.get_user(user_id)
@@ -522,53 +541,58 @@ class EchoTwinEngine:
         prev_dsp = AcousticMetrics.from_json(lab_state.get("metrics_json", ""))
 
         auto_repeat = bool(
-            transcript
-            and (_word_overlap_ratio(transcript, prev_target) >= 0.55 or _word_overlap_ratio(transcript, prev_recast) >= 0.55)
+            clean_hint
+            and (_word_overlap_ratio(clean_hint, prev_target) >= 0.55 or _word_overlap_ratio(clean_hint, prev_recast) >= 0.55)
         )
         is_retake = bool(force_retake or lab_state.get("pending_retake") or auto_repeat)
 
-        transfers = scan_transfers(transcript) if transcript else []
+        transfers = scan_transfers(clean_hint) if clean_hint else []
         tr_hint = ("Pre-detected grammar/calque slips: " + "; ".join(f"{s}->{up}" for s, up, _ in transfers)) if transfers else "None"
         if is_retake:
             retake_ctx = (
                 f"A/B RETAKE MODE ACTIVE — Target practiced: \"{prev_recast or prev_target}\"\n"
-                f"Previous DSP baseline: {prev_dsp.lab_meter_line() if prev_dsp else 'N/A'}\n"
+                f"Previous score/meter: {prev_dsp.lab_meter_line() if prev_dsp else 'N/A'}\n"
                 "Fill `retake_verdict` with a concrete 1-sentence comparison of what improved."
             )
         elif prev_recast or prev_target:
             retake_ctx = (
                 f"PREVIOUS TAKE ON FILE: \"{prev_recast or prev_target}\" "
                 f"(Baseline: {prev_dsp.lab_meter_line() if prev_dsp else 'N/A'}).\n"
-                "If this new audio repeats/practices that same sentence, treat as an A/B RETAKE and fill `retake_verdict`; "
-                "if it is a brand-new sentence, leave `retake_verdict` empty."
+                "If this new audio repeats that same phrase/word, fill `retake_verdict`; otherwise leave empty."
             )
         else:
-            retake_ctx = "First take on this thought (`retake_verdict` = empty)."
+            retake_ctx = "First take on this utterance (`retake_verdict` = empty)."
+
         usr_p = (
+            f"Assess EVERY phonetic & prosodic detail of what the speaker said in this audio, regardless of topic or length.\n"
             f"Register context: {ANGLE_META[angle]['badge']}\n"
             f"{dsp.to_prompt_summary()}\n"
-            f"Transcript hint: \"{transcript or '(transcribe directly from audio)'}\"\n"
+            f"Initial transcript hint: \"{clean_hint or '(transcribe exact words directly from audio)'}\"\n"
             f"{tr_hint}\n"
             f"{retake_ctx}\n"
             "Audit the attached voice recording now."
         )
         fb = ProsodyAuditOutput(
-            verbatim_heard=transcript,
-            has_findings=False,
-            prosodic_map=transcript,
-            prosody_fix="Keep content words long and crush function words (to, of, for) to schwa /ə/.",
-            native_recast=transcript,
-            shadow_chunk=" ".join(transcript.split()[:7]),
+            verbatim_heard=clean_hint,
+            phonetic_score=78,
+            has_findings=True,
+            prosodic_map=clean_hint,
+            word_pronunciations="Focus on crisp General American vowel targets and retroflex /ɹ/ coloring.",
+            stress_and_schwa="Lengthen primary stressed vowels and reduce unstressed function words to schwa /ə/.",
+            prosody_fix="Link final consonants smoothly into following vowels without glottal stops.",
+            native_recast="",
+            shadow_chunk=" ".join(clean_hint.split()[:8]),
         )
-        res = await self.llm.audit_voice_prosody(user_id, PROSODY_AUDITOR_PROMPT, audio_bytes, usr_p, ProsodyAuditOutput, fb, mime_type=mime_type)
+        res = await self.llm.audit_voice_prosody(
+            user_id, PROSODY_AUDITOR_PROMPT, audio_bytes, usr_p, ProsodyAuditOutput, fb, mime_type=mime_type
+        )
 
-        heard_final = (res.verbatim_heard or transcript).strip()
-        if not heard_final or heard_final.lower() in ("[inaudible]", "[silence]", "inaudible"):
+        heard_final = (res.verbatim_heard or clean_hint).strip()
+        if not heard_final or heard_final.lower() in ("[inaudible]", "[silence]", "inaudible", "silence"):
             return None
 
-        # Refine articulation WPM using exact verbatim word count when transcript wasn't known beforehand
         wc_final = len(heard_final.split())
-        if wc_init == 0 and wc_final > 0 and dsp.voiced_s >= 0.4:
+        if wc_init == 0 and wc_final > 0 and dsp.voiced_s >= 0.35:
             dsp.articulation_wpm = round((wc_final / dsp.voiced_s) * 60.0, 1)
 
         if not is_retake and prev_dsp and (
@@ -577,45 +601,74 @@ class EchoTwinEngine:
             is_retake = True
 
         if log_learner_turn:
-            self.repo.log_turn(user_id, "learner", angle, heard_final, chat_message_id=chat_message_id, is_voice=True, duration_s=duration_s)
+            self.repo.log_turn(
+                user_id, "learner", angle, heard_final, chat_message_id=chat_message_id, is_voice=True, duration_s=duration_s
+            )
             self.detect_vault_hits(user_id, heard_final)
 
-        res.native_recast = scrub_contrived_english(res.native_recast or heard_final)
-        res.shadow_chunk = scrub_contrived_english(res.shadow_chunk or " ".join(res.native_recast.split()[:7]))
-        if not res.prosodic_map.strip():
-            res.prosodic_map = res.native_recast
+        # Backfill legacy segmental_fix -> word_pronunciations if custom/stub output used segmental_fix
+        if not res.word_pronunciations.strip() and res.segmental_fix.strip():
+            res.word_pronunciations = res.segmental_fix.strip()
+        if not res.word_pronunciations.strip():
+            res.word_pronunciations = "Clear consonant & vowel targets—keep final stops unreleased [t̚, d̚] in connected phrases."
+        if not res.stress_and_schwa.strip():
+            res.stress_and_schwa = "Hold primary stressed vowel longer and crush unstressed function syllables to /ə/."
         if not res.prosody_fix.strip():
-            res.prosody_fix = "Clean connected US rhythm—keep stretching nuclear stressed vowels."
+            res.prosody_fix = "Smooth C-V linking—keep words connected inside one breath group."
+        if not res.prosodic_map.strip():
+            res.prosodic_map = heard_final
+
+        res.native_recast = scrub_contrived_english(res.native_recast)
+        spoken_or_fixed = res.native_recast if (res.grammar_fix.strip() and res.native_recast) else heard_final
+        res.shadow_chunk = scrub_contrived_english(res.shadow_chunk or " ".join(spoken_or_fixed.split()[:8]))
+
+        # Blend phonetic score (65%) + physical DSP prosody score (35%) into unified overall score
+        p_sc = max(15, min(99, int(res.phonetic_score or 78)))
+        if dsp.voiced_s >= 0.45 and dsp.prosody_score > 0:
+            overall = int(round(0.65 * p_sc + 0.35 * dsp.prosody_score))
+        else:
+            overall = p_sc
+        dsp.prosody_score = overall
 
         hab_badge = ""
-        if res.has_findings:
+        if res.has_findings or overall < 92:
             h_key = res.habit_key.strip().lower()
             if h_key not in HABIT_LABELS:
                 h_key = "us_rhythm_linking"
             lbl, hits = self.repo.record_habit_hit(
-                user_id, h_key, heard_final[:120], res.prosody_fix or res.segmental_fix or res.grammar_fix
+                user_id, h_key, heard_final[:120], res.word_pronunciations[:120]
             )
             if hits >= 2:
                 hab_badge = f"Habit #{hits}: {lbl}"
-            if res.native_recast:
+            if res.grammar_fix and res.native_recast:
                 self.repo.log_upgrade(user_id, heard_final, res.native_recast, lbl)
-        elif wc_final >= 4:
+        elif wc_final >= 3:
             self.repo.record_clean_turn(user_id)
 
         delta_txt = compare_metrics(prev_dsp, dsp) if (is_retake and prev_dsp) else ""
         if is_retake and not res.retake_verdict.strip() and prev_dsp:
             diff_sc = dsp.prosody_score - prev_dsp.prosody_score
             if diff_sc >= 3:
-                res.retake_verdict = f"Stronger stress-timed rhythm (+{diff_sc} pts) and cleaner syllable contrast on this take."
+                res.retake_verdict = f"Cleaner General American delivery (+{diff_sc} pts) on this retake."
             elif diff_sc <= -3:
-                res.retake_verdict = "Slightly flatter than Take 1—crush function words more and stretch the peak vowel."
+                res.retake_verdict = "Slightly tighter/flatter than Take 1—relax the jaw and stretch the stressed vowel."
             else:
-                res.retake_verdict = "Consistent acoustic contour—push stressed vowel length a bit further on the next rep."
-        self.repo.save_lab_baseline(user_id, heard_final, res.native_recast, dsp.to_json(), arm_retake=False)
+                res.retake_verdict = "Consistent pronunciation—push vowel reduction and linking one notch further."
+
+        if dsp.voiced_s > 0.15:
+            meter = (
+                f"Overall {overall}/100 · Sounds {p_sc}/100 · nPVI {dsp.npvi:.0f} ({dsp.rhythm_label()}) · "
+                f"Pitch {dsp.pitch_span_st:.1f}st ({dsp.boundary_tone})"
+            )
+        else:
+            meter = f"Pronunciation Score: {overall}/100"
+
+        self.repo.save_lab_baseline(user_id, heard_final, spoken_or_fixed, dsp.to_json(), arm_retake=False)
         return VoiceLabReport(
             audit=res,
             dsp=dsp,
-            dsp_badge=dsp.lab_meter_line(),
+            dsp_badge=meter,
+            overall_score=overall,
             habit_badge=hab_badge,
             delta_block=delta_txt,
             is_retake=is_retake,
@@ -633,7 +686,10 @@ class EchoTwinEngine:
         old_mem, last_synced = self.repo.get_memory(user_id)
         if turns_now - last_synced < 6:
             return False
-        learner_lines = [t["content"] for t in self.repo.recent_turns(user_id, 16) if t["role"] == "learner" and t["content"] != "(voice note)"]
+        learner_lines = [
+            t["content"] for t in self.repo.recent_turns(user_id, 16)
+            if t["role"] == "learner" and t["content"] != "(voice note)"
+        ]
         if len(learner_lines) < 3:
             return False
         sys_p = (
@@ -716,7 +772,7 @@ class EchoTwinEngine:
             f"Utterance: \"{clean_in}\"\n\n"
             "Give authentic spoken American phrasing across Everyday, Workplace, and Seminar settings:\n"
             "- Fix any grammar or L1 slip first.\n"
-            "- NEVER invent thesaurus differences! If Americans use the exact same plain words across settings, set is_register_neutral=true.\n"
+            "- NEVER invent thesaurus differences! If Americans use the exact same plain words, set is_register_neutral=true.\n"
             "- In `pragmatic_note`, explain in 1 short plain sentence what actually shifts (or why it stays plain)."
         )
         fallback = RegisterBreakdown(
@@ -732,7 +788,7 @@ class EchoTwinEngine:
         if has_contrived_buzz(f"{res.casual_us} {res.work_us} {res.seminar_us}"):
             res = await self.llm.generate_structured(
                 user_id,
-                sys_p + "\nCRITICAL: Zero corporate clichés, zero slang, zero stiff written words ('procure', 'utilize', 'produce'). Plain spoken words only!",
+                sys_p + "\nCRITICAL: Zero corporate clichés, zero slang, zero stiff written words ('procure', 'utilize', 'produce').",
                 usr_p,
                 RegisterBreakdown,
                 res,
@@ -753,7 +809,7 @@ class EchoTwinEngine:
         u = self.repo.get_user(user_id)
         angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
         transfers = scan_transfers(learner_text)
-        hint = "Slips spotted: " + "; ".join(f"{s}->{up}" for s, up, _ in transfers) if transfers else "Give the plainest, most natural spoken US phrasing."
+        hint = "Slips spotted: " + "; ".join(f"{s}->{up}" for s, up, _ in transfers) if transfers else "Give the plainest spoken US phrasing."
         sys_p = (
             "You are a corpus-grounded spoken American English coach.\n"
             + SPOKEN_US_DNA
