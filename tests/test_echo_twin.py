@@ -1,49 +1,60 @@
-import asyncio
+import asyncio, subprocess, tempfile
 from pathlib import Path
 from types import SimpleNamespace
-import numpy as np
 import pytest
 
-from src.bot.handlers import BTN_LAB, TwinContainer, register_handlers
-from src.twin.corpus_guard import has_contrived_buzz, scrub_contrived_english
-from src.twin.engine import GhostTwinAnalysis, ProsodyAuditOutput, RegisterBreakdown, ShiftTurnOutput
-from src.voice.acoustics import SAMPLE_RATE, AcousticMetrics, analyze_pcm_samples
+from src.bot.handlers import BTN_STUDIOS, TwinContainer, register_handlers
+from src.twin.engine import HybridVoiceTurnOutput, ProsodyAuditOutput
+from src.voice.acoustics import AcousticMetrics
+from src.voice.tts import PARTNER_VOICES, TWIN_VOICE, VOICE_CLIP_CACHE, merge_mirror_clips
 
 
-class StubUniversalLLM:
+class StubBatch1LLM:
     configured = True
     def __init__(self):
-        self.voice_calls = 0
-        self.prosody_audits = 0
-        self.next_heard = "Wait, what do you mean?"
+        self.legacy_voice_calls = 0
+        self.audit_calls = 0
 
-    async def audit_voice_prosody(self, user_id, system_prompt, audio_bytes, user_prompt, schema_cls, fallback, *, mime_type="audio/ogg"):
-        self.prosody_audits += 1
-        is_retake = ("A/B RETAKE MODE ACTIVE" in user_prompt) or ("PREVIOUS TAKE ON FILE:" in user_prompt)
+    async def audit_voice_prosody(
+        self, user_id, system_prompt, audio_bytes, user_prompt,
+        schema_cls, fallback, *, mime_type="audio/ogg"
+    ):
+        self.audit_calls += 1
+        if schema_cls is HybridVoiceTurnOutput:
+            return HybridVoiceTurnOutput(
+                verbatim_heard="Let's hold off on this till Monday.",
+                partner_reply="Makes sense—gives us time to double-check the numbers.",
+                phonetic_score=74,
+                has_findings=True,
+                habit_key="us_rhythm_linking",
+                prosodic_map="lɛts ˈHOLD‿ˈOFF ɑn ðɪs | tɪl ˈMʌN-deɪ ↘",
+                word_pronunciations="hold off: link /d/ smoothly into /ɔf/ without a pause.",
+                stress_and_schwa="Reduce 'till' -> /tɪl/ and stretch OFF & MON-day.",
+                prosody_fix="Connect 'hold_off_on' inside one breath group.",
+                focus_stress="ˈMʌN-deɪ ↘",
+                shadow_chunk="hold off on this till Monday",
+                native_recast="",
+                grammar_fix="",
+            )
         return ProsodyAuditOutput(
-            verbatim_heard=self.next_heard,
-            phonetic_score=88 if is_retake else 64,
-            has_findings=(not is_retake),
-            habit_key="word_stress",
-            prosodic_map="ˈWAIT | ˈWʌD-ə-yə ˈMEAN ↘",
-            word_pronunciations="what do you: [wɑt duː juː] -> [ˈwʌɾəjə] (flap /t/ & reduce 'do you')",
-            stress_and_schwa="Hold primary stress on WAIT and MEAN; reduce 'do you' to /dəjə/.",
-            prosody_fix="Link 'what_do_you' without word-by-word glottal stops.",
-            focus_stress="ˈMEAN ↘",
-            shadow_chunk="Wait, what do you mean?",
-            native_recast="",
-            grammar_fix="",
-            retake_verdict="Much smoother Flap-T and schwa reduction on 'what_do_you'!" if is_retake else "",
+            verbatim_heard="Let's hold off on this till Monday.",
+            phonetic_score=89,
+            has_findings=False,
+            prosodic_map="lɛts ˈHOLD‿ˈOFF ɑn ðɪs | tɪl ˈMʌN-deɪ ↘",
+            word_pronunciations="Crisp dark /ɫ/ in 'hold' and clean linking!",
+            stress_and_schwa="Natural schwa timing.",
+            prosody_fix="Smooth single breath group.",
+            retake_verdict="Much smoother linking on 'hold_off_on'!",
         )
 
-    async def generate_voice_turn(self, user_id, system_prompt, audio_bytes, user_prompt, *, mime_type="audio/ogg", temperature=0.62):
-        self.voice_calls += 1
-        return f"===HEARD===\n{self.next_heard}\n===REPLY===\nOh my bad—I just meant let's take our time.\n===COACH===\nNONE"
+    async def generate_voice_turn(self, *args, **kwargs):
+        self.legacy_voice_calls += 1
+        return "===HEARD===\ntest\n===REPLY===\nok\n===COACH===\nNONE"
 
-    async def generate_text(self, user_id, system_prompt, user_prompt, *, temperature=0.62, deep_chat=True):
-        return "Makes sense."
+    async def generate_text(self, *args, **kwargs):
+        return "Sounds good."
 
-    async def generate_structured(self, user_id, system_prompt, user_prompt, schema_cls, fallback, *, deep_chat=False, temperature=0.25):
+    async def generate_structured(self, user_id, sys_p, usr_p, schema_cls, fallback, **kw):
         return fallback
 
 
@@ -60,7 +71,8 @@ class FakeApp:
 
 class FakeMsg:
     def __init__(self, text="", voice=None, mid=10):
-        self.text, self.caption, self.voice, self.reply_to_message, self.message_id = text, None, voice, None, mid
+        self.text, self.caption, self.voice = text, None, voice
+        self.reply_to_message, self.message_id = None, mid
         self.texts, self.voices = [], []
     async def reply_text(self, t, **kw):
         self.texts.append((t, kw))
@@ -71,75 +83,86 @@ class FakeMsg:
 
 
 @pytest.mark.asyncio
-async def test_universal_pronunciation_on_repair_greeting_and_single_word(tmp_path: Path, monkeypatch):
-    from src.bot import handlers as h_mod
-    from src.twin import engine as e_mod
-
-    monkeypatch.setattr(h_mod, "synthesize_partner_voice", lambda t, angle="casual_sharp": asyncio.sleep(0, result=b"P"))
-    monkeypatch.setattr(h_mod, "synthesize_twin_voice", lambda t: asyncio.sleep(0, result=b"T"))
-    monkeypatch.setattr(h_mod, "synthesize_shadow_drill", lambda t: asyncio.sleep(0, result=b"D3X"))
-    monkeypatch.setattr(
-        e_mod, "analyze_voice_bytes",
-        lambda b, wc=0: AcousticMetrics(total_s=1.8, voiced_s=1.5, syllables=5, npvi=44.0, pitch_span_st=4.5, boundary_tone="falling ↘", prosody_score=68),
-    )
-
-    llm = StubUniversalLLM()
-    c = TwinContainer(db_path=tmp_path / "u.db", passphrase="", llm=llm)
-    app = FakeApp()
-    register_handlers(app, c)
-    u = SimpleNamespace(id=88)
-    ctx = SimpleNamespace(args=[], bot=None)
-    dl = SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS")))
-    vo = SimpleNamespace(duration=2.0, file_size=3000, mime_type="audio/ogg", get_file=lambda: asyncio.sleep(0, result=dl))
-
-    # 1. Repair question ("Wait, what do you mean?") previously skipped -> NOW gets full pronunciation assessment!
-    mv1 = FakeMsg(voice=vo)
-    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=mv1), ctx)
-    pend = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
-    if pend:
-        await asyncio.gather(*pend, return_exceptions=True)
-
-    assert llm.prosody_audits == 1
-    assert len(mv1.voices) == 2
-    lab_cap = mv1.voices[1]["caption"]
-    assert "Sounds &amp; Words:" in lab_cap and "Stress &amp; Schwa:" in lab_cap and "Heard:" in lab_cap
-
-    # 2. Single test word ("Comfortable") in Hybrid Mode -> ALSO gets full pronunciation assessment!
-    llm.next_heard = "Comfortable"
-    mv2 = FakeMsg(voice=vo)
-    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=mv2), ctx)
-    pend = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
-    if pend:
-        await asyncio.gather(*pend, return_exceptions=True)
-
-    assert llm.prosody_audits == 2
-    assert "Comfortable" in mv2.voices[1]["caption"]
+async def test_four_distinct_voices_and_real_ffmpeg_audio_mirror():
+    all_v = {v[0] for v in PARTNER_VOICES.values()} | {TWIN_VOICE}
+    assert len(all_v) == 4
+    with tempfile.TemporaryDirectory() as td:
+        u_ogg = Path(td) / "u.ogg"
+        n_mp3 = Path(td) / "n.mp3"
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "sine=frequency=190:duration=0.4", str(u_ogg)],
+            check=True,
+        )
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "sine=frequency=260:duration=0.4", str(n_mp3)],
+            check=True,
+        )
+        merged = await merge_mirror_clips(u_ogg.read_bytes(), n_mp3.read_bytes())
+        assert merged and len(merged) > 1500
 
 
 @pytest.mark.asyncio
-async def test_pure_lab_ab_retake_delta(tmp_path: Path, monkeypatch):
+async def test_single_call_hybrid_and_audio_mirror_button(tmp_path: Path, monkeypatch):
     from src.bot import handlers as h_mod
     from src.twin import engine as e_mod
 
-    monkeypatch.setattr(h_mod, "synthesize_shadow_drill", lambda t: asyncio.sleep(0, result=b"D3X"))
+    monkeypatch.setattr(
+        h_mod, "synthesize_partner_voice",
+        lambda t, angle="casual_sharp": asyncio.sleep(0, result=b"PARTNER_MP3"),
+    )
+    monkeypatch.setattr(
+        h_mod, "synthesize_twin_voice",
+        lambda t, rate="+0%": asyncio.sleep(0, result=b"TWIN_MP3"),
+    )
+    monkeypatch.setattr(
+        h_mod, "synthesize_shadow_drill",
+        lambda t: asyncio.sleep(0, result=b"SHADOW_MP3"),
+    )
+    monkeypatch.setattr(
+        h_mod, "synthesize_audio_mirror",
+        lambda lb, nt: asyncio.sleep(0, result=b"MIRROR_STITCHED_MP3"),
+    )
+
     takes = [
-        AcousticMetrics(total_s=2.2, voiced_s=1.9, syllables=6, npvi=30.0, stress_contrast_db=3.5, pitch_span_st=2.2, prosody_score=45),
-        AcousticMetrics(total_s=2.0, voiced_s=1.7, syllables=6, npvi=60.0, stress_contrast_db=8.2, pitch_span_st=5.6, boundary_tone="falling ↘", prosody_score=84),
+        AcousticMetrics(total_s=2.0, voiced_s=1.7, syllables=7, npvi=36.0, pitch_span_st=3.5, prosody_score=58),
+        AcousticMetrics(total_s=1.9, voiced_s=1.6, syllables=7, npvi=61.0, pitch_span_st=5.4, boundary_tone="falling ↘", prosody_score=85),
     ]
     monkeypatch.setattr(e_mod, "analyze_voice_bytes", lambda b, wc=0: takes.pop(0))
 
-    llm = StubUniversalLLM()
-    c = TwinContainer(db_path=tmp_path / "ab.db", passphrase="", llm=llm)
-    c.repo.set_lab_mode(99, True)
+    llm = StubBatch1LLM()
+    c = TwinContainer(db_path=tmp_path / "b1.db", passphrase="", llm=llm)
     app = FakeApp()
     register_handlers(app, c)
-    u = SimpleNamespace(id=99)
+    u = SimpleNamespace(id=101)
     ctx = SimpleNamespace(args=[], bot=None)
-    dl = SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS")))
-    vo = SimpleNamespace(duration=2.2, file_size=3000, mime_type="audio/ogg", get_file=lambda: asyncio.sleep(0, result=dl))
+    dl = SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS_USER")))
+    vo = SimpleNamespace(duration=2.0, file_size=3200, mime_type="audio/ogg", get_file=lambda: asyncio.sleep(0, result=dl))
 
-    m1 = FakeMsg(voice=vo)
-    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=m1), ctx)
-    m2 = FakeMsg(voice=vo)
-    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=m2), ctx)
-    assert "Before ➔ After:" in m2.voices[0]["caption"] and "Verdict:" in m2.voices[0]["caption"]
+    # 1. Hybrid Voice Turn -> EXACTLY 1 Gemini call (50% quota saved!) + Partner Voice + Lab Card
+    mv1 = FakeMsg(voice=vo)
+    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=mv1), ctx)
+    assert llm.audit_calls == 1 and llm.legacy_voice_calls == 0
+    assert len(mv1.voices) == 2
+
+    # 2. Verify 🪞 Audio Mirror button is present & triggers stitched Your Voice -> Native US
+    kb = mv1.voices[1]["reply_markup"].inline_keyboard
+    mirror_btn = next(b for row in kb for b in row if "Audio Mirror" in b.text)
+    q_msg = FakeMsg(text="card")
+    q_msg.caption = mv1.voices[1]["caption"]
+    q_mirror = SimpleNamespace(data=mirror_btn.callback_data, message=q_msg, answer=lambda *a, **k: asyncio.sleep(0))
+    await app.cb("coach_cb")(SimpleNamespace(effective_user=u, callback_query=q_mirror), ctx)
+    assert len(q_msg.voices) == 1
+    assert "Your Voice ➔ Native US" in q_msg.voices[0]["caption"]
+    assert c.repo.get_lab_state(101)["pending_retake"] == 1
+
+    # 3. Studios Hub button opens cleanly
+    m_st = FakeMsg(text=BTN_STUDIOS)
+    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=m_st), ctx)
+    assert "Spoken US Training Studios" in m_st.texts[0][0]
+
+    # 4. Next voice note scores A/B Retake automatically
+    mv2 = FakeMsg(voice=vo)
+    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=mv2), ctx)
+    assert "Before ➔ After:" in mv2.voices[0]["caption"]

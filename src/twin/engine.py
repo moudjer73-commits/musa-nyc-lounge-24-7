@@ -141,6 +141,23 @@ PURE_GREETING_RE = re.compile(
 )
 
 
+class HybridVoiceTurnOutput(BaseModel):
+    verbatim_heard: str = ""
+    partner_reply: str = ""
+    phonetic_score: int = 80
+    has_findings: bool = True
+    habit_key: str = "us_rhythm_linking"
+    prosodic_map: str = ""
+    word_pronunciations: str = ""
+    stress_and_schwa: str = ""
+    prosody_fix: str = ""
+    focus_stress: str = ""
+    shadow_chunk: str = ""
+    native_recast: str = ""
+    grammar_fix: str = ""
+    retake_verdict: str = ""
+
+
 class ProsodyAuditOutput(BaseModel):
     verbatim_heard: str = ""
     phonetic_score: int = 80
@@ -516,6 +533,204 @@ class EchoTwinEngine:
             if due and int(due[0]["stage"]) == 0 and due[0]["phrase"].lower() in full.lower():
                 self.repo.mark_vault_hit(user_id, due[0]["phrase"])
             return TurnOutcome(segs, full, angle, meta["badge"], transcript, vhits, bool(take2), repair, None)
+
+    async def respond_hybrid_voice_turn(
+        self,
+        user_id: int,
+        audio_bytes: bytes,
+        *,
+        mime_type: str = "audio/ogg",
+        chat_message_id: int | None = None,
+        duration_s: float = 0.0,
+        log_partner: bool = False,
+    ) -> tuple[TurnOutcome, VoiceLabReport | None]:
+        """Single-call multimodal pass: Partner reply + full US Phonetics & Prosody Lab."""
+        async with self._lock(user_id):
+            dsp = await asyncio.to_thread(analyze_voice_bytes, audio_bytes, 0)
+            u = self.repo.get_user(user_id)
+            angle = u["angle"] if u["angle"] in ANGLE_META else "casual_sharp"
+            meta = ANGLE_META[angle]
+            weekday = datetime.now(timezone.utc).strftime("%A")
+            take2 = u["pending_take2"]
+            recent = self.repo.recent_turns(user_id, 10)
+            due = self.repo.due_vault_phrases(user_id, 1)
+            mem_blk, hab_blk = self._context_blocks(user_id)
+            bot_t = [t["content"] for t in recent if t["role"] == "partner"]
+            two_q = len(bot_t) >= 2 and all(x.rstrip().endswith("?") for x in bot_t[-2:])
+
+            lab_state = self.repo.get_lab_state(user_id)
+            prev_target = lab_state.get("target_text", "")
+            prev_recast = lab_state.get("recast_text", "")
+            prev_dsp = AcousticMetrics.from_json(lab_state.get("metrics_json", ""))
+
+            p_rules = [
+                f"PART 1 — IN-CHARACTER PARTNER REPLY ({meta['badge']}, Today is {weekday}):",
+                f"{meta['voice_desc']}{mem_blk}",
+                SPOKEN_US_DNA,
+                "- Put your natural 1-2 sentence spoken reply in `partner_reply` (plain text only).",
+                "- If they asked what you meant, clarify warmly in plain US English.",
+                "- If they spoke a single test word or drill, acknowledge it briefly and naturally.",
+            ]
+            if two_q:
+                p_rules.append("- Land a statement in `partner_reply` WITHOUT ending with a question.")
+            for v in due[:1]:
+                if int(v["stage"]) == 0:
+                    p_rules.append(f"- Only if natural, use '{v['phrase']}' once in `partner_reply`.")
+            p_rules.append("\nPART 2 — UNIVERSAL PHONETIC & PROSODY AUDIT (100% MANDATORY):")
+            p_rules.append(PROSODY_AUDITOR_PROMPT)
+            if hab_blk:
+                p_rules.append(hab_blk)
+
+            hist = "\n".join(
+                f"{'You' if t['role'] == 'partner' else 'Speaker'}: {t['content']}"
+                for t in recent[-8:]
+            )
+            retake_hint = (
+                f"PREVIOUS TAKE ON FILE: \"{prev_recast or prev_target}\" "
+                f"(Baseline: {prev_dsp.lab_meter_line() if prev_dsp else 'N/A'}).\n"
+                "If this clip repeats that same phrase/word, fill `retake_verdict`; else leave empty."
+                if (prev_recast or prev_target)
+                else "First take (`retake_verdict` = empty)."
+            )
+            usr_p = (
+                (f"RECENT DIALOGUE:\n{hist}\n\n" if hist else "")
+                + f"{dsp.to_prompt_summary()}\n{retake_hint}\n"
+                + f"Listen to the voice note ({duration_s:.0f}s) and return JSON."
+            )
+
+            fb = HybridVoiceTurnOutput(
+                verbatim_heard="",
+                partner_reply="Sorry, audio spiked for a second—say that one more time?",
+                phonetic_score=78,
+            )
+            res = await self.llm.audit_voice_prosody(
+                user_id, "\n".join(p_rules), audio_bytes, usr_p,
+                HybridVoiceTurnOutput, fb, mime_type=mime_type,
+            )
+
+            heard_final = (res.verbatim_heard or "").strip()
+            if not heard_final or heard_final.lower() in ("[inaudible]", "[silence]", "silence"):
+                segs = clean_partner_reply(res.partner_reply)
+                empty_out = TurnOutcome(
+                    segs, "\n\n".join(segs), angle, meta["badge"], "", [], False, True, None
+                )
+                return empty_out, None
+
+            wc_final = len(heard_final.split())
+            if wc_final > 0 and dsp.voiced_s >= 0.35:
+                dsp.articulation_wpm = round((wc_final / dsp.voiced_s) * 60.0, 1)
+
+            segs = clean_partner_reply(res.partner_reply)
+            full = "\n\n".join(segs)
+            repair = is_repair_request(heard_final)
+            vhits = self.detect_vault_hits(user_id, heard_final)
+
+            self.repo.log_turn(
+                user_id, "learner", angle, heard_final,
+                chat_message_id=chat_message_id, is_voice=True, duration_s=duration_s,
+            )
+            if log_partner:
+                self.repo.log_turn(user_id, "partner", angle, full, is_voice=True)
+            if take2:
+                self.repo.set_pending_take2(user_id, "")
+            if due and int(due[0]["stage"]) == 0 and due[0]["phrase"].lower() in full.lower():
+                self.repo.mark_vault_hit(user_id, due[0]["phrase"])
+
+            is_retake = bool(
+                prev_dsp
+                and (
+                    _word_overlap_ratio(heard_final, prev_target) >= 0.55
+                    or _word_overlap_ratio(heard_final, prev_recast) >= 0.55
+                )
+            )
+            audit = ProsodyAuditOutput(
+                verbatim_heard=heard_final,
+                phonetic_score=res.phonetic_score,
+                has_findings=res.has_findings,
+                habit_key=res.habit_key,
+                prosodic_map=res.prosodic_map.strip() or heard_final,
+                word_pronunciations=(
+                    res.word_pronunciations.strip()
+                    or "Clean General American segments—keep final stops unreleased [t̚, d̚]."
+                ),
+                stress_and_schwa=(
+                    res.stress_and_schwa.strip()
+                    or "Stretch primary stressed vowels and crush function words to schwa /ə/."
+                ),
+                prosody_fix=(
+                    res.prosody_fix.strip()
+                    or "Smooth C-V linking across words inside each thought group."
+                ),
+                focus_stress=res.focus_stress.strip(),
+                native_recast=scrub_contrived_english(res.native_recast),
+                grammar_fix=res.grammar_fix.strip(),
+                retake_verdict=res.retake_verdict.strip(),
+            )
+            spoken_or_fixed = (
+                audit.native_recast
+                if (audit.grammar_fix and audit.native_recast)
+                else heard_final
+            )
+            audit.shadow_chunk = scrub_contrived_english(
+                res.shadow_chunk or " ".join(spoken_or_fixed.split()[:8])
+            )
+
+            p_sc = max(15, min(99, int(audit.phonetic_score or 78)))
+            if dsp.voiced_s >= 0.45 and dsp.prosody_score > 0:
+                overall = int(round(0.65 * p_sc + 0.35 * dsp.prosody_score))
+            else:
+                overall = p_sc
+            dsp.prosody_score = overall
+
+            hab_badge = ""
+            if audit.has_findings or overall < 92:
+                h_key = audit.habit_key.strip().lower()
+                if h_key not in HABIT_LABELS:
+                    h_key = "us_rhythm_linking"
+                lbl, hits = self.repo.record_habit_hit(
+                    user_id, h_key, heard_final[:120], audit.word_pronunciations[:120]
+                )
+                if hits >= 2:
+                    hab_badge = f"Habit #{hits}: {lbl}"
+                if audit.grammar_fix and audit.native_recast:
+                    self.repo.log_upgrade(user_id, heard_final, audit.native_recast, lbl)
+            elif wc_final >= 3:
+                self.repo.record_clean_turn(user_id)
+
+            delta_txt = compare_metrics(prev_dsp, dsp) if (is_retake and prev_dsp) else ""
+            if is_retake and not audit.retake_verdict and prev_dsp:
+                diff_sc = dsp.prosody_score - prev_dsp.prosody_score
+                audit.retake_verdict = (
+                    f"Cleaner General American delivery (+{diff_sc} pts) on this retake."
+                    if diff_sc >= 3
+                    else "Consistent contour—push schwa reduction and linking one notch further."
+                )
+
+            if dsp.voiced_s > 0.15:
+                meter = (
+                    f"Overall {overall}/100 · Sounds {p_sc}/100 · "
+                    f"nPVI {dsp.npvi:.0f} ({dsp.rhythm_label()}) · "
+                    f"Pitch {dsp.pitch_span_st:.1f}st ({dsp.boundary_tone})"
+                )
+            else:
+                meter = f"Pronunciation Score: {overall}/100"
+
+            self.repo.save_lab_baseline(
+                user_id, heard_final, spoken_or_fixed, dsp.to_json(), arm_retake=False
+            )
+            outcome = TurnOutcome(
+                segs, full, angle, meta["badge"], heard_final, vhits, bool(take2), repair, None
+            )
+            report = VoiceLabReport(
+                audit=audit,
+                dsp=dsp,
+                dsp_badge=meter,
+                overall_score=overall,
+                habit_badge=hab_badge,
+                delta_block=delta_txt,
+                is_retake=is_retake,
+            )
+            return outcome, report
 
     async def run_deep_prosody_audit(
         self,

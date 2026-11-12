@@ -16,11 +16,12 @@ FULL_DESCRIPTION = (
     "Tap Start below to jump in."
 )
 COMMANDS = [
-    {"command": "start", "description": "Open studio & refresh buttons"},
-    {"command": "lab", "description": "US Prosody Lab mode & targeted voice drills"},
+    {"command": "start", "description": "Open studio & refresh keyboard"},
+    {"command": "lab", "description": "US Prosody Lab, Audio Mirror & drills"},
+    {"command": "studios", "description": "Open US speaking & listening studios"},
+    {"command": "mirror", "description": "Hear your last voice side-by-side with US"},
     {"command": "shadow", "description": "3-beat connected US shadowing drill"},
     {"command": "partner", "description": "Switch partner (Malik, Claire, Vance)"},
-    {"command": "spark", "description": "Start a live scenario or debate"},
     {"command": "vault", "description": "Habit radar, saved chunks & pulse"},
     {"command": "reset", "description": "Fresh topic or erase my history"},
 ]
