@@ -16,6 +16,8 @@ HABIT_LABELS: dict[str, str] = {
     "stiff_register": "Textbook -> spoken US flow",
     "us_rhythm_linking": "Connected speech & flap-T",
     "word_stress": "US stress & vowel reduction",
+    "nuclear_intonation": "Nuclear focus & pitch fall ↘",
+    "flap_stop_t": "US Flap-T [ɾ] & Stop-T [t̚]",
 }
 
 
@@ -252,11 +254,60 @@ class TwinRepository:
             conn.commit()
         self._sync()
 
+    def get_lab_state(self, user_id: int) -> dict:
+        with db_session(self.db_path) as conn:
+            row = conn.execute("SELECT * FROM twin_lab_state WHERE user_id = ?", (user_id,)).fetchone()
+            if row:
+                return dict(row)
+        return {"user_id": user_id, "lab_mode": 0, "pending_retake": 0, "target_text": "", "recast_text": "", "metrics_json": ""}
+
+    def set_lab_mode(self, user_id: int, enabled: bool) -> bool:
+        cur = self.get_lab_state(user_id)
+        with db_session(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO twin_lab_state (user_id, lab_mode, pending_retake, target_text, recast_text, metrics_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET lab_mode = excluded.lab_mode, updated_at = excluded.updated_at",
+                (user_id, int(enabled), int(cur["pending_retake"]), cur["target_text"], cur["recast_text"], cur["metrics_json"], time.time()),
+            )
+        self._sync()
+        return enabled
+
+    def save_lab_baseline(self, user_id: int, target_text: str, recast_text: str, metrics_json: str, arm_retake: bool = False) -> None:
+        cur = self.get_lab_state(user_id)
+        with db_session(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO twin_lab_state (user_id, lab_mode, pending_retake, target_text, recast_text, metrics_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET pending_retake = excluded.pending_retake, "
+                "target_text = excluded.target_text, recast_text = excluded.recast_text, "
+                "metrics_json = excluded.metrics_json, updated_at = excluded.updated_at",
+                (user_id, int(cur["lab_mode"]), int(arm_retake), target_text[:280], recast_text[:280], metrics_json, time.time()),
+            )
+        self._sync()
+
+    def arm_lab_retake(self, user_id: int, target_text: str = "") -> None:
+        cur = self.get_lab_state(user_id)
+        tgt = target_text[:280] if target_text else (cur["recast_text"] or cur["target_text"])
+        with db_session(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO twin_lab_state (user_id, lab_mode, pending_retake, target_text, recast_text, metrics_json, updated_at) "
+                "VALUES (?, ?, 1, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET pending_retake = 1, target_text = excluded.target_text, updated_at = excluded.updated_at",
+                (user_id, int(cur["lab_mode"]), tgt, cur["recast_text"] or tgt, cur["metrics_json"], time.time()),
+            )
+        self._sync()
+
+    def clear_retake_flag(self, user_id: int) -> None:
+        with db_session(self.db_path) as conn:
+            conn.execute("UPDATE twin_lab_state SET pending_retake = 0, updated_at = ? WHERE user_id = ?", (time.time(), user_id))
+        self._sync()
+
     def purge_user(self, user_id: int) -> bool:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         deleted = 0
         with db_session(self.db_path) as conn:
-            for tbl in ("twin_users", "twin_turns", "twin_vault", "twin_upgrades", "twin_habits", "twin_memory"):
+            for tbl in ("twin_users", "twin_turns", "twin_vault", "twin_upgrades", "twin_habits", "twin_memory", "twin_lab_state"):
                 deleted += conn.execute(f"DELETE FROM {tbl} WHERE user_id = ?", (user_id,)).rowcount
             conn.execute("DELETE FROM daily_usage WHERE user_id = ? AND usage_date < ?", (user_id, today))
             conn.commit()

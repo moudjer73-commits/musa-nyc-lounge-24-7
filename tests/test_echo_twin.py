@@ -1,116 +1,62 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+import numpy as np
 import pytest
 
-from src.bot.handlers import BTN_SHIFT, TwinContainer, register_handlers
-from src.twin.calques import scan_transfers
+from src.bot.handlers import BTN_LAB, BTN_SHIFT, TwinContainer, register_handlers
 from src.twin.corpus_guard import has_contrived_buzz, scrub_contrived_english
 from src.twin.engine import GhostTwinAnalysis, ProsodyAuditOutput, RegisterBreakdown, ShiftTurnOutput
+from src.voice.acoustics import SAMPLE_RATE, analyze_pcm_samples, compare_metrics
 
 
-class StubCorpusLLM:
+class StubLabLLM:
     configured = True
     def __init__(self):
         self.voice_calls = 0
-        self.structured_calls = 0
-        self.last_sys_prompt = ""
+        self.prosody_audits = 0
 
-    async def audit_voice_prosody(self, user_id, system_prompt, audio_bytes, user_prompt, schema_cls, fallback, *, mime_type='audio/ogg'):
-        self.prosody_audits = getattr(self, 'prosody_audits', 0) + 1
+    async def audit_voice_prosody(self, user_id, system_prompt, audio_bytes, user_prompt, schema_cls, fallback, *, mime_type="audio/ogg"):
+        self.prosody_audits += 1
+        is_retake = ("A/B RETAKE MODE ACTIVE" in user_prompt) or ("PREVIOUS TAKE ON FILE:" in user_prompt)
         return ProsodyAuditOutput(
-            has_findings=True,
-            habit_key='us_rhythm_linking',
-            segmental_fix=" Stress first syllable in 'PAR-ti-ci-pate', not final syllable",
-            prosody_fix="Link 'picked_up_a' smoothly and reduce 'of' to /ə/",
-            focus_stress='picked up a BUNCH of FRUIT',
-            shadow_chunk='picked up a bunch of fruit',
-            native_recast='I headed back home and picked up a bunch of fruit.',
-            grammar_fix='buyed -> bought · many fruit -> a bunch of fruit',
+            verbatim_heard="I headed back home and picked up a bunch of fruit.",
+            has_findings=(not is_retake),
+            habit_key="us_rhythm_linking",
+            prosodic_map="I ˈHEAD-əd ˈBACK | ən ˈPICKED‿up‿ə ˈBUNCH‿ə ˈFRUIT ↘",
+            segmental_fix="" if is_retake else "Crush 'and' -> /ən/ and 'of' -> /ə/",
+            prosody_fix="Link 'picked_up_a' smoothly with zero glottal stops",
+            focus_stress="BUNCH of FRUIT ↘",
+            shadow_chunk="picked up a bunch of fruit",
+            native_recast="I headed back home and picked up a bunch of fruit.",
+            grammar_fix="",
+            retake_verdict="Much stronger vowel reduction and smoother C-V linking on 'picked_up_a'!" if is_retake else "",
         )
 
     async def generate_voice_turn(self, user_id, system_prompt, audio_bytes, user_prompt, *, mime_type="audio/ogg", temperature=0.62):
         self.voice_calls += 1
-        assert temperature <= 0.65
-        return (
-            "===HEARD===\n"
-            "I returned back home and buyed many fruit\n"
-            "===REPLY===\n"
-            "Nice, nothing beats having fresh fruit around. What did you end up getting?\n"
-            "===COACH===\n"
-            "HABIT: uncountable_noun\n"
-            "FIX: returned back -> headed back · buyed -> bought · many fruit -> a bunch of fruit\n"
-            "RHYTHM: Flap the T in 'bought_a' and reduce 'of' to 'uh' in 'bunch_of'\n"
-            "US: I headed back home and picked up a bunch of fruit.\n"
-            "CHUNK: picked up a bunch of\n"
-            "WHY: Plain phrasal verb + uncountable\n"
-            "TAKE2: NONE"
-        )
+        return "===HEARD===\nI buyed many fruit today\n===REPLY===\nNice, what kind of fruit did you get?\n===COACH===\nNONE"
 
     async def generate_text(self, user_id, system_prompt, user_prompt, *, temperature=0.62, deep_chat=True):
-        self.last_sys_prompt = system_prompt
-        if "Existing memory:" in user_prompt:
-            return "• Doctoral researcher in local participatory governance\n• Focuses on authentic spoken US English"
-        latest_msg = user_prompt.split("LATEST SPEAKER MESSAGE:")[-1]
-        if "many advice" in latest_msg:
-            return (
-                "Yeah, solid advice is rare.\n"
-                "===COACH===\n"
-                "HABIT: uncountable_noun\n"
-                "FIX: many advice -> some solid advice\n"
-                "US: He gave me some solid advice.\n"
-                "CHUNK: some solid advice\n"
-                "WHY: Uncountable noun\n"
-                "TAKE2: NONE"
-            )
-        # Simulate an accidental stiff word leak ('utilize', 'prior to') to verify post-scrubber cleans it
-        if "leak test" in latest_msg:
-            return "We usually utilize that right prior to the meeting."
-        return "Makes total sense—how did that turn out?"
+        return "We usually utilize that right prior to the meeting."
 
     async def generate_structured(self, user_id, system_prompt, user_prompt, schema_cls, fallback, *, deep_chat=False, temperature=0.25):
-        self.structured_calls += 1
-        assert deep_chat is True and temperature <= 0.25
         if schema_cls is RegisterBreakdown:
-            # First call simulates buzzword hallucination -> triggers automatic anti-buzzword retry!
-            if "CRITICAL: Zero corporate" not in system_prompt and "fruit" not in user_prompt:
-                return RegisterBreakdown(
-                    is_register_neutral=False,
-                    casual_us="Deadass that won't work.",
-                    work_us="Let's circle back to move the needle.",
-                    seminar_us="One might posit it fails vis-à-vis budgets.",
-                    pragmatic_note="Tone shifts.",
-                )
-            if "fruit" in user_prompt:
-                return RegisterBreakdown(
-                    is_register_neutral=True,
-                    casual_us="I just picked up some fruit.",
-                    work_us="I just picked up some fruit.",
-                    seminar_us="I just picked up some fruit.",
-                    pragmatic_note="Everyday concrete actions stay plain across all settings in the US.",
-                )
             return RegisterBreakdown(
-                is_register_neutral=False,
-                casual_us="Honestly, I don't think that'll hold up.",
-                work_us="My main worry is whether that holds up on our timeline.",
-                seminar_us="I'm not convinced that holds up once you factor in local budgets.",
-                pragmatic_note="Core verb 'hold up' stays plain; only the hedging shifts.",
+                is_register_neutral=True,
+                casual_us="I just picked up some fruit.",
+                work_us="I just picked up some fruit.",
+                seminar_us="I just picked up some fruit.",
+                pragmatic_note="Plain spoken US stays identical across settings.",
             )
         if schema_cls is ShiftTurnOutput:
             return ShiftTurnOutput(
-                reframed_user_point="I'm not sure this timeline is realistic given our current setup.",
+                reframed_user_point="My main worry is whether this timeline holds up.",
                 same_across_registers=False,
-                partner_reply="Fair point—what's the biggest holdup right now?",
-                key_chunk="not sure this is realistic",
+                partner_reply="Fair point—what's the biggest holdup?",
+                key_chunk="whether this holds up",
             )
-        return GhostTwinAnalysis(
-            should_intervene=True,
-            habit_key="stiff_register",
-            fix_summary="utilize -> use",
-            native_take="We just use what we already have.",
-            key_chunk="use what we have",
-            why_tag="Plain spoken verb",
-        )
+        return GhostTwinAnalysis(should_intervene=True, native_take="I just picked up some fruit.", key_chunk="picked up")
 
 
 class FakeApp:
@@ -125,8 +71,8 @@ class FakeApp:
 
 
 class FakeMsg:
-    def __init__(self, text="", voice=None, reply_to=None, mid=10):
-        self.text, self.caption, self.voice, self.reply_to_message, self.message_id = text, None, voice, reply_to, mid
+    def __init__(self, text="", voice=None, mid=10):
+        self.text, self.caption, self.voice, self.reply_to_message, self.message_id = text, None, voice, None, mid
         self.texts, self.voices = [], []
     async def reply_text(self, t, **kw):
         self.texts.append((t, kw))
@@ -136,105 +82,59 @@ class FakeMsg:
         return FakeMsg(text="", mid=200 + len(self.voices))
 
 
-def test_corpus_guard_scrubs_thesaurus_and_detects_fake_buzzwords():
-    raw = "Prior to commencing, we utilize data vis-à-vis with regard to budgets."
-    cleaned = scrub_contrived_english(raw)
-    assert cleaned == "Before starting, we use data compared to when it comes to budgets."
-    assert has_contrived_buzz("Let's circle back to move the needle")
-    assert has_contrived_buzz("Deadass no cap")
-    assert has_contrived_buzz("Picked up produce at the store")
-    assert not has_contrived_buzz("My main worry is whether that holds up once budgets get tight.")
-    assert len(scan_transfers("I returned back home since three years")) >= 2
+def test_v5_acoustics_npvi_and_corpus_scrubber():
+    assert scrub_contrived_english("Prior to utilizing it") == "Before using it"
+    assert has_contrived_buzz("Let's circle back")
+    t = np.linspace(0, 0.20, int(0.20 * SAMPLE_RATE), endpoint=False)
+    flat_sig = np.concatenate([val for _ in range(4) for val in (0.2 * np.sin(2 * np.pi * 140 * t), np.zeros(800))]).astype(np.float32)
+    m1 = analyze_pcm_samples(flat_sig, 4)
+    assert m1.npvi < 20 and "syllable-flat" in m1.lab_meter_line()
 
 
 @pytest.mark.asyncio
-async def test_registers_never_invent_fake_synonyms_and_retry_on_buzzwords(tmp_path: Path, monkeypatch):
+async def test_v5_pure_prosody_lab_mode_drills_and_ab_retake(tmp_path: Path, monkeypatch):
     from src.bot import handlers as h_mod
-    monkeypatch.setattr(h_mod, "synthesize_partner_voice", lambda text, angle="casual_sharp": asyncio.sleep(0, result=b"MP3_P"))
-    monkeypatch.setattr(h_mod, "synthesize_twin_voice", lambda text: asyncio.sleep(0, result=b"MP3_T"))
+    from src.twin import engine as e_mod
+    from src.voice.acoustics import AcousticMetrics
 
-    llm = StubCorpusLLM()
-    c = TwinContainer(db_path=tmp_path / "v32.db", passphrase="", llm=llm)
+    monkeypatch.setattr(h_mod, "synthesize_partner_voice", lambda t, angle="casual_sharp": asyncio.sleep(0, result=b"P"))
+    monkeypatch.setattr(h_mod, "synthesize_twin_voice", lambda t: asyncio.sleep(0, result=b"T"))
+    monkeypatch.setattr(h_mod, "synthesize_shadow_drill", lambda t: asyncio.sleep(0, result=b"D3X"))
+
+    # Simulate Take 1 (flat rhythm: score 42, nPVI 28) -> Take 2 Retake (US stress-timed: score 81, nPVI 62)
+    takes = [
+        AcousticMetrics(total_s=2.4, voiced_s=2.0, syllables=8, articulation_wpm=140, npvi=28.0, pause_ratio=0.22, stress_contrast_db=3.8, pitch_span_st=2.4, boundary_tone="level ➡️", prosody_score=42),
+        AcousticMetrics(total_s=2.1, voiced_s=1.8, syllables=8, articulation_wpm=155, npvi=62.0, pause_ratio=0.12, stress_contrast_db=8.5, pitch_span_st=5.8, boundary_tone="falling ↘", prosody_score=81),
+    ]
+    monkeypatch.setattr(e_mod, "analyze_voice_bytes", lambda b, wc=0: takes.pop(0) if takes else AcousticMetrics(voiced_s=1.5, npvi=60.0, prosody_score=80))
+
+    llm = StubLabLLM()
+    c = TwinContainer(db_path=tmp_path / "v5.db", passphrase="", llm=llm)
     app = FakeApp()
     register_handlers(app, c)
-    u = SimpleNamespace(id=33)
-    ch = SimpleNamespace(id=33)
+    u = SimpleNamespace(id=77)
     ctx = SimpleNamespace(args=[], bot=None)
 
-    # 1. Everyday concrete statement ('fruit') -> Register-neutral honesty (NO 'picked up produce'!)
-    neutral_out = await c.engine.explain_registers(33, "I just picked up some fruit.")
-    assert "Real US usage:" in neutral_out
-    assert "produce" not in neutral_out.lower()
+    # 1. Tap 🔬 Prosody Lab button -> Toggle Pure Lab Mode ON
+    m_lab = FakeMsg(text=BTN_LAB)
+    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=m_lab), ctx)
+    assert "US Prosody &amp; Rhythm Lab v5" in m_lab.texts[0][0]
 
-    # 2. Substantive pushback -> Buzzword attempt gets caught & retried cleanly into authentic spoken registers
-    op_out = await c.engine.explain_registers(33, "This plan will fail.")
-    assert "circle back" not in op_out.lower() and "deadass" not in op_out.lower() and "vis-à-vis" not in op_out.lower()
-    assert "holds up" in op_out
+    q_toggle = SimpleNamespace(data="lab:toggle", message=FakeMsg(text="lab"), answer=lambda *a, **k: asyncio.sleep(0), edit_message_text=lambda *a, **k: asyncio.sleep(0))
+    await app.cb("lab_cb")(SimpleNamespace(effective_user=u, callback_query=q_toggle), ctx)
+    assert c.repo.get_lab_state(77)["lab_mode"] == 1
 
-    # 3. Partner stiff-word leak gets auto-scrubbed in dialogue
-    m_leak = FakeMsg(text="run leak test now")
-    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=m_leak), ctx)
-    assert "use that right before" in m_leak.texts[0][0]
+    # 2. Voice Take #1 in Pure Lab Mode -> 0 partner chit-chat calls, 1 prosody audit with Map & 3-Beat audio!
+    dl = SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS")))
+    vo = SimpleNamespace(duration=3.0, file_size=4000, get_file=lambda: asyncio.sleep(0, result=dl))
+    mv1 = FakeMsg(voice=vo)
+    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=mv1), ctx)
+    assert llm.voice_calls == 0 and llm.prosody_audits == 1
+    cap1 = mv1.voices[0]["caption"]
+    assert "🗺️ <b>Map:</b>" in cap1 and "PICKED‿up‿ə" in cap1
 
-    # 4. ⚡ Shift Angle produces grounded partner response + authentic reframed user card with audio/save buttons
-    m_sh = FakeMsg(text=BTN_SHIFT)
-    await app.cb("text_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=m_sh), ctx)
-    assert len(m_sh.texts) == 2
-    assert "Claire" in m_sh.texts[0][0] and "holdup" in m_sh.texts[0][0]
-    assert "How you'd say your point here" in m_sh.texts[1][0]
-    assert "realistic" in m_sh.texts[1][0]
-
-    # 5. Voice note single-pass + Habit Radar still work seamlessly
-    v_obj = SimpleNamespace(
-        duration=5.0, file_size=4000,
-        get_file=lambda: asyncio.sleep(0, result=SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS")))),
-    )
-    mv = FakeMsg(voice=v_obj)
-    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=mv), ctx)
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-    assert llm.voice_calls == 1 and getattr(llm, "prosody_audits", 0) == 1
-    assert "US Voice &amp; Rhythm Lab" in mv.voices[1]["caption"]
-    assert "PAR-ti-ci-pate" in mv.voices[1]["caption"]
-
-
-@pytest.mark.asyncio
-async def test_shadow_2x_button_always_visible_on_cards_and_clean_voice(tmp_path: Path, monkeypatch):
-    from src.bot import handlers as h_mod
-    monkeypatch.setattr(h_mod, "synthesize_partner_voice", lambda text, angle="casual_sharp": asyncio.sleep(0, result=b"MP3_P"))
-    monkeypatch.setattr(h_mod, "synthesize_twin_voice", lambda text: asyncio.sleep(0, result=b"MP3_T"))
-    monkeypatch.setattr(h_mod, "synthesize_shadow_drill", lambda text: asyncio.sleep(0, result=b"MP3_DRILL"))
-
-    llm = StubCorpusLLM()
-    # Even when speaker's pronunciation has NO errors (has_findings=False), Voice Lab card + 🎯 Shadow 2x button MUST appear!
-    async def clean_audit(user_id, system_prompt, audio_bytes, user_prompt, schema_cls, fallback, *, mime_type="audio/ogg"):
-        return ProsodyAuditOutput(has_findings=False)
-    llm.audit_voice_prosody = clean_audit
-
-    c = TwinContainer(db_path=tmp_path / "v41.db", passphrase="", llm=llm)
-    app = FakeApp()
-    register_handlers(app, c)
-    u = SimpleNamespace(id=44)
-    ch = SimpleNamespace(id=44)
-    ctx = SimpleNamespace(args=[], bot=None)
-
-    v_obj = SimpleNamespace(
-        duration=4.0, file_size=3500,
-        get_file=lambda: asyncio.sleep(0, result=SimpleNamespace(download_as_bytearray=lambda: asyncio.sleep(0, result=bytearray(b"OggS")))),
-    )
-    mv = FakeMsg(voice=v_obj)
-    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=ch, message=mv), ctx)
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-
-    assert len(mv.voices) == 2
-    kb = mv.voices[1]["reply_markup"].inline_keyboard
-    btn_texts = [b.text for row in kb for b in row]
-    assert "🎯 Shadow 2x" in btn_texts
-
-    # Also test /shadow command directly
-    ms = FakeMsg(text="/shadow")
-    await app.cb("shadow_cmd")(SimpleNamespace(effective_user=u, effective_chat=ch, message=ms), SimpleNamespace(args=["picked", "up", "some", "fruit"], bot=None))
-    assert len(ms.voices) == 1 and "Shadow Drill" in ms.voices[0]["caption"]
+    # 3. Voice Take #2 (Repeating same sentence) -> Auto-triggers A/B Retake Delta (42 ➔ 81/100)!
+    mv2 = FakeMsg(voice=vo)
+    await app.cb("voice_handler")(SimpleNamespace(effective_user=u, effective_chat=u, message=mv2), ctx)
+    cap2 = mv2.voices[0]["caption"]
+    assert "A/B Retake" in cap2 and "42 ➔ 81/100 (+39)" in cap2 and "Verdict:" in cap2

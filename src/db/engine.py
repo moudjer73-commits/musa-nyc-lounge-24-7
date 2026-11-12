@@ -71,6 +71,16 @@ CREATE TABLE IF NOT EXISTS twin_memory (
     updated_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS twin_lab_state (
+    user_id INTEGER PRIMARY KEY,
+    lab_mode INTEGER NOT NULL DEFAULT 0,
+    pending_retake INTEGER NOT NULL DEFAULT 0,
+    target_text TEXT NOT NULL DEFAULT '',
+    recast_text TEXT NOT NULL DEFAULT '',
+    metrics_json TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS daily_usage (
     user_id INTEGER NOT NULL,
     usage_date TEXT NOT NULL,

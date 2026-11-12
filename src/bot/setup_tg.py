@@ -17,9 +17,10 @@ FULL_DESCRIPTION = (
 )
 COMMANDS = [
     {"command": "start", "description": "Open studio & refresh buttons"},
+    {"command": "lab", "description": "US Prosody Lab mode & targeted voice drills"},
+    {"command": "shadow", "description": "3-beat connected US shadowing drill"},
     {"command": "partner", "description": "Switch partner (Malik, Claire, Vance)"},
     {"command": "spark", "description": "Start a live scenario or debate"},
-    {"command": "shadow", "description": "2x slow-to-natural US pronunciation drill"},
     {"command": "vault", "description": "Habit radar, saved chunks & pulse"},
     {"command": "reset", "description": "Fresh topic or erase my history"},
 ]
